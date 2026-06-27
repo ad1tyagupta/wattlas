@@ -4,6 +4,7 @@ export function formatSnapshotTime(value: string): string {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "UTC",
     timeZoneName: "short",
   }).format(new Date(value));
 }
