@@ -13,9 +13,9 @@ export function CommandBar({ manifest, onOpenStatus }: Props) {
 
   return (
     <header className="command-bar">
-      <div className="wordmark" aria-label="Grid Scope">GRID//SCOPE</div>
+      <div className="wordmark" aria-label="Wattlas">WATTLAS</div>
       <div className="command-context">
-        <span>Europe</span>
+        <span>Global</span>
         <span className="command-divider" />
         <span>Opportunity Radar</span>
       </div>

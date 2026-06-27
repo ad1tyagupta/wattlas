@@ -9,10 +9,12 @@ test("renders the map and updates the analytical view", async ({ page }, testInf
   page.on("pageerror", (error) => errors.push(error.message));
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveTitle("GRID//SCOPE · European Opportunity Radar");
+  await expect(page).toHaveTitle("Wattlas · Global Infrastructure Opportunity Radar");
   await expect(page.getByText("Daily refreshed", { exact: true })).toBeVisible();
   await expect(page.locator(".maplibregl-canvas")).toBeVisible();
   await expect(page.locator(".map-container")).toHaveAttribute("data-map-loaded", "true");
+  await expect(page.locator(".map-meta")).toContainText("246 countries");
+  await expect(page.locator(".map-meta")).toContainText("14 infrastructure assets");
 
   const mapBox = await page.locator(".map-container").boundingBox();
   expect(mapBox?.height).toBeGreaterThan(300);

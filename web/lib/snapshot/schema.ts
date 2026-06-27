@@ -106,11 +106,13 @@ export const regionPropertiesSchema = z.object({
   country: z.string().length(2),
   scoreYear: z.number().int().min(2026).max(2031),
   scores: lensScoresSchema,
+  scoresByYear: z.record(z.string(), lensScoresSchema),
   confidence: z.number().min(0).max(100),
   coverage: z.number().min(0).max(100),
   valueKind: valueKindSchema,
   updatedAt: z.string().datetime(),
   contributions: z.array(scoreContributionSchema),
+  contributionsByYear: z.record(z.string(), z.array(scoreContributionSchema)),
   sourceIds: z.array(z.string()),
   population: z.number().int().nonnegative().nullable().optional(),
 });
@@ -169,7 +171,7 @@ export const regionFeatureCollectionSchema = z.object({
     z.object({
       type: z.literal("Feature"),
       id: z.string(),
-      geometry: z.record(z.string(), z.unknown()),
+      geometry: z.custom<GeoJSON.Geometry>(),
       properties: regionPropertiesSchema,
     }),
   ),
@@ -184,7 +186,7 @@ export const geographyFeatureCollectionSchema = z.object({
   features: z.array(z.object({
     type: z.literal("Feature"),
     id: z.string(),
-    geometry: z.record(z.string(), z.unknown()),
+    geometry: z.custom<GeoJSON.Geometry>(),
     properties: geographyPropertiesSchema,
   })),
 });

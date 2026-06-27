@@ -1,6 +1,6 @@
 import type { ExpressionSpecification } from "maplibre-gl";
 
-import type { LensKey } from "@/lib/snapshot/types";
+import type { InfrastructureCategory, LensKey } from "@/lib/snapshot/types";
 
 const ramps: Record<LensKey, Array<[number, string]>> = {
   infrastructureDemand: [
@@ -42,4 +42,17 @@ export function mapColorExpression(lens: LensKey): ExpressionSpecification {
       ...ramp.flat(),
     ],
   ] as ExpressionSpecification;
+}
+
+export function countryBorderWidthExpression(selectedId: string | null): ExpressionSpecification {
+  return [
+    "case",
+    ["==", ["get", "id"], selectedId ?? ""],
+    3.2,
+    1.25,
+  ] as ExpressionSpecification;
+}
+
+export function assetColor(category: Exclude<InfrastructureCategory, "combined">): string {
+  return category === "data_centre" ? "#8FAEFF" : "#72D9BD";
 }

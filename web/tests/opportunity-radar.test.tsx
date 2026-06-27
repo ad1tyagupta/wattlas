@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OpportunityRadar } from "@/components/opportunity-radar";
 
-vi.mock("@/components/map/europe-map", () => ({
-  EuropeMap: () => <div data-testid="europe-map">Map</div>,
+vi.mock("@/components/map/global-map", () => ({
+  GlobalMap: () => <div data-testid="global-map">Map</div>,
 }));
 
 const snapshot = {
@@ -13,13 +13,15 @@ const snapshot = {
     generatedAt: "2026-06-27T04:12:00Z",
     modelVersion: "1.0.0",
     activeYears: [2026, 2027, 2028, 2029, 2030, 2031],
-    artifacts: { regions: "regions.geojson", projects: "projects.geojson", evidence: "evidence.json" },
+    artifacts: { countries: "countries.geojson", regions: "regions.geojson", assets: "assets.geojson", evidence: "evidence.json" },
+    coverage: { countries: 246, regions: 334, assets: 14, dataCentres: 8, waterInfrastructure: 6 },
+    boundaryDisclaimer: "UN boundary disclaimer",
     connectors: [
       { id: "gisco", state: "current", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: "2026-06-27T04:12:00Z", message: null },
       { id: "entsoe", state: "not_configured", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: null, message: "Token missing" },
     ],
   },
-  regions: {
+  countries: {
     type: "FeatureCollection",
     features: [
       {
@@ -36,7 +38,8 @@ const snapshot = {
       },
     ],
   },
-  projects: { type: "FeatureCollection", features: [] },
+  regions: { type: "FeatureCollection", features: [] },
+  assets: { type: "FeatureCollection", features: [] },
   evidence: { sources: [], claims: [] },
 };
 
@@ -44,7 +47,7 @@ describe("OpportunityRadar", () => {
   it("renders daily freshness, lenses, year, and source truth", () => {
     render(<OpportunityRadar snapshot={snapshot} />);
 
-    expect(screen.getByText("GRID//SCOPE")).toBeInTheDocument();
+    expect(screen.getByText("WATTLAS")).toBeInTheDocument();
     expect(screen.getByText(/Daily refreshed/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Infrastructure Demand" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Site Attractiveness" })).toBeInTheDocument();
