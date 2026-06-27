@@ -13,6 +13,8 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 The browser does not fetch upstream infrastructure sources directly. It reads the latest validated public snapshot and continues serving the last successful version when a connector fails.
 
+The current snapshot includes more than 3,500 data-centre records sourced from OpenStreetMap through QLever. Global markers are clustered at low zoom and individual facilities expose lifecycle, operator, location precision, official/community provenance, and their public source record.
+
 ## Verify
 
 ```bash
@@ -21,4 +23,4 @@ npm run lint
 npm run build
 ```
 
-The production build is intended for a Git-connected Vercel project after the Wattlas repository is created.
+Production is deployed from the Git-connected `ad1tyagupta/wattlas` repository to `https://wattlas.vercel.app`.

@@ -4,9 +4,9 @@
 
 ## Product boundary
 
-- The product is a new, independent Europe-first energy and data-centre infrastructure Opportunity Radar.
+- The product is a new, independent global energy and infrastructure Opportunity Radar whose validated foundation was Europe-first.
 - “Palantir - My Ver” is the workspace name and inspiration context, not permission to use Palantir branding, logos, or proprietary assets.
-- `GRID//SCOPE` is a provisional in-product wordmark already used by the approved design artifacts. It is not presented as an existing registered brand.
+- `Wattlas` is the approved product name. `GRID//SCOPE` is retained only in historical design artifacts.
 
 ## Map rendering
 
@@ -40,6 +40,10 @@
 - ERA5 provides hourly reanalysis variables from 1940 onward. It is appropriate for historical heat, wind, solar, and climate-stress baselines, not a real-time operational weather feed.
 - Eurostat exposes free REST/SDMX APIs and GISCO distributes NUTS geometries. Eurostat’s public database exposes the latest dataset version rather than a complete revision history, so the Opportunity Radar must retain its own immutable snapshots.
 - EU data-centre energy-performance reporting provides useful aggregated outputs, but it does not replace a curated site/project evidence registry.
+- OpenStreetMap currently contains more than 4,200 objects tagged `telecom=data_center`; Wattlas queries the OSM planet through QLever and publishes only records that can be assigned to its UN country geometry.
+- OSM infrastructure is community-maintained and licensed under ODbL. Wattlas preserves attribution, stable OSM element URLs, source type, and observation date.
+- QLever's OSM planet index is based on weekly planet processing and may lag the primary OSM database. Wattlas still checks the connector daily and retains its last validated capture when the query fails or falls below the minimum coverage threshold.
+- PeeringDB is not used as a default facility feed because its acceptable-use restrictions are not suitable for Wattlas's potential commercial use.
 - Sources:
   - https://www.entsoe.eu/data/transparency-platform/
   - https://www.entsoe.eu/news/2026/05/22/entso-e-and-dso-entity-launched-capacitypedia-to-improve-access-to-grid-hosting-capacity-information-across-europe/
@@ -47,6 +51,9 @@
   - https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-getting-started
   - https://ec.europa.eu/eurostat/web/gisco/geodata/statistical-units/territorial-units-statistics
   - https://energy.ec.europa.eu/topics/energy-efficiency/energy-efficiency-targets-directive-and-rules/energy-efficiency-directive/energy-performance-data-centres_en
+  - https://wiki.openstreetmap.org/wiki/Tag:telecom%3Ddata_center
+  - https://www.openstreetmap.org/copyright
+  - https://qlever.dev/osm-planet
 
 ## Truthfulness constraint
 

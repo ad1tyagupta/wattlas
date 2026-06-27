@@ -2,7 +2,7 @@
 
 ## Status
 
-The Europe-first working vertical slice was implemented on 2026-06-27. A global expansion under the product name **Wattlas** was subsequently designed and approved on 2026-06-27. That expansion is ready for implementation planning.
+The Europe-first working vertical slice and the global Wattlas map were implemented on 2026-06-27. Global facility coverage was expanded the same day using community-maintained OpenStreetMap infrastructure merged with curated official project evidence.
 
 ## Origin
 
@@ -143,12 +143,15 @@ The implementation plan is recorded in `docs/superpowers/plans/2026-06-27-opport
 The working version now includes:
 
 - A Next.js 16 / React 19 analytical shell using the approved Huashu visual system.
-- A MapLibre map with all 334 GISCO NUTS-2 regions and eight evidence-rich launch clusters.
+- A clustered global MapLibre map with 246 UN countries, all 334 GISCO NUTS-2 regions, and thick national boundaries.
+- Snapshot `2026-06-27T17-11-15Z` with 3,634 facilities: 3,533 data centres and 101 water-infrastructure assets across 112 countries.
+- QLever/OpenStreetMap ingestion with ODbL attribution, stable source links, community/official provenance, lifecycle, operator, and location-precision labels.
+- Individual facility inspection and country summaries split by operational/planned, category, and official/community source.
 - 2026–2031 Infrastructure Demand, Site Attractiveness, and System Risk views.
 - Explicit score arithmetic, confidence, coverage, value kind, evidence dossiers, source state, and comparison.
-- A Python 3.13 / DuckDB snapshot pipeline using GISCO, Eurostat, curated public evidence, and an optional ENTSO-E connector.
+- A Python 3.13 / DuckDB snapshot pipeline using UN Geodata, QLever/OpenStreetMap, GISCO, Eurostat, curated public evidence, and an optional ENTSO-E connector.
 - Immutable published GeoJSON/JSON snapshots and a last-known-good connector fallback.
 - An active local Codex refresh automation at 04:00 Europe/Berlin once per day.
 - A GitHub Actions refresh alternative at approximately 04:00 Europe/Berlin once per day, with manual dispatch.
 
-Deployment remains intentionally provider-agnostic. A Git-connected static/Next.js host can rebuild whenever the daily workflow commits a new snapshot.
+Production is Git-connected at `https://wattlas.vercel.app`. GitHub Actions checks public data daily, rejects partial OSM responses below the coverage threshold, retains the last known good capture on failure, and commits validated snapshot changes.

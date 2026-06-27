@@ -2,7 +2,7 @@
 
 Wattlas is a global Opportunity Radar for examining where data-centre and water-infrastructure growth may create electricity demand, opportunity, or constraint from 2026–2031.
 
-The working version combines a MapLibre NUTS-2 map, an explainable Infrastructure Demand score, supporting Site Attractiveness and System Risk lenses, confidence and coverage, source status, evidence dossiers, and regional comparison.
+The working version combines a clustered global MapLibre map, strong national boundaries, 334 European NUTS-2 regions, an explainable Infrastructure Demand score, supporting Site Attractiveness and System Risk lenses, facility provenance, source status, evidence dossiers, and regional comparison.
 
 ## Run locally
 
@@ -29,8 +29,8 @@ The browser never queries upstream sources directly. The Python pipeline fetches
 
 A local Codex automation is active once per day at 04:00 Europe/Berlin. The repository also includes a GitHub Actions alternative that keeps the same Berlin schedule across daylight-saving changes; once the repository is Git-connected, a hosted deployment can rebuild from each committed snapshot. The app deliberately says **Daily refreshed**, not “live”.
 
-The implemented Europe-first slice currently uses GISCO NUTS-2 geometry, Eurostat population, and eight analyst-curated launch clusters. The approved global migration uses UN national boundaries, available UN SALB subnational geometry, and public infrastructure evidence. Missing evidence is stored as `null`, never as zero.
+The global release uses UN national boundaries, GISCO/Eurostat regional context, curated official project evidence, and community-maintained OpenStreetMap infrastructure queried through QLever. Snapshot `2026-06-27T17-11-15Z` contains 3,634 mapped facilities: 3,533 data centres and 101 water-infrastructure assets across 112 countries. OpenStreetMap-derived records are attributed under ODbL and visibly labelled `community_mapped`; curated announcements are labelled `official_verified`. Missing evidence is stored as `null`, never as zero.
 
 ## Data caution
 
-Launch-cluster scores are provisional analyst indices derived from cited public signals. They are estimates, not observed regional grid measurements. The evidence drawer exposes the attached public sources and the interface keeps confidence separate from score.
+Operational community-mapped facilities provide context and counts only. They do not create future demand MW. Opportunity scores are provisional analyst indices derived only from forward-looking, demand-backed public evidence; they are not observed regional grid measurements.
