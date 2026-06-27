@@ -26,9 +26,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GRID//SCOPE · European Opportunity Radar",
+  title: "Wattlas · Global Infrastructure Opportunity Radar",
   description:
-    "A daily-refreshed, explainable view of European energy-infrastructure opportunity.",
+    "A daily-refreshed, explainable view of global electricity demand from data centres and water infrastructure.",
 };
 
 export default function RootLayout({

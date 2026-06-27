@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, HttpUrl, computed_field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -40,7 +40,49 @@ class LifecycleState(StrEnum):
     CANCELLED = "cancelled"
 
 
+class GeographyLevel(StrEnum):
+    COUNTRY = "country"
+    ADMIN_1 = "admin_1"
+    ADMIN_2 = "admin_2"
+
+
+class AssetCategory(StrEnum):
+    DATA_CENTRE = "data_centre"
+    WATER_INFRASTRUCTURE = "water_infrastructure"
+
+
+class AssetSubtype(StrEnum):
+    HYPERSCALE = "hyperscale"
+    COLOCATION = "colocation"
+    CLOUD = "cloud"
+    AI_HPC = "ai_hpc"
+    OTHER_DATA_CENTRE = "other_data_centre"
+    DESALINATION = "desalination"
+    WASTEWATER = "wastewater"
+    WATER_REUSE = "water_reuse"
+    PIPELINE_PUMPING = "pipeline_pumping"
+    RESERVOIR = "reservoir"
+
+
+class LocationPrecision(StrEnum):
+    EXACT = "exact"
+    CITY_CENTROID = "city_centroid"
+    REGION_CENTROID = "region_centroid"
+
+
 Score = float | None
+
+
+class DemandRange(ContractModel):
+    low: float = Field(ge=0)
+    central: float = Field(ge=0)
+    high: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self) -> "DemandRange":
+        if not self.low <= self.central <= self.high:
+            raise ValueError("demand range must satisfy low <= central <= high")
+        return self
 
 
 class SourceRef(ContractModel):
@@ -82,6 +124,48 @@ class RegionProperties(ContractModel):
     contributions: list[ScoreContribution] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     population: int | None = Field(default=None, ge=0)
+
+
+class GeographyProperties(ContractModel):
+    id: str
+    name: str
+    country: str = Field(min_length=2, max_length=2)
+    level: GeographyLevel
+    parent_id: str | None = None
+    score_year: int = Field(ge=2026, le=2031)
+    scores: LensScores
+    confidence: float = Field(ge=0, le=100)
+    coverage: float = Field(ge=0, le=100)
+    value_kind: ValueKind
+    updated_at: AwareDatetime
+    contributions: list[ScoreContribution] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    population: int | None = Field(default=None, ge=0)
+
+    @computed_field
+    @property
+    def peer_level(self) -> str:
+        return self.level
+
+
+class AssetProperties(ContractModel):
+    id: str
+    name: str
+    geography_id: str
+    category: AssetCategory
+    subtype: AssetSubtype
+    lifecycle: LifecycleState
+    demand_mw: DemandRange | None = None
+    target_year: int | None = Field(default=None, ge=2026, le=2031)
+    location_precision: LocationPrecision
+    value_kind: ValueKind
+    source_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def demand_requires_evidence(self) -> "AssetProperties":
+        if self.demand_mw is not None and not self.source_ids:
+            raise ValueError("demand-contributing assets require at least one source")
+        return self
 
 
 class ProjectProperties(ContractModel):

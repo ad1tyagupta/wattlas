@@ -5,6 +5,10 @@ export type LensKey =
 
 export type LensScores = Record<LensKey, number | null>;
 
+export type InfrastructureCategory = "combined" | "data_centre" | "water_infrastructure";
+export type GeographyLevel = "country" | "admin_1" | "admin_2";
+export type DemandRange = { low: number; central: number; high: number };
+
 export type ScoreContribution = {
   id: string;
   label: string;
@@ -40,6 +44,29 @@ export type RegionFeature = GeoJSON.Feature<GeoJSON.Geometry, RegionProperties> 
 };
 
 export type RegionCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, RegionProperties>;
+
+export type GeographyProperties = RegionProperties & {
+  level: GeographyLevel;
+  parentId: string | null;
+  peerLevel: GeographyLevel;
+};
+export type GeographyFeature = GeoJSON.Feature<GeoJSON.Geometry, GeographyProperties> & { id: string };
+export type GeographyCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, GeographyProperties>;
+
+export type AssetProperties = {
+  id: string;
+  name: string;
+  geographyId: string;
+  category: Exclude<InfrastructureCategory, "combined">;
+  subtype: "hyperscale" | "colocation" | "cloud" | "ai_hpc" | "other_data_centre" | "desalination" | "wastewater" | "water_reuse" | "pipeline_pumping" | "reservoir";
+  lifecycle: "announced" | "planning_filed" | "permitted" | "under_construction" | "operational" | "paused" | "cancelled";
+  demandMw: DemandRange | null;
+  targetYear?: number | null;
+  locationPrecision: "exact" | "city_centroid" | "region_centroid";
+  valueKind: "observed" | "reported" | "estimated" | "inherited" | "unavailable";
+  sourceIds: string[];
+};
+export type AssetCollection = GeoJSON.FeatureCollection<GeoJSON.Point, AssetProperties>;
 
 export type ProjectProperties = {
   id: string;

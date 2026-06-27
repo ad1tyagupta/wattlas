@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { manifestSchema } from "@/lib/snapshot/schema";
+import {
+  assetPropertiesSchema,
+  geographyPropertiesSchema,
+  manifestSchema,
+} from "@/lib/snapshot/schema";
 
 const validManifest = {
   snapshotId: "2026-06-27T04-12-00Z",
@@ -41,5 +45,63 @@ describe("snapshot manifest", () => {
     expect(() =>
       manifestSchema.parse({ ...validManifest, activeYears: [2026, 2027, 2028] }),
     ).toThrow();
+  });
+});
+
+describe("global snapshot entities", () => {
+  it("accepts a sourced water-infrastructure asset", () => {
+    const asset = assetPropertiesSchema.parse({
+      id: "asset-ae-desal-1",
+      name: "Example plant",
+      geographyId: "AE",
+      category: "water_infrastructure",
+      subtype: "desalination",
+      lifecycle: "under_construction",
+      demandMw: { low: 42, central: 50, high: 61 },
+      locationPrecision: "city_centroid",
+      valueKind: "estimated",
+      sourceIds: ["source-1"],
+    });
+    expect(asset.category).toBe("water_infrastructure");
+  });
+
+  it("rejects a demand-contributing asset without a source", () => {
+    expect(() =>
+      assetPropertiesSchema.parse({
+        id: "asset-us-dc-1",
+        name: "Uncited campus",
+        geographyId: "US",
+        category: "data_centre",
+        subtype: "hyperscale",
+        lifecycle: "announced",
+        demandMw: { low: 90, central: 100, high: 120 },
+        locationPrecision: "region_centroid",
+        valueKind: "estimated",
+        sourceIds: [],
+      }),
+    ).toThrow();
+  });
+
+  it("labels countries as country-level peers", () => {
+    const geography = geographyPropertiesSchema.parse({
+      id: "AE",
+      name: "United Arab Emirates",
+      country: "AE",
+      level: "country",
+      parentId: null,
+      scoreYear: 2030,
+      scores: {
+        infrastructureDemand: 72,
+        siteAttractiveness: 68,
+        systemRisk: 55,
+      },
+      confidence: 80,
+      coverage: 90,
+      valueKind: "reported",
+      updatedAt: "2026-06-27T04:12:00Z",
+      contributions: [],
+      sourceIds: ["source-1"],
+    });
+    expect(geography.peerLevel).toBe("country");
   });
 });
