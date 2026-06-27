@@ -1,10 +1,12 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpportunityRadar } from "@/components/opportunity-radar";
 
+afterEach(cleanup);
+
 vi.mock("@/components/map/global-map", () => ({
-  GlobalMap: () => <div data-testid="global-map">Map</div>,
+  GlobalMap: ({ onSelect }: { onSelect: (id: string) => void }) => <div data-testid="global-map">Map<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button></div>,
 }));
 
 const snapshot = {
@@ -39,7 +41,16 @@ const snapshot = {
     ],
   },
   regions: { type: "FeatureCollection", features: [] },
-  assets: { type: "FeatureCollection", features: [] },
+  assets: { type: "FeatureCollection", features: [{
+    type: "Feature", id: "osm-node-101", geometry: { type: "Point", coordinates: [-77.1, 38.9] },
+    properties: {
+      id: "osm-node-101", name: "Alpha DC", operator: "Alpha Cloud", geographyId: "US", country: "US",
+      category: "data_centre", subtype: "other_data_centre", lifecycle: "operational", demandMw: null,
+      locationPrecision: "exact", valueKind: "observed", sourceIds: ["openstreetmap-infrastructure"],
+      sourceType: "community_mapped", sourceUrl: "https://www.openstreetmap.org/node/101", externalIds: { osm: "node/101" },
+      lastObservedAt: "2026-06-27T12:00:00Z", confidence: 86,
+    },
+  }] },
   evidence: { sources: [], claims: [] },
 };
 
@@ -54,5 +65,14 @@ describe("OpportunityRadar", () => {
     expect(screen.getByRole("button", { name: "System Risk" })).toBeInTheDocument();
     expect(screen.getAllByText("2030").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^LIVE$/)).not.toBeInTheDocument();
+  });
+
+  it("selects and inspects an individual facility", () => {
+    render(<OpportunityRadar snapshot={snapshot} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select facility" }));
+
+    expect(screen.getByRole("heading", { name: "Alpha DC" })).toBeInTheDocument();
+    expect(screen.getByText("Community mapped")).toBeInTheDocument();
   });
 });
