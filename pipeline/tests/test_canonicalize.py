@@ -1,4 +1,4 @@
-from grid_scope.canonicalize import assign_asset_geography, canonicalize_assets
+from grid_scope.canonicalize import assign_asset_country, assign_asset_geography, canonicalize_assets
 from grid_scope.storage import RawCaptureStore
 
 
@@ -105,6 +105,46 @@ def test_country_only_announcement_does_not_gain_a_point() -> None:
 
     assert assign_asset_geography(record, []) == "CN"
     assert record["coordinates"] is None
+
+
+def test_exact_point_is_assigned_to_un_country() -> None:
+    countries = [{
+        "type": "Feature",
+        "id": "AE",
+        "geometry": {"type": "Polygon", "coordinates": [[[50, 20], [60, 20], [60, 30], [50, 30], [50, 20]]]},
+        "properties": {"id": "AE", "level": "country"},
+    }]
+
+    assert assign_asset_country(asset(coordinates=[55, 25], country="UNASSIGNED"), countries) == "AE"
+
+
+def test_official_record_wins_when_merging_with_community_mapping() -> None:
+    community = asset(
+        id="osm-way-202",
+        name="Example Campus",
+        lifecycle="operational",
+        demandMw=None,
+        sourceType="community_mapped",
+        sourceUrl="https://www.openstreetmap.org/way/202",
+        sourceIds=["openstreetmap-infrastructure"],
+        externalIds={"osm": "way/202", "planning": "ABC-123"},
+    )
+    official = asset(
+        id="official-campus",
+        name="Example AI Campus",
+        lifecycle="under_construction",
+        sourceType="official_verified",
+        sourceUrl="https://example.com/project",
+    )
+
+    merged = canonicalize_assets([community, official])
+
+    assert len(merged) == 1
+    assert merged[0]["id"] == "official-campus"
+    assert merged[0]["lifecycle"] == "under_construction"
+    assert merged[0]["demandMw"]["central"] == 100
+    assert merged[0]["sourceIds"] == ["openstreetmap-infrastructure", "source-a"]
+    assert merged[0]["externalIds"] == {"osm": "way/202", "planning": "ABC-123"}
 
 
 def test_canonical_assets_round_trip_through_store(tmp_path) -> None:

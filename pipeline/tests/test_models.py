@@ -80,6 +80,30 @@ def test_asset_supports_water_infrastructure_subtypes() -> None:
     assert asset.subtype == "desalination"
 
 
+def test_asset_preserves_public_provenance_fields() -> None:
+    asset = AssetProperties(
+        id="osm-node-101",
+        name="Alpha DC",
+        operator="Alpha Cloud",
+        geography_id="US",
+        category="data_centre",
+        subtype="other_data_centre",
+        lifecycle="operational",
+        location_precision="exact",
+        value_kind="observed",
+        source_ids=["openstreetmap-infrastructure"],
+        source_type="community_mapped",
+        source_url="https://www.openstreetmap.org/node/101",
+        external_ids={"osm": "node/101"},
+        last_observed_at=datetime(2026, 6, 27, tzinfo=UTC),
+    )
+
+    dumped = asset.model_dump(by_alias=True, mode="json")
+    assert dumped["sourceType"] == "community_mapped"
+    assert dumped["sourceUrl"] == "https://www.openstreetmap.org/node/101"
+    assert dumped["externalIds"] == {"osm": "node/101"}
+
+
 def test_asset_rejects_demand_without_sources() -> None:
     with pytest.raises(ValidationError):
         AssetProperties(

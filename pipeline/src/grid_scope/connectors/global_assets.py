@@ -15,13 +15,16 @@ def load_asset_registry(assets_path: Path, sources_path: Path) -> dict:
     raw_sources = _load_json(sources_path).get("sources", [])
     sources: list[dict] = []
     source_ids: set[str] = set()
+    sources_by_id: dict[str, dict] = {}
     for raw_source in raw_sources:
         source = SourceRef.model_validate(raw_source)
         scheme = urlparse(str(source.url)).scheme
         if scheme not in {"http", "https"}:
             raise ValueError(f"source {source.id} is not publicly addressable")
         source_ids.add(source.id)
-        sources.append(source.model_dump(by_alias=True, mode="json"))
+        dumped_source = source.model_dump(by_alias=True, mode="json")
+        sources.append(dumped_source)
+        sources_by_id[source.id] = dumped_source
 
     assets: list[dict] = []
     seen_ids: set[str] = set()
@@ -38,7 +41,14 @@ def load_asset_registry(assets_path: Path, sources_path: Path) -> dict:
             or not -90 <= coordinates[1] <= 90
         ):
             raise ValueError(f"asset {raw_asset.get('id')} has invalid coordinates")
-        asset = AssetProperties.model_validate(raw_asset)
+        primary_source = sources_by_id.get(raw_asset.get("sourceIds", [None])[0])
+        enriched_asset = {
+            **raw_asset,
+            "sourceType": "official_verified",
+            "sourceUrl": raw_asset.get("sourceUrl") or (primary_source or {}).get("url"),
+            "lastObservedAt": raw_asset.get("lastObservedAt") or (primary_source or {}).get("publishedAt"),
+        }
+        asset = AssetProperties.model_validate(enriched_asset)
         normalized = dict(raw_asset)
         normalized.update(asset.model_dump(by_alias=True, mode="json"))
         normalized["country"] = raw_asset.get("country") or asset.geography_id.split("-", 1)[0]

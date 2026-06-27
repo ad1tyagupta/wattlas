@@ -7,6 +7,7 @@ import re
 
 PRECISION_RANK = {"region_centroid": 0, "city_centroid": 1, "exact": 2}
 LEVEL_RANK = {"country": 0, "admin_1": 1, "admin_2": 2}
+SOURCE_RANK = {"community_mapped": 1, "official_verified": 2}
 
 
 def _normalized_text(value: str, aliases: dict[str, str]) -> str:
@@ -59,7 +60,10 @@ def _similar_asset(first: dict, second: dict, aliases: dict[str, str]) -> bool:
 
 
 def _merge(first: dict, second: dict) -> dict:
-    merged = deepcopy(first)
+    first_rank = SOURCE_RANK.get(first.get("sourceType"), 0)
+    second_rank = SOURCE_RANK.get(second.get("sourceType"), 0)
+    preferred = second if second_rank > first_rank else first
+    merged = deepcopy(preferred)
     merged["sourceIds"] = sorted(set(first.get("sourceIds", [])) | set(second.get("sourceIds", [])))
     merged["externalIds"] = {**first.get("externalIds", {}), **second.get("externalIds", {})}
     merged["aliases"] = sorted(
@@ -68,7 +72,7 @@ def _merge(first: dict, second: dict) -> dict:
         | {first.get("name", ""), second.get("name", "")}
         - {""}
     )
-    if PRECISION_RANK.get(second.get("locationPrecision"), -1) > PRECISION_RANK.get(first.get("locationPrecision"), -1):
+    if first_rank == second_rank and PRECISION_RANK.get(second.get("locationPrecision"), -1) > PRECISION_RANK.get(first.get("locationPrecision"), -1):
         merged["locationPrecision"] = second["locationPrecision"]
         merged["coordinates"] = deepcopy(second.get("coordinates"))
         merged["geographyId"] = second.get("geographyId", merged.get("geographyId"))
@@ -134,3 +138,15 @@ def assign_asset_geography(asset: dict, geographies: list[dict]) -> str:
         return asset["geographyId"]
     best = max(matches, key=lambda feature: LEVEL_RANK.get(feature.get("properties", {}).get("level"), -1))
     return best.get("properties", {}).get("id") or best.get("id") or asset["geographyId"]
+
+
+def assign_asset_country(asset: dict, countries: list[dict]) -> str | None:
+    coordinates = asset.get("coordinates")
+    if not coordinates:
+        country = asset.get("country")
+        return country if country and country != "UNASSIGNED" else None
+    for feature in countries:
+        if _contains(feature.get("geometry") or {}, coordinates):
+            properties = feature.get("properties") or {}
+            return properties.get("country") or properties.get("id") or feature.get("id")
+    return None

@@ -70,6 +70,11 @@ class LocationPrecision(StrEnum):
     REGION_CENTROID = "region_centroid"
 
 
+class SourceType(StrEnum):
+    COMMUNITY_MAPPED = "community_mapped"
+    OFFICIAL_VERIFIED = "official_verified"
+
+
 Score = float | None
 
 
@@ -160,6 +165,11 @@ class AssetProperties(ContractModel):
     location_precision: LocationPrecision
     value_kind: ValueKind
     source_ids: list[str] = Field(default_factory=list)
+    operator: str | None = None
+    source_type: SourceType = SourceType.OFFICIAL_VERIFIED
+    source_url: HttpUrl | None = None
+    external_ids: dict[str, str] = Field(default_factory=dict)
+    last_observed_at: AwareDatetime | None = None
 
     @model_validator(mode="after")
     def demand_requires_evidence(self) -> "AssetProperties":
