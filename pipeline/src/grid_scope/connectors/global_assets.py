@@ -41,6 +41,7 @@ def load_asset_registry(assets_path: Path, sources_path: Path) -> dict:
         asset = AssetProperties.model_validate(raw_asset)
         normalized = dict(raw_asset)
         normalized.update(asset.model_dump(by_alias=True, mode="json"))
+        normalized["country"] = raw_asset.get("country") or asset.geography_id.split("-", 1)[0]
         assets.append(normalized)
         seen_ids.add(asset.id)
 

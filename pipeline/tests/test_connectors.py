@@ -163,6 +163,7 @@ def test_global_assets_require_public_sources_and_normalize_types(tmp_path) -> N
 
     assert registry["assets"][0]["category"] == "water_infrastructure"
     assert registry["assets"][0]["demandMw"]["central"] == 50
+    assert registry["assets"][0]["country"] == "AE"
 
 
 def test_global_assets_reject_unknown_or_non_public_source(tmp_path) -> None:

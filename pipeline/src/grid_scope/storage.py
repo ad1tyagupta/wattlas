@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from hashlib import sha256
+import json
 from pathlib import Path
 
 import duckdb
@@ -25,6 +26,15 @@ class RawCaptureStore:
                     media_type VARCHAR NOT NULL,
                     retrieved_at TIMESTAMPTZ NOT NULL,
                     PRIMARY KEY (source_id, checksum)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS canonical_assets (
+                    asset_id VARCHAR PRIMARY KEY,
+                    payload JSON NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -59,3 +69,23 @@ class RawCaptureStore:
                 [source_id],
             ).fetchone()
         return Path(row[0]) if row else None
+
+    def save_canonical_assets(self, assets: list[dict]) -> None:
+        with duckdb.connect(str(self.database_path)) as connection:
+            for asset in assets:
+                connection.execute(
+                    """
+                    INSERT INTO canonical_assets VALUES (?, ?, ?)
+                    ON CONFLICT (asset_id) DO UPDATE SET
+                        payload = excluded.payload,
+                        updated_at = excluded.updated_at
+                    """,
+                    [asset["id"], json.dumps(asset, separators=(",", ":")), datetime.now(UTC)],
+                )
+
+    def load_canonical_assets(self) -> list[dict]:
+        with duckdb.connect(str(self.database_path)) as connection:
+            rows = connection.execute(
+                "SELECT payload FROM canonical_assets ORDER BY asset_id"
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
