@@ -17,7 +17,6 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +53,6 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         env:
           ENTSOE_SECURITY_TOKEN: ${{ secrets.ENTSOE_SECURITY_TOKEN }}
-          QLEVER_OSM_URL: https://qlever.dev/api/osm-planet
         run: make refresh
 
       - name: Verify pipeline and interface

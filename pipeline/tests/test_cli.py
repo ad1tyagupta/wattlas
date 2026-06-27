@@ -50,9 +50,3 @@ def test_merge_asset_feeds_assigns_country_and_keeps_official_precedence() -> No
     assert merged["assets"][0]["country"] == "US"
     assert merged["assets"][0]["demandMw"]["central"] == 100
     assert {source["id"] for source in merged["sources"]} == {"official", "openstreetmap-infrastructure"}
-
-
-def test_daily_workflow_allows_long_public_query() -> None:
-    workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "refresh-data.yml").read_text()
-    assert "timeout-minutes: 30" in workflow
-    assert "QLEVER_OSM_URL" in workflow
