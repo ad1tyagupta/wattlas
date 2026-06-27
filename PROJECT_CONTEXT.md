@@ -2,7 +2,7 @@
 
 ## Status
 
-The product direction and complete first-version design were approved on 2026-06-27. The first working vertical slice was implemented on 2026-06-27 and is now in verification/handoff.
+The Europe-first working vertical slice was implemented on 2026-06-27. A global expansion under the product name **Wattlas** was subsequently designed and approved on 2026-06-27. That expansion is ready for implementation planning.
 
 ## Origin
 
@@ -29,6 +29,24 @@ The long-term product should combine:
 2. A cinematic WorldView-style presentation and briefing mode.
 
 The first version should be a private working instrument. It may later become public after verification.
+
+### Approved global expansion
+
+The original Europe-first scope remains the validated foundation and historical first release. The next release expands the Opportunity Radar globally while preserving the 2026–2031 horizon, public-data-only boundary, Infrastructure Demand primary score, and Site Attractiveness/System Risk supporting lenses.
+
+- **Product name:** Wattlas.
+- **Audience:** both infrastructure professionals (investors, developers, utilities, and energy planners) and an interested general public.
+- **Geography:** global country coverage with thick national boundaries; progressively reveal subnational boundaries and scores where reliable public data exists.
+- **Boundary policy:** use UN-recognized boundaries and terminology, without independently adjudicating disputed claims.
+- **Infrastructure:** combine data centres and water infrastructure in one electrical-demand model, with toggles that isolate each category.
+- **Water scope:** desalination, wastewater treatment, water reuse, electrically material pipelines/pumping, and reservoirs. Only documented or estimated electrical consumption contributes to demand; hydropower and passive storage remain supply/context layers.
+- **Asset timing:** upcoming 2026–2031 projects drive the score; existing assets provide context.
+- **Location precision:** use exact coordinates when officially public; otherwise show a labelled city or regional centroid. Never fabricate precision.
+- **Subnational priority:** ingest every reliable region available, initially prioritizing Europe, the United States and Canada, China, India, Gulf markets, and major Asia-Pacific economies. Use clearly labelled inherited national estimates where regional data is absent.
+- **Downloads:** map viewing and evidence inspection only in this release; no CSV export.
+- **Publishing:** complete a local, GitHub/Vercel-ready build first. Repository creation and production deployment follow separately.
+
+The approved global design is recorded in `docs/plans/2026-06-27-wattlas-global-expansion-design.md`.
 
 ## Decisions already approved
 
