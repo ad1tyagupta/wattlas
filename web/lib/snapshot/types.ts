@@ -52,6 +52,16 @@ export type GeographyProperties = RegionProperties & {
   categoryScoresByYear: Record<string, Record<InfrastructureCategory, LensScores>>;
   demandMwByYear: Record<string, Record<InfrastructureCategory, DemandRange | null>>;
   assetCount: number;
+  assetSummary: AssetSummary;
+};
+export type AssetSummary = {
+  total: number;
+  operational: number;
+  planned: number;
+  dataCentres: number;
+  waterInfrastructure: number;
+  officialVerified: number;
+  communityMapped: number;
 };
 export type GeographyFeature = GeoJSON.Feature<GeoJSON.Geometry, GeographyProperties> & { id: string };
 export type GeographyCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, GeographyProperties>;
@@ -68,11 +78,16 @@ export type AssetProperties = {
   locationPrecision: "exact" | "city_centroid" | "region_centroid";
   valueKind: "observed" | "reported" | "estimated" | "inherited" | "unavailable";
   sourceIds: string[];
-  operator?: string;
+  operator?: string | null;
   country: string;
   confidence: number;
   assumptionId?: string;
+  sourceType: "community_mapped" | "official_verified";
+  sourceUrl?: string | null;
+  externalIds: Record<string, string>;
+  lastObservedAt?: string | null;
 };
+export type AssetFeature = GeoJSON.Feature<GeoJSON.Point, AssetProperties> & { id: string };
 export type AssetCollection = GeoJSON.FeatureCollection<GeoJSON.Point, AssetProperties>;
 
 export type ProjectProperties = {

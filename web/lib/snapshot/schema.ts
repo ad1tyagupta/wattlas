@@ -40,6 +40,15 @@ export const demandRangeSchema = z.object({
 }).refine(({ low, central, high }) => low <= central && central <= high, {
   message: "Demand range must satisfy low <= central <= high",
 });
+export const assetSummarySchema = z.object({
+  total: z.number().int().nonnegative(),
+  operational: z.number().int().nonnegative(),
+  planned: z.number().int().nonnegative(),
+  dataCentres: z.number().int().nonnegative(),
+  waterInfrastructure: z.number().int().nonnegative(),
+  officialVerified: z.number().int().nonnegative(),
+  communityMapped: z.number().int().nonnegative(),
+});
 
 export const scoreSchema = z.number().min(0).max(100).nullable();
 
@@ -141,6 +150,15 @@ export const geographyPropertiesSchema = z.object({
   contributionsByYear: z.record(z.string(), z.array(scoreContributionSchema)),
   sourceIds: z.array(z.string()),
   assetCount: z.number().int().nonnegative(),
+  assetSummary: assetSummarySchema.default({
+    total: 0,
+    operational: 0,
+    planned: 0,
+    dataCentres: 0,
+    waterInfrastructure: 0,
+    officialVerified: 0,
+    communityMapped: 0,
+  }),
   population: z.number().int().nonnegative().nullable().optional(),
 });
 
@@ -156,10 +174,14 @@ export const assetPropertiesSchema = z.object({
   locationPrecision: locationPrecisionSchema,
   valueKind: valueKindSchema,
   sourceIds: z.array(z.string()),
-  operator: z.string().optional(),
+  operator: z.string().nullable().optional(),
   country: z.string().length(2),
   confidence: z.number().min(0).max(100),
   assumptionId: z.string().optional(),
+  sourceType: z.enum(["community_mapped", "official_verified"]).default("official_verified"),
+  sourceUrl: z.string().url().nullable().optional(),
+  externalIds: z.record(z.string(), z.string()).default({}),
+  lastObservedAt: z.string().datetime().nullable().optional(),
 }).refine(({ demandMw, sourceIds }) => demandMw === null || sourceIds.length > 0, {
   message: "Demand-contributing assets require at least one source",
   path: ["sourceIds"],

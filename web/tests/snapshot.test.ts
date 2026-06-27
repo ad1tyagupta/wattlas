@@ -77,6 +77,31 @@ describe("global snapshot entities", () => {
     expect(asset.category).toBe("water_infrastructure");
   });
 
+  it("preserves community facility provenance", () => {
+    const asset = assetPropertiesSchema.parse({
+      id: "osm-node-101",
+      name: "Alpha DC",
+      geographyId: "US",
+      category: "data_centre",
+      subtype: "other_data_centre",
+      lifecycle: "operational",
+      demandMw: null,
+      locationPrecision: "exact",
+      valueKind: "observed",
+      sourceIds: ["openstreetmap-infrastructure"],
+      sourceType: "community_mapped",
+      sourceUrl: "https://www.openstreetmap.org/node/101",
+      externalIds: { osm: "node/101" },
+      lastObservedAt: "2026-06-27T12:00:00Z",
+      operator: null,
+      country: "US",
+      confidence: 86,
+    });
+
+    expect(asset.sourceType).toBe("community_mapped");
+    expect(asset.sourceUrl).toContain("openstreetmap.org/node/101");
+  });
+
   it("loads the published countries and assets", async () => {
     const snapshot = await loadSnapshot();
 
@@ -140,7 +165,17 @@ describe("global snapshot entities", () => {
       contributionsByYear: { "2030": [] },
       sourceIds: ["source-1"],
       assetCount: 1,
+      assetSummary: {
+        total: 1,
+        operational: 0,
+        planned: 1,
+        dataCentres: 0,
+        waterInfrastructure: 1,
+        officialVerified: 1,
+        communityMapped: 0,
+      },
     });
+    expect(geography.assetSummary.planned).toBe(1);
     expect(geography.peerLevel).toBe("country");
   });
 });
