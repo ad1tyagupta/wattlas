@@ -14,18 +14,20 @@ from grid_scope.config import (
     GLOBAL_ASSETS_PATH,
     MODEL_VERSION,
     PUBLISH_DIR,
+    QLEVER_OSM_URL,
     RAW_DIR,
     SOURCE_REGISTRY_PATH,
     UN_GEODATA_URL,
     WAREHOUSE_PATH,
 )
-from grid_scope.canonicalize import canonicalize_assets
+from grid_scope.canonicalize import assign_asset_country, canonicalize_assets
 from grid_scope.connectors.base import ConnectorResult
 from grid_scope.connectors.curated import CuratedConnector
 from grid_scope.connectors.entsoe import EntsoeConnector
 from grid_scope.connectors.eurostat import EurostatConnector, parse_population
 from grid_scope.connectors.gisco import GiscoConnector
 from grid_scope.connectors.global_assets import load_asset_registry
+from grid_scope.connectors.osm_infrastructure import OSM_SOURCE_ID, OsmInfrastructureConnector
 from grid_scope.connectors.un_geodata import UnGeodataConnector
 from grid_scope.models import ConnectorState
 from grid_scope.publisher import SnapshotPublisher
@@ -64,6 +66,44 @@ def _network_result(
         raise
 
 
+def merge_asset_feeds(
+    countries: dict,
+    official_registry: dict,
+    osm_payload: dict,
+    *,
+    observed_at: str,
+) -> dict:
+    country_features = countries.get("features", [])
+    community_assets: list[dict] = []
+    for source_asset in osm_payload.get("assets", []):
+        asset = dict(source_asset)
+        country = assign_asset_country(asset, country_features)
+        if not country:
+            continue
+        asset["country"] = country
+        if asset.get("geographyId") == "UNASSIGNED":
+            asset["geographyId"] = country
+        community_assets.append(asset)
+
+    sources = list(official_registry.get("sources", []))
+    if not any(source.get("id") == OSM_SOURCE_ID for source in sources):
+        sources.append({
+            "id": OSM_SOURCE_ID,
+            "name": "OpenStreetMap infrastructure mapping",
+            "tier": "C",
+            "url": "https://www.openstreetmap.org/copyright",
+            "publishedAt": observed_at,
+        })
+    return {
+        **official_registry,
+        "sources": sources,
+        "assets": canonicalize_assets([
+            *community_assets,
+            *official_registry.get("assets", []),
+        ]),
+    }
+
+
 def refresh() -> Path:
     now = datetime.now(UTC).replace(microsecond=0)
     generated_at = now.isoformat().replace("+00:00", "Z")
@@ -81,6 +121,11 @@ def refresh() -> Path:
         )
         eurostat_body, eurostat_status = _network_result(
             lambda: EurostatConnector().fetch(client, now=now), "eurostat", store
+        )
+        osm_body, osm_status = _network_result(
+            lambda: OsmInfrastructureConnector(QLEVER_OSM_URL).fetch(client, now=now),
+            "osm_infrastructure",
+            store,
         )
 
     curated_result = CuratedConnector(CURATED_PATH).fetch(now=now)
@@ -107,11 +152,17 @@ def refresh() -> Path:
     curated = json.loads(curated_result.payload.body)
     europe_artifacts = build_snapshot_artifacts(geometry, population, curated, generated_at)
     registry = load_asset_registry(GLOBAL_ASSETS_PATH, SOURCE_REGISTRY_PATH)
-    registry["assets"] = canonicalize_assets(registry["assets"])
+    countries = json.loads(countries_body)
+    registry = merge_asset_feeds(
+        countries,
+        registry,
+        json.loads(osm_body),
+        observed_at=generated_at,
+    )
     registry["modelNote"] = json.loads(GLOBAL_ASSETS_PATH.read_text()).get("modelNote")
     store.save_canonical_assets(registry["assets"])
     artifacts = build_global_snapshot_artifacts(
-        countries=json.loads(countries_body),
+        countries=countries,
         regions=json.loads(europe_artifacts["regions.geojson"]),
         registry=registry,
         generated_at=generated_at,
@@ -121,6 +172,7 @@ def refresh() -> Path:
         countries_status,
         gisco_status,
         eurostat_status,
+        osm_status,
         global_assets_result,
         source_registry_result,
         curated_result,
