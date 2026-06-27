@@ -14,7 +14,8 @@ test("renders the map and updates the analytical view", async ({ page }, testInf
   await expect(page.locator(".maplibregl-canvas")).toBeVisible();
   await expect(page.locator(".map-container")).toHaveAttribute("data-map-loaded", "true");
   await expect(page.locator(".map-meta")).toContainText("246 countries");
-  await expect(page.locator(".map-meta")).toContainText("14 infrastructure assets");
+  await expect(page.locator(".map-meta")).toContainText("3634 infrastructure assets");
+  await expect(page.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toBeVisible();
 
   const mapBox = await page.locator(".map-container").boundingBox();
   expect(mapBox?.height).toBeGreaterThan(300);
