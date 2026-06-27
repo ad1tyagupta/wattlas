@@ -3,4 +3,4 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-exec "$ROOT/.venv/bin/grid-scope-refresh" refresh
+PYTHONPATH="$ROOT/pipeline/src" exec "$ROOT/.venv/bin/python" -m grid_scope.cli refresh

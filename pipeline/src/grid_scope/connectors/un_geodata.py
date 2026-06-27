@@ -16,7 +16,7 @@ UN_BOUNDARY_DISCLAIMER = (
 
 
 def normalize_countries(collection: dict) -> dict:
-    features: list[dict] = []
+    features_by_id: dict[str, dict] = {}
     for source in collection.get("features", []):
         if (source.get("geometry") or {}).get("type") not in {"Polygon", "MultiPolygon"}:
             continue
@@ -33,31 +33,48 @@ def normalize_countries(collection: dict) -> dict:
         name = properties.get("nam_en") or properties.get("NAME_EN")
         if not name:
             raise ValueError(f"UN country {iso2} has no name")
-        features.append(
-            {
-                "type": "Feature",
-                "id": iso2,
-                "geometry": source.get("geometry"),
-                "properties": {
-                    "id": iso2,
-                    "name": name,
-                    "country": iso2,
-                    "iso3": properties.get("iso3cd") or properties.get("ISO3CD"),
-                    "m49": properties.get("m49_cd") or properties.get("M49_CD"),
-                    "level": "country",
-                    "parentId": None,
-                    "peerLevel": "country",
-                    "sourceId": "un_geodata",
-                },
+        geometry = source.get("geometry")
+        existing = features_by_id.get(iso2)
+        if existing:
+            existing_geometry = existing["geometry"]
+            existing_polygons = (
+                [existing_geometry["coordinates"]]
+                if existing_geometry["type"] == "Polygon"
+                else existing_geometry["coordinates"]
+            )
+            new_polygons = (
+                [geometry["coordinates"]]
+                if geometry["type"] == "Polygon"
+                else geometry["coordinates"]
+            )
+            existing["geometry"] = {
+                "type": "MultiPolygon",
+                "coordinates": [*existing_polygons, *new_polygons],
             }
-        )
+            continue
+        features_by_id[iso2] = {
+            "type": "Feature",
+            "id": iso2,
+            "geometry": geometry,
+            "properties": {
+                "id": iso2,
+                "name": name,
+                "country": iso2,
+                "iso3": properties.get("iso3cd") or properties.get("ISO3CD"),
+                "m49": properties.get("m49_cd") or properties.get("M49_CD"),
+                "level": "country",
+                "parentId": None,
+                "peerLevel": "country",
+                "sourceId": "un_geodata",
+            },
+        }
     return {
         "type": "FeatureCollection",
         "metadata": {
             "source": "United Nations Geodata simplified",
             "disclaimer": UN_BOUNDARY_DISCLAIMER,
         },
-        "features": features,
+        "features": list(features_by_id.values()),
     }
 
 

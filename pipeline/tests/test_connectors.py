@@ -129,6 +129,31 @@ def test_un_geodata_ignores_boundary_line_layers() -> None:
     assert result["features"] == []
 
 
+def test_un_geodata_merges_repeated_country_polygons() -> None:
+    source = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
+                "properties": {"iso2cd": "US", "iso3cd": "USA", "m49_cd": "840", "nam_en": "United States of America"},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [[[2, 2], [3, 2], [3, 3], [2, 2]]]},
+                "properties": {"iso2cd": "US", "iso3cd": "USA", "m49_cd": "840", "nam_en": "United States of America"},
+            },
+        ],
+    }
+
+    result = normalize_countries(source)
+
+    assert len(result["features"]) == 1
+    assert result["features"][0]["id"] == "US"
+    assert result["features"][0]["geometry"]["type"] == "MultiPolygon"
+    assert len(result["features"][0]["geometry"]["coordinates"]) == 2
+
+
 def test_un_salb_retains_admin_parent_relationships() -> None:
     payload = json.loads((FIXTURES / "un-salb-sample.geojson").read_text())
 

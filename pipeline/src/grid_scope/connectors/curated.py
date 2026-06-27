@@ -10,8 +10,9 @@ from grid_scope.models import ConnectorState
 class CuratedConnector:
     source_id = "curated_evidence"
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, source_id: str = "curated_evidence") -> None:
         self.path = path
+        self.source_id = source_id
 
     def fetch(self, *, now: datetime | None = None) -> ConnectorResult:
         body = self.path.read_bytes()

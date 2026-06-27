@@ -11,19 +11,25 @@ import httpx
 
 from grid_scope.config import (
     CURATED_PATH,
+    GLOBAL_ASSETS_PATH,
     MODEL_VERSION,
     PUBLISH_DIR,
     RAW_DIR,
+    SOURCE_REGISTRY_PATH,
+    UN_GEODATA_URL,
     WAREHOUSE_PATH,
 )
+from grid_scope.canonicalize import canonicalize_assets
 from grid_scope.connectors.base import ConnectorResult
 from grid_scope.connectors.curated import CuratedConnector
 from grid_scope.connectors.entsoe import EntsoeConnector
 from grid_scope.connectors.eurostat import EurostatConnector, parse_population
 from grid_scope.connectors.gisco import GiscoConnector
+from grid_scope.connectors.global_assets import load_asset_registry
+from grid_scope.connectors.un_geodata import UnGeodataConnector
 from grid_scope.models import ConnectorState
 from grid_scope.publisher import SnapshotPublisher
-from grid_scope.snapshot_builder import build_snapshot_artifacts
+from grid_scope.snapshot_builder import build_global_snapshot_artifacts, build_snapshot_artifacts
 from grid_scope.storage import RawCaptureStore
 
 
@@ -64,7 +70,12 @@ def refresh() -> Path:
     snapshot_id = generated_at.replace(":", "-")
     store = RawCaptureStore(RAW_DIR, WAREHOUSE_PATH)
 
-    with httpx.Client(timeout=60, follow_redirects=True) as client:
+    with httpx.Client(timeout=90, follow_redirects=True) as client:
+        countries_body, countries_status = _network_result(
+            lambda: UnGeodataConnector(UN_GEODATA_URL).fetch(client, now=now),
+            "un_geodata",
+            store,
+        )
         gisco_body, gisco_status = _network_result(
             lambda: GiscoConnector().fetch(client, now=now), "gisco", store
         )
@@ -81,22 +92,61 @@ def refresh() -> Path:
     )
     entsoe_status = EntsoeConnector(os.getenv("ENTSOE_SECURITY_TOKEN")).fetch(now=now)
 
+    global_assets_result = CuratedConnector(
+        GLOBAL_ASSETS_PATH, source_id="global_assets"
+    ).fetch(now=now)
+    source_registry_result = CuratedConnector(
+        SOURCE_REGISTRY_PATH, source_id="source_registry"
+    ).fetch(now=now)
+    for result in (global_assets_result, source_registry_result):
+        assert result.payload is not None
+        store.save(result.source_id, result.payload.body, result.payload.media_type)
+
     geometry = json.loads(gisco_body)
     population = parse_population(json.loads(eurostat_body))
     curated = json.loads(curated_result.payload.body)
-    artifacts = build_snapshot_artifacts(geometry, population, curated, generated_at)
+    europe_artifacts = build_snapshot_artifacts(geometry, population, curated, generated_at)
+    registry = load_asset_registry(GLOBAL_ASSETS_PATH, SOURCE_REGISTRY_PATH)
+    registry["assets"] = canonicalize_assets(registry["assets"])
+    registry["modelNote"] = json.loads(GLOBAL_ASSETS_PATH.read_text()).get("modelNote")
+    store.save_canonical_assets(registry["assets"])
+    artifacts = build_global_snapshot_artifacts(
+        countries=json.loads(countries_body),
+        regions=json.loads(europe_artifacts["regions.geojson"]),
+        registry=registry,
+        generated_at=generated_at,
+    )
 
-    statuses = [gisco_status, eurostat_status, curated_result, entsoe_status]
+    statuses = [
+        countries_status,
+        gisco_status,
+        eurostat_status,
+        global_assets_result,
+        source_registry_result,
+        curated_result,
+        entsoe_status,
+    ]
+    country_count = len(json.loads(artifacts["countries.geojson"])["features"])
+    asset_features = json.loads(artifacts["assets.geojson"])["features"]
     manifest = {
         "snapshotId": snapshot_id,
         "generatedAt": generated_at,
         "modelVersion": MODEL_VERSION,
         "activeYears": [2026, 2027, 2028, 2029, 2030, 2031],
         "artifacts": {
+            "countries": f"snapshots/{snapshot_id}/countries.geojson",
             "regions": f"snapshots/{snapshot_id}/regions.geojson",
-            "projects": f"snapshots/{snapshot_id}/projects.geojson",
+            "assets": f"snapshots/{snapshot_id}/assets.geojson",
             "evidence": f"snapshots/{snapshot_id}/evidence.json",
         },
+        "coverage": {
+            "countries": country_count,
+            "regions": len(json.loads(artifacts["regions.geojson"])["features"]),
+            "assets": len(asset_features),
+            "dataCentres": sum(feature["properties"]["category"] == "data_centre" for feature in asset_features),
+            "waterInfrastructure": sum(feature["properties"]["category"] == "water_infrastructure" for feature in asset_features),
+        },
+        "boundaryDisclaimer": json.loads(artifacts["countries.geojson"]).get("metadata", {}).get("disclaimer"),
         "connectors": [
             {
                 "id": result.source_id,
@@ -117,7 +167,7 @@ def refresh() -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build the GRID//SCOPE daily snapshot from public sources."
+        description="Build the Wattlas daily snapshot from public sources."
     )
     parser.add_argument("command", nargs="?", choices=["refresh"], default="refresh")
     return parser

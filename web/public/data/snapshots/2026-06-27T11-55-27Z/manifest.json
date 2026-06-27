@@ -1,0 +1,84 @@
+{
+  "activeYears": [
+    2026,
+    2027,
+    2028,
+    2029,
+    2030,
+    2031
+  ],
+  "artifacts": {
+    "assets": "snapshots/2026-06-27T11-55-27Z/assets.geojson",
+    "countries": "snapshots/2026-06-27T11-55-27Z/countries.geojson",
+    "evidence": "snapshots/2026-06-27T11-55-27Z/evidence.json",
+    "regions": "snapshots/2026-06-27T11-55-27Z/regions.geojson"
+  },
+  "boundaryDisclaimer": "The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.",
+  "checksums": {
+    "assets.geojson": "dc3f2fd024aa9d6b7a1c37b1eb99c767a2f5e3ec385de232989f94e50e8972b4",
+    "countries.geojson": "e94ac9361faaa3e803fc38acbc24332ce5230e5db8a7923a6be8a9170491774f",
+    "evidence.json": "aedf06a19f39fffc17bf68e5c059769a078e2c8dd99dd3216b565e007df4447f",
+    "regions.geojson": "bcb6a0c539bbb1f7f7f431d4bb64532d8acc0e5f4ab7e830011e6a3d5a89716c"
+  },
+  "connectors": [
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "un_geodata",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "gisco",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "eurostat",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "global_assets",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "source_registry",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "curated_evidence",
+      "lastSuccessAt": "2026-06-27T11:55:27Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T11:55:27Z",
+      "id": "entsoe",
+      "lastSuccessAt": null,
+      "message": "ENTSO-E security token is not configured.",
+      "state": "not_configured"
+    }
+  ],
+  "coverage": {
+    "assets": 14,
+    "countries": 246,
+    "dataCentres": 8,
+    "regions": 334,
+    "waterInfrastructure": 6
+  },
+  "generatedAt": "2026-06-27T11:55:27Z",
+  "modelVersion": "2.0.0",
+  "snapshotId": "2026-06-27T11-55-27Z"
+}
