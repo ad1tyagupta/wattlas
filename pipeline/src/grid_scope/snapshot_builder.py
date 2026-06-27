@@ -17,19 +17,11 @@ YEAR_FACTORS = {
 
 
 def _supporting_scores(drivers: dict[str, float]) -> tuple[int, int]:
-    scarcity = drivers["connection_scarcity"]
-    reinforcement = drivers["reinforcement_gap"]
-    supply = drivers["firm_flexible_supply_gap"]
-    cooling = drivers["cooling_water_stress"]
-    compute = drivers["compute_load_pressure"]
-    attractiveness = round(
-        100
-        - 0.32 * scarcity
-        - 0.18 * reinforcement
-        - 0.14 * cooling
-        + 0.16 * compute
-    )
-    risk = round(0.36 * scarcity + 0.26 * supply + 0.20 * reinforcement + 0.18 * cooling)
+    load = drivers["projected_load"]
+    timing = drivers["delivery_timing"]
+    shock = drivers["local_load_shock"]
+    attractiveness = round(54 + 0.28 * load + 0.18 * timing - 0.24 * shock)
+    risk = round(0.72 * shock + 0.18 * load + 0.10 * (100 - timing))
     return max(0, min(100, attractiveness)), max(0, min(100, risk))
 
 
@@ -55,7 +47,13 @@ def build_snapshot_artifacts(
                     key: min(100, round(value * factor, 1))
                     for key, value in cluster["drivers2030"].items()
                 }
-                demand = score_infrastructure_demand(values)
+                demand = score_infrastructure_demand(
+                    projected_load_index=values.get("projected_load"),
+                    delivery_timing_index=values.get("delivery_timing"),
+                    local_load_shock_index=values.get("local_load_shock"),
+                    confidence=cluster["confidence"],
+                    source_ids=cluster["sourceIds"],
+                )
                 attractiveness, risk = _supporting_scores(values)
                 scores_by_year[str(year)] = {
                     "infrastructureDemand": demand.score,

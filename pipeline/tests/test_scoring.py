@@ -1,40 +1,52 @@
-from grid_scope.scoring import score_infrastructure_demand
+from grid_scope.scoring import (
+    combine_asset_demand,
+    lifecycle_timing_index,
+    score_infrastructure_demand,
+)
 
 
-def test_infrastructure_demand_is_visible_weighted_sum() -> None:
+def test_infrastructure_demand_uses_approved_weights() -> None:
     result = score_infrastructure_demand(
-        {
-            "compute_load_pressure": 88,
-            "connection_scarcity": 84,
-            "reinforcement_gap": 80,
-            "firm_flexible_supply_gap": 60,
-            "cooling_water_stress": 70,
-        }
+        projected_load_index=80,
+        delivery_timing_index=60,
+        local_load_shock_index=40,
     )
 
-    assert result.score == 78
-    assert [item.max_points for item in result.contributions] == [25, 25, 20, 20, 10]
+    assert result.score == 67
+    assert [item.max_points for item in result.contributions] == [60, 15, 25]
     assert sum(item.points for item in result.contributions) == result.score
     assert result.status == "rankable"
 
 
-def test_missing_is_not_zero_and_can_make_region_unrankable() -> None:
-    result = score_infrastructure_demand({"compute_load_pressure": 88})
+def test_missing_is_not_zero_and_can_make_geography_unrankable() -> None:
+    result = score_infrastructure_demand(projected_load_index=88)
 
     assert result.score is None
-    assert result.coverage == 25
+    assert result.coverage == 60
     assert result.status == "not_yet_rankable"
 
 
-def test_rankable_requires_compute_and_grid_constraint() -> None:
-    result = score_infrastructure_demand(
-        {
-            "firm_flexible_supply_gap": 90,
-            "cooling_water_stress": 90,
-            "reinforcement_gap": 90,
-            "connection_scarcity": 90,
-        }
+def test_confidence_does_not_change_demand_score() -> None:
+    low_confidence = score_infrastructure_demand(
+        projected_load_index=80,
+        delivery_timing_index=60,
+        local_load_shock_index=40,
+        confidence=20,
+    )
+    high_confidence = score_infrastructure_demand(
+        projected_load_index=80,
+        delivery_timing_index=60,
+        local_load_shock_index=40,
+        confidence=95,
     )
 
-    assert result.coverage == 75
-    assert result.score is None
+    assert low_confidence.score == high_confidence.score == 67
+
+
+def test_combined_load_sums_mw_not_category_scores() -> None:
+    assert combine_asset_demand(data_centre_mw=900, water_mw=100) == 1000
+
+
+def test_lifecycle_timing_rewards_near_term_delivery() -> None:
+    assert lifecycle_timing_index("under_construction", 2027) > lifecycle_timing_index("announced", 2031)
+    assert lifecycle_timing_index("cancelled", 2027) == 0

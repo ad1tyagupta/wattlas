@@ -13,11 +13,9 @@ class DriverDefinition:
 
 
 DRIVERS = (
-    DriverDefinition("compute_load_pressure", "Compute-load pressure", 25),
-    DriverDefinition("connection_scarcity", "Connection scarcity", 25),
-    DriverDefinition("reinforcement_gap", "Grid-reinforcement gap", 20),
-    DriverDefinition("firm_flexible_supply_gap", "Firm and flexible supply gap", 20),
-    DriverDefinition("cooling_water_stress", "Cooling and water stress", 10),
+    DriverDefinition("projected_load", "Projected electrical load", 60),
+    DriverDefinition("delivery_timing", "Delivery timing", 15),
+    DriverDefinition("local_load_shock", "Local load shock", 25),
 )
 
 
@@ -29,11 +27,25 @@ class ScoreResult:
     contributions: list[ScoreContribution]
 
 
-def score_infrastructure_demand(values: dict[str, float | None]) -> ScoreResult:
+def score_infrastructure_demand(
+    *,
+    projected_load_index: float | None = None,
+    delivery_timing_index: float | None = None,
+    local_load_shock_index: float | None = None,
+    confidence: float | None = None,
+    source_ids: list[str] | None = None,
+) -> ScoreResult:
+    """Score demand without allowing confidence to alter the estimate."""
+    del confidence
+    values = {
+        "projected_load": projected_load_index,
+        "delivery_timing": delivery_timing_index,
+        "local_load_shock": local_load_shock_index,
+    }
     contributions: list[ScoreContribution] = []
     coverage = 0
     for driver in DRIVERS:
-        raw_value = values.get(driver.id)
+        raw_value = values[driver.id]
         if raw_value is None:
             continue
         normalized = max(0.0, min(100.0, float(raw_value)))
@@ -47,18 +59,17 @@ def score_infrastructure_demand(values: dict[str, float | None]) -> ScoreResult:
                 points=points,
                 max_points=driver.weight,
                 value_kind=ValueKind.ESTIMATED,
-                source_ids=[],
-                normalization="Fixed 0–100 driver threshold, model 1.0.0",
+                source_ids=source_ids or [],
+                normalization="Fixed 0–100 threshold, Wattlas model 2.0.0",
             )
         )
         coverage += driver.weight
 
-    has_compute = values.get("compute_load_pressure") is not None
-    has_grid_constraint = any(
-        values.get(driver_id) is not None
-        for driver_id in ("connection_scarcity", "reinforcement_gap")
+    rankable = (
+        coverage == 100
+        and projected_load_index is not None
+        and local_load_shock_index is not None
     )
-    rankable = coverage >= 60 and has_compute and has_grid_constraint
     score = round(sum(item.points for item in contributions)) if rankable else None
     return ScoreResult(
         score=score,
@@ -66,3 +77,24 @@ def score_infrastructure_demand(values: dict[str, float | None]) -> ScoreResult:
         status="rankable" if rankable else "not_yet_rankable",
         contributions=contributions,
     )
+
+
+def combine_asset_demand(*, data_centre_mw: float | None, water_mw: float | None) -> float | None:
+    present = [value for value in (data_centre_mw, water_mw) if value is not None]
+    return sum(present) if present else None
+
+
+def lifecycle_timing_index(lifecycle: str, target_year: int | None) -> int:
+    lifecycle_weight = {
+        "operational": 100,
+        "under_construction": 92,
+        "permitted": 78,
+        "planning_filed": 62,
+        "announced": 48,
+        "paused": 20,
+        "cancelled": 0,
+    }.get(lifecycle, 0)
+    if lifecycle_weight == 0 or target_year is None:
+        return lifecycle_weight
+    year_weight = {2026: 100, 2027: 92, 2028: 82, 2029: 70, 2030: 58, 2031: 46}.get(target_year, 0)
+    return round(0.65 * lifecycle_weight + 0.35 * year_weight)

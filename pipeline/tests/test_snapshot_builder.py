@@ -39,11 +39,9 @@ def test_builder_keeps_uncovered_regions_unranked() -> None:
             "sourceIds": ["source-1"],
             "confidence": 70,
             "drivers2030": {
-                "compute_load_pressure": 88,
-                "connection_scarcity": 84,
-                "reinforcement_gap": 80,
-                "firm_flexible_supply_gap": 60,
-                "cooling_water_stress": 70,
+                "projected_load": 80,
+                "delivery_timing": 60,
+                "local_load_shock": 40,
             },
         }],
     }
@@ -52,7 +50,7 @@ def test_builder_keeps_uncovered_regions_unranked() -> None:
     regions = json.loads(artifacts["regions.geojson"])
     by_id = {feature["id"]: feature for feature in regions["features"]}
 
-    assert by_id["DE71"]["properties"]["scoresByYear"]["2030"]["infrastructureDemand"] == 78
+    assert by_id["DE71"]["properties"]["scoresByYear"]["2030"]["infrastructureDemand"] == 67
     assert by_id["DE72"]["properties"]["scoresByYear"]["2030"]["infrastructureDemand"] is None
     assert by_id["DE72"]["properties"]["valueKind"] == "unavailable"
     assert len(json.loads(artifacts["projects.geojson"])["features"]) == 1
