@@ -20,5 +20,9 @@ export function connectorLabel(id: string): string {
     eurostat: "Eurostat regional context",
     curated_evidence: "Curated project evidence",
     entsoe: "ENTSO-E electricity data",
+    osm_infrastructure: "OpenStreetMap infrastructure",
+    un_geodata: "United Nations boundaries",
+    global_assets: "Curated global projects",
+    source_registry: "Public source registry",
   }[id] ?? id;
 }

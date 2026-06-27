@@ -383,6 +383,23 @@ button {
   letter-spacing: .02em;
 }
 
+.data-attribution {
+  position: absolute;
+  z-index: 4;
+  right: 8px;
+  bottom: 25px;
+  padding: 4px 6px;
+  color: var(--muted);
+  background: rgb(7 16 15 / 76%);
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 8px;
+  text-decoration: none;
+}
+
+.data-attribution:hover {
+  color: var(--text);
+}
+
 .maplibregl-map {
   font-family: var(--font-plex-sans), sans-serif;
 }

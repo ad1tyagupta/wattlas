@@ -52,6 +52,7 @@ describe("GlobalMap", () => {
     expect(GLOBAL_VIEW.zoom).toBeLessThan(2);
     expect(screen.getByRole("region", { name: "Global opportunity map" })).toBeInTheDocument();
     expect(screen.getByText(/246 countries · 14 infrastructure assets/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toHaveAttribute("href", "https://www.openstreetmap.org/copyright");
   });
 
   it("clusters infrastructure while preserving selectable facility layers", () => {

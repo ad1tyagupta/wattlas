@@ -259,6 +259,9 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         <small>{coverage.countries} countries · {coverage.assets} infrastructure assets</small>
       </div>
       <div ref={containerRef} className="map-container" data-testid="global-map" />
+      <a className="data-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">
+        Infrastructure © OpenStreetMap contributors · ODbL
+      </a>
     </section>
   );
 }
