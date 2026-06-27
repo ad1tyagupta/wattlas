@@ -80,6 +80,15 @@ def test_nearby_but_materially_different_assets_remain_separate() -> None:
     assert len(canonicalize_assets(records)) == 2
 
 
+def test_community_assets_without_operators_do_not_crash_or_merge() -> None:
+    records = [
+        asset(id="osm-node-1", externalIds={"osm": "node/1"}, operator=None, name="Mapped data centre · OSM 1"),
+        asset(id="osm-node-2", externalIds={"osm": "node/2"}, operator=None, name="Mapped data centre · OSM 2"),
+    ]
+
+    assert len(canonicalize_assets(records)) == 2
+
+
 def test_exact_point_is_spatially_assigned_to_most_specific_geography() -> None:
     geographies = [
         {

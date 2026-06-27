@@ -10,8 +10,8 @@ LEVEL_RANK = {"country": 0, "admin_1": 1, "admin_2": 2}
 SOURCE_RANK = {"community_mapped": 1, "official_verified": 2}
 
 
-def _normalized_text(value: str, aliases: dict[str, str]) -> str:
-    tokens = re.findall(r"[a-z0-9]+", value.lower())
+def _normalized_text(value: str | None, aliases: dict[str, str]) -> str:
+    tokens = re.findall(r"[a-z0-9]+", (value or "").lower())
     expanded: list[str] = []
     for token in tokens:
         expanded.extend(aliases.get(token, token).split())
