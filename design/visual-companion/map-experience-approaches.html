@@ -1,0 +1,85 @@
+<h2>Design section 3 · Which map should become the product’s home?</h2>
+<p class="subtitle">All approaches use the approved daily snapshot, 2026–2031 timeline, Infrastructure Demand primary score, and Site Attractiveness/System Risk supporting lenses. Click the direction that feels right.</p>
+
+<div class="cards">
+  <div class="card" data-choice="map-first-canvas" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#071016;color:#d8e7e7;padding:10px;min-height:310px;font-family:ui-monospace,monospace">
+      <div style="display:flex;align-items:center;gap:12px;font-size:8px;border-bottom:1px solid #203740;padding-bottom:8px"><b style="color:#7be6c4;letter-spacing:.12em">GRID//SCOPE</b><span>EUROPE</span><span style="margin-left:auto;color:#7be6c4">● DAILY SNAPSHOT · 04:12 CET</span></div>
+      <div style="display:grid;grid-template-columns:86px 1fr 124px;height:250px">
+        <div style="border-right:1px solid #203740;padding:9px 7px;font-size:7px;line-height:2.1">
+          <span style="color:#789099">LENS</span><br><b style="color:#7be6c4">▣ Demand</b><br>□ Attractiveness<br>□ System risk<br><br><span style="color:#789099">LAYERS</span><br>◉ Regions<br>◉ Projects<br>◉ Grid nodes<br>◉ Generation<br>◉ Climate
+        </div>
+        <div style="position:relative;background:radial-gradient(circle at 53% 45%,#173640,#071016 68%);overflow:hidden">
+          <svg viewBox="0 0 300 230" style="width:100%;height:100%" aria-label="Stylised Europe map">
+            <g fill="#17343b" stroke="#3c6670" stroke-width="1.2">
+              <path d="M115 43l28-15 35 12 11 25-14 21-31 4-26-19z"/><path d="M78 91l30-12 27 11 5 29-20 25-35-8-16-21z"/><path d="M142 98l30-10 29 15 7 28-17 25-37-3-18-26z"/><path d="M208 91l29-3 23 22-4 34-30 12-20-19z"/><path d="M121 150l27 3 17 31-14 28-22-8-17-28z"/><path d="M82 144l27 4 5 30-23 20-21-16z"/>
+            </g>
+            <g>
+              <circle cx="132" cy="104" r="18" fill="#ffcc6630" stroke="#ffcc66"/><circle cx="132" cy="104" r="5" fill="#ffcc66"/>
+              <circle cx="91" cy="112" r="13" fill="#ff7b7230" stroke="#ff7b72"/><circle cx="91" cy="112" r="4" fill="#ff7b72"/>
+              <circle cx="177" cy="125" r="10" fill="#7be6c430" stroke="#7be6c4"/><circle cx="177" cy="125" r="4" fill="#7be6c4"/>
+              <circle cx="157" cy="63" r="9" fill="#8faeff30" stroke="#8faeff"/><circle cx="157" cy="63" r="3" fill="#8faeff"/>
+              <path d="M92 111Q124 87 132 103T177 124" fill="none" stroke="#7be6c4" stroke-width="1.3" stroke-dasharray="4 3"/>
+            </g>
+          </svg>
+          <div style="position:absolute;left:8px;top:8px;padding:5px 7px;background:#0a151cdd;border:1px solid #28444d;font-size:7px">2030 · DEMAND HEATMAP</div>
+          <div style="position:absolute;left:8px;bottom:8px;right:8px;height:25px;padding:5px;background:#09141bdd;border:1px solid #203740;box-sizing:border-box;font-size:6px;display:flex;justify-content:space-between"><span>2026</span><span>2027</span><span>2028</span><b style="color:#ffcc66">2030</b><span>2031</span></div>
+        </div>
+        <div style="border-left:1px solid #203740;padding:9px 8px;font-size:7px">
+          <span style="color:#789099">SELECTED REGION</span><br><b style="font:12px system-ui,sans-serif">Frankfurt Rhine-Main</b>
+          <div style="display:flex;align-items:end;gap:5px;margin:9px 0"><b style="font:25px system-ui,sans-serif;color:#ffcc66">78</b><span>DEMAND<br>2030</span></div>
+          <div style="padding:5px;background:#11242b;color:#7be6c4">MEDIUM CONFIDENCE · 72%</div>
+          <div style="margin-top:9px;line-height:1.8">Compute pressure <b style="float:right">22</b><br>Connection scarcity <b style="float:right">21</b><br>Reinforcement gap <b style="float:right">16</b></div>
+          <div style="margin-top:9px;color:#9eb2b7">6 projects · 11 sources<br>Latest change: today</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="label">A · Recommended</p>
+      <h3>Map-first analytical canvas</h3>
+      <p>A fast 2D Europe map is always the workspace. Zoom reveals regions, clusters, projects, grid nodes, and evidence without leaving spatial context.</p>
+      <div class="pros-cons"><div class="pros"><h4>Strengths</h4><ul><li>Best daily analytical tool</li><li>Dense but explainable</li><li>Works well on ordinary hardware</li></ul></div><div class="cons"><h4>Trade-off</h4><ul><li>Less cinematic than a globe</li></ul></div></div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="globe-to-map" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#080d12;color:#e8edf0;padding:12px;min-height:310px;font-family:ui-monospace,monospace">
+      <div style="font-size:8px;color:#ff9f43">EUROPE · OPPORTUNITY ORBIT</div>
+      <div style="height:210px;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 46%,#17333d,#080d12 65%)">
+        <div style="position:absolute;width:190px;height:190px;border:1px solid #47616b;border-radius:50%;left:50%;top:48%;transform:translate(-50%,-50%);box-shadow:inset -30px -20px 55px #020609">
+          <span style="position:absolute;left:54%;top:35%;width:11px;height:11px;border-radius:50%;background:#ffcc66;box-shadow:0 0 16px #ffcc66"></span><span style="position:absolute;left:35%;top:48%;width:8px;height:8px;border-radius:50%;background:#ff7b72"></span><span style="position:absolute;left:62%;top:57%;width:8px;height:8px;border-radius:50%;background:#7be6c4"></span>
+        </div>
+        <div style="position:absolute;left:9px;bottom:9px;padding:7px;background:#0a1117dd;border-left:2px solid #ff9f43;font-size:7px">CLICK HOTSPOT<br><b>DESCEND TO REGIONAL MAP</b></div>
+      </div>
+      <div style="height:31px;border-top:1px solid #26343b;display:flex;align-items:center;justify-content:space-between;font-size:7px"><span>GLOBE</span><span>→ COUNTRY</span><span>→ REGION</span><span>→ SITE</span></div>
+    </div>
+    <div class="card-body">
+      <p class="label">B</p>
+      <h3>Globe-to-map command center</h3>
+      <p>Begin on a cinematic 3D globe, then descend through country and region to site-level analysis.</p>
+      <div class="pros-cons"><div class="pros"><h4>Strengths</h4><ul><li>Most memorable</li><li>Strong briefing experience</li></ul></div><div class="cons"><h4>Trade-offs</h4><ul><li>More GPU and development cost</li><li>Slower for repeated analysis</li></ul></div></div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="regional-atlas" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f4f6f8;color:#202a31;padding:12px;min-height:310px;font-family:ui-monospace,monospace">
+      <div style="display:flex;justify-content:space-between;font-size:8px"><b>EUROPEAN INFRASTRUCTURE ATLAS</b><span>UPDATED TODAY</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+        <div style="height:168px;background:#dbe5e8;position:relative;border:1px solid #b9c8cc"><div style="position:absolute;width:115px;height:130px;background:#9ec8bd;clip-path:polygon(38% 0,72% 13%,100% 43%,79% 100%,39% 85%,0 57%,13% 21%);left:28%;top:10%"></div><span style="position:absolute;left:52%;top:38%;width:12px;height:12px;border-radius:50%;background:#c46b4f"></span></div>
+        <div style="font-size:7px;display:grid;gap:6px"><div style="padding:8px;background:white;border-left:3px solid #c46b4f"><b>1 · FRANKFURT</b><br>Demand 78 · Conf. 72%</div><div style="padding:8px;background:white;border-left:3px solid #d6a84d"><b>2 · DUBLIN</b><br>Demand 74 · Conf. 81%</div><div style="padding:8px;background:white;border-left:3px solid #5d9e8c"><b>3 · NORDICS</b><br>Demand 69 · Conf. 68%</div></div>
+      </div>
+      <div style="margin-top:9px;height:48px;background:white;border:1px solid #d1d9dd;padding:7px;font-size:7px">REGION COMPARISON<br><span style="display:inline-block;width:70%;height:6px;background:#c46b4f;margin-top:8px"></span><span style="display:inline-block;width:54%;height:6px;background:#d6a84d"></span></div>
+    </div>
+    <div class="card-body">
+      <p class="label">C</p>
+      <h3>Regional atlas</h3>
+      <p>A conventional choropleth paired with rankings and comparison tables. The map supports the analysis rather than owning the screen.</p>
+      <div class="pros-cons"><div class="pros"><h4>Strengths</h4><ul><li>Easiest to learn</li><li>Excellent comparisons</li></ul></div><div class="cons"><h4>Trade-off</h4><ul><li>Least distinctive and immersive</li></ul></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <h3>Recommendation</h3>
+  <p>Use <b>A as the primary product</b>: a 2D map-first analytical canvas with progressive zoom and a persistent regional inspector. Preserve <b>B as the later Cinematic Briefing mode</b>. Borrow C’s comparison drawer when users select two or more regions.</p>
+</div>

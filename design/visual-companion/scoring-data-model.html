@@ -1,0 +1,77 @@
+<h2>Design section 2 · Explainable scoring and data model</h2>
+<p class="subtitle">One demand score per place and year. Confidence stays beside the score—never hidden inside it. Values below illustrate the method, not real analysis.</p>
+
+<div class="mockup" style="background:#071016;border-color:#23404a;color:#d8e7e7;padding:18px;font-family:ui-monospace,monospace">
+  <div style="display:grid;grid-template-columns:250px 1fr;gap:18px">
+    <section style="padding:16px;background:#0a151c;border:1px solid #203740">
+      <div style="font-size:9px;color:#789099">FRANKFURT RHINE-MAIN · 2030</div>
+      <div style="display:flex;align-items:end;gap:10px;margin-top:7px">
+        <b style="font:34px system-ui,sans-serif;color:#ffcc66">78</b>
+        <div style="padding-bottom:5px"><b style="font:12px system-ui,sans-serif">Infrastructure Demand</b><br><span style="font-size:8px;color:#789099">MODEL v1.0 · AS OF 27 JUN 2026</span></div>
+      </div>
+      <div style="margin:13px 0;padding:10px;background:#11242b;border:1px solid #28444d;font-size:9px">
+        <b style="color:#7be6c4">MEDIUM CONFIDENCE · 72%</b><br>
+        <span style="color:#91a4ab">coverage 76 · quality 82 · freshness 68 · agreement 61</span>
+      </div>
+      <div style="font-size:9px;color:#789099;margin-bottom:8px">ANNUAL SIGNAL</div>
+      <div style="display:flex;align-items:end;gap:5px;height:62px;border-bottom:1px solid #29414a">
+        <span style="height:24px;flex:1;background:#285e58"></span><span style="height:31px;flex:1;background:#2d7067"></span><span style="height:38px;flex:1;background:#38857a"></span><span style="height:47px;flex:1;background:#d4a94e"></span><span style="height:55px;flex:1;background:#ffcc66"></span><span style="height:52px;flex:1;background:#d4a94e"></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:7px;color:#789099;margin-top:5px"><span>26</span><span>27</span><span>28</span><span>29</span><span>30</span><span>31</span></div>
+      <p style="font:9px/1.5 system-ui,sans-serif;color:#9eb2b7;margin:12px 0 0">The ranked number is for the selected year. The six-year curve stays visible, avoiding an opaque “five-year average.”</p>
+    </section>
+
+    <section>
+      <div style="font-size:9px;color:#789099;margin-bottom:8px">SCORE = SUM OF VISIBLE DRIVER CONTRIBUTIONS</div>
+      <div style="display:grid;gap:7px;font-size:10px">
+        <div style="display:grid;grid-template-columns:180px 1fr 48px;align-items:center;gap:9px"><span>Compute-load pressure <i style="color:#789099">25%</i></span><div style="height:8px;background:linear-gradient(90deg,#7be6c4 88%,#183038 88%)"></div><b style="text-align:right">22 / 25</b></div>
+        <div style="display:grid;grid-template-columns:180px 1fr 48px;align-items:center;gap:9px"><span>Connection scarcity <i style="color:#789099">25%</i></span><div style="height:8px;background:linear-gradient(90deg,#ffcc66 84%,#183038 84%)"></div><b style="text-align:right">21 / 25</b></div>
+        <div style="display:grid;grid-template-columns:180px 1fr 48px;align-items:center;gap:9px"><span>Reinforcement gap <i style="color:#789099">20%</i></span><div style="height:8px;background:linear-gradient(90deg,#7be6c4 80%,#183038 80%)"></div><b style="text-align:right">16 / 20</b></div>
+        <div style="display:grid;grid-template-columns:180px 1fr 48px;align-items:center;gap:9px"><span>Firm &amp; flexible supply gap <i style="color:#789099">20%</i></span><div style="height:8px;background:linear-gradient(90deg,#8faeff 60%,#183038 60%)"></div><b style="text-align:right">12 / 20</b></div>
+        <div style="display:grid;grid-template-columns:180px 1fr 48px;align-items:center;gap:9px"><span>Cooling &amp; water stress <i style="color:#789099">10%</i></span><div style="height:8px;background:linear-gradient(90deg,#ff7b72 70%,#183038 70%)"></div><b style="text-align:right">7 / 10</b></div>
+      </div>
+      <div style="margin-top:14px;padding:11px;border:1px solid #28444d;background:#0a151c;font:10px/1.6 system-ui,sans-serif">
+        Every contribution opens to: <b>raw observation → unit/period → normalization rule → weight → contribution → claims and sources</b>.
+        European rank is a separate percentile; the 0–100 score uses fixed, versioned thresholds so it remains comparable over time.
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:9px"><span style="padding:5px 7px;background:#15302f">substations</span><span style="padding:5px 7px;background:#15302f">transformers</span><span style="padding:5px 7px;background:#15302f">grid reinforcement</span><span style="padding:5px 7px;background:#182947">flexible generation</span><span style="padding:5px 7px;background:#182947">storage</span><span style="padding:5px 7px;background:#352124">cooling resilience</span></div>
+    </section>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <h3>The model is a graph, not one forced geography hierarchy</h3>
+  <div style="display:grid;grid-template-columns:1fr 44px 1fr 44px 1fr;align-items:center;text-align:center;gap:8px">
+    <div style="padding:14px;border:1px solid #9db0c7;border-radius:6px"><b>Administrative place</b><br><small>country · NUTS 2 · NUTS 3</small></div>
+    <b>↔</b>
+    <div style="padding:14px;border:1px solid #9db0c7;border-radius:6px"><b>Power-system area</b><br><small>bidding zone · TSO/DSO area · grid node</small></div>
+    <b>↔</b>
+    <div style="padding:14px;border:1px solid #9db0c7;border-radius:6px"><b>Market entity</b><br><small>cluster · campus · site · project phase</small></div>
+  </div>
+  <p>A site can sit in one NUTS region, trade in one bidding zone, connect through another network area, and belong to a commercial cluster. Explicit relationships—<i>located in, served by, part of, affects</i>—preserve all four truths.</p>
+</div>
+
+<div class="split">
+  <div class="section">
+    <h3>Claim-level provenance</h3>
+    <div style="padding:12px;border:1px solid #c3ccd8;font:12px/1.7 ui-monospace,monospace">
+      SOURCE<br>↓ supports<br><b>CLAIM</b> “Phase 2 targets 2029”<br>↓ becomes<br>OBSERVATION · 120 MW · reported<br>↓ feeds<br>SCORE COMPONENT · 2030<br>↓ preserved in<br>SCORE RUN · model v1.0
+    </div>
+  </div>
+  <div class="section">
+    <h3>Project state is not evidence quality</h3>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;font:10px ui-monospace,monospace"><span style="padding:7px;background:#e8edf3">announced</span><span style="padding:7px;background:#e8edf3">planning filed</span><span style="padding:7px;background:#e8edf3">permitted</span><span style="padding:7px;background:#d9efe7">under construction</span><span style="padding:7px;background:#d9efe7">operational</span><span style="padding:7px;background:#f3e3e3">paused</span><span style="padding:7px;background:#f3e3e3">cancelled</span></div>
+    <p>A low-confidence “permitted” claim remains permitted-but-low-confidence; it is never silently relabelled. Expansions live as separate project phases with their own capacity, dates, and state history.</p>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Hard rules for honest uncertainty</h3>
+  <ul>
+    <li><b>Missing is null, never zero.</b> Estimated values are visibly marked and widen the range.</li>
+    <li><b>Conflicts are retained.</b> Material disagreement lowers confidence and appears in the dossier.</li>
+    <li><b>Freshness is metric-specific.</b> Operational feeds can stale in days; planning and climate baselines in months.</li>
+    <li><b>Insufficient coverage produces “not yet rankable,”</b> not a deceptively precise number.</li>
+    <li><b>Lifecycle scenarios stay visible:</b> committed, probable, and announced-upside—rather than one hidden realization assumption.</li>
+  </ul>
+</div>

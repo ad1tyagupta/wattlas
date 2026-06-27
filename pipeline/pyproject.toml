@@ -1,0 +1,32 @@
+[project]
+name = "grid-scope-pipeline"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "duckdb>=1.5,<1.6",
+  "httpx>=0.28,<0.29",
+  "pydantic>=2.11,<3",
+  "python-dateutil>=2.9,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "respx>=0.22,<0.23",
+]
+
+[project.scripts]
+grid-scope-refresh = "grid_scope.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/grid_scope"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"

@@ -1,0 +1,80 @@
+<h2>What should the first product feel like?</h2>
+<p class="subtitle">All three use the same public European data foundation. Choose the experience that should lead.</p>
+
+<div class="cards">
+  <div class="card" data-choice="opportunity-radar" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#07111a;padding:14px;min-height:230px;color:#d9f5ee;font-family:ui-monospace,monospace">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#72d9bd"><span>EUROPE / OPPORTUNITY RADAR</span><span>LIVE</span></div>
+      <div style="display:grid;grid-template-columns:1fr 112px;gap:10px;margin-top:10px">
+        <div style="height:172px;border:1px solid #214b4b;border-radius:50%;position:relative;background:radial-gradient(circle at 55% 38%,#123640,#07111a 62%)">
+          <span style="position:absolute;left:55%;top:25%;width:10px;height:10px;background:#ffcc66;border-radius:50%;box-shadow:0 0 16px #ffcc66"></span>
+          <span style="position:absolute;left:43%;top:48%;width:8px;height:8px;background:#ff6b6b;border-radius:50%"></span>
+          <span style="position:absolute;left:67%;top:57%;width:9px;height:9px;background:#6ce5c2;border-radius:50%"></span>
+          <span style="position:absolute;left:35%;top:67%;width:7px;height:7px;background:#6ce5c2;border-radius:50%"></span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px;font-size:9px">
+          <div style="padding:8px;background:#10252d;border-left:2px solid #ffcc66">DUBLIN<br><b>87</b> opportunity</div>
+          <div style="padding:8px;background:#10252d;border-left:2px solid #ff6b6b">FRANKFURT<br><b>grid constrained</b></div>
+          <div style="padding:8px;background:#10252d;border-left:2px solid #6ce5c2">NORDICS<br><b>clean capacity</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="label">A · Recommended</p>
+      <h3>Opportunity Radar</h3>
+      <p>Rank regions and announced projects by demand growth, grid headroom, generation pipeline, cooling conditions, and evidence confidence.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Best for</h4><ul><li>Daily decision support</li><li>Clear MVP value</li></ul></div>
+        <div class="cons"><h4>Trade-off</h4><ul><li>Scoring needs careful explanation</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="scenario-lab" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0a1020;padding:14px;min-height:230px;color:#e5e8ff;font-family:ui-monospace,monospace">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#91a7ff"><span>EUROPE / 2030 SCENARIO</span><span>MODEL</span></div>
+      <div style="margin-top:14px;height:115px;border-left:1px solid #394168;border-bottom:1px solid #394168;position:relative">
+        <div style="position:absolute;left:4%;right:2%;top:54%;height:2px;background:linear-gradient(90deg,#6ee7b7,#fbbf24,#fb7185);transform:rotate(-9deg)"></div>
+        <div style="position:absolute;left:4%;right:2%;top:68%;height:2px;background:#91a7ff;transform:rotate(-2deg)"></div>
+        <span style="position:absolute;right:0;top:20%;font-size:9px;color:#fb7185">DEMAND</span>
+        <span style="position:absolute;right:0;top:57%;font-size:9px;color:#91a7ff">SUPPLY</span>
+      </div>
+      <div style="margin-top:12px;font-size:9px">
+        AI BUILDOUT <div style="height:5px;background:linear-gradient(90deg,#91a7ff 68%,#202945 68%);margin:4px 0 9px"></div>
+        HEAT STRESS <div style="height:5px;background:linear-gradient(90deg,#fb7185 42%,#202945 42%);margin-top:4px"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="label">B</p>
+      <h3>Scenario Laboratory</h3>
+      <p>Let users change data-center growth, weather, generation, and grid assumptions to explore regional supply-demand gaps through 2030.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Best for</h4><ul><li>Strategic planning</li><li>Strong analytical moat</li></ul></div>
+        <div class="cons"><h4>Trade-off</h4><ul><li>Harder models and validation</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="cinematic-briefing" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#090d10;padding:14px;min-height:230px;color:#f1f3f4;font-family:ui-monospace,monospace">
+      <div style="font-size:10px;color:#ff9f43">BRIEFING 04 / THE FRANKFURT BOTTLENECK</div>
+      <div style="height:145px;margin-top:10px;background:linear-gradient(145deg,#17232b,#0c1115);position:relative;overflow:hidden;border:1px solid #332b24">
+        <div style="position:absolute;width:210px;height:210px;border:1px solid #65533e;border-radius:50%;left:18%;top:18%"></div>
+        <div style="position:absolute;width:140px;height:140px;border:1px dashed #ff9f43;border-radius:50%;left:30%;top:42%"></div>
+        <div style="position:absolute;left:12px;bottom:12px;font-size:20px;font-family:system-ui,sans-serif;font-weight:650;max-width:210px">4.2 GW meets a crowded grid.</div>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:12px"><span style="height:3px;background:#ff9f43;flex:3"></span><span style="height:3px;background:#31383d;flex:2"></span></div>
+    </div>
+    <div class="card-body">
+      <p class="label">C</p>
+      <h3>Cinematic Briefing</h3>
+      <p>Turn verified data into guided, narrated stories that move through sites, constraints, timelines, and implications on the 3D globe.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Best for</h4><ul><li>Public launch</li><li>Executive storytelling</li></ul></div>
+        <div class="cons"><h4>Trade-off</h4><ul><li>Less useful as a daily tool</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:20px">My recommendation: start with A, design the data model to enable B, and use C as the public-facing presentation mode.</p>

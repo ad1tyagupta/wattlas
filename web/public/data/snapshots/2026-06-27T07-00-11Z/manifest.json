@@ -1,0 +1,53 @@
+{
+  "activeYears": [
+    2026,
+    2027,
+    2028,
+    2029,
+    2030,
+    2031
+  ],
+  "artifacts": {
+    "evidence": "snapshots/2026-06-27T07-00-11Z/evidence.json",
+    "projects": "snapshots/2026-06-27T07-00-11Z/projects.geojson",
+    "regions": "snapshots/2026-06-27T07-00-11Z/regions.geojson"
+  },
+  "checksums": {
+    "evidence.json": "f6fc0e344cedbfabb78629c4b725097d894f3f750851e5655be57ba363f0edf6",
+    "projects.geojson": "9fda1a36b5cfff441992de13e8d5d97483fbc914f9a394ebce3985ff677813c3",
+    "regions.geojson": "d27c16fb3b215692ce6483aec1cdeedcc1f51147f331d2717f82dc4c85516669"
+  },
+  "connectors": [
+    {
+      "checkedAt": "2026-06-27T07:00:11Z",
+      "id": "gisco",
+      "lastSuccessAt": "2026-06-27T07:00:11Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T07:00:11Z",
+      "id": "eurostat",
+      "lastSuccessAt": "2026-06-27T07:00:11Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T07:00:11Z",
+      "id": "curated_evidence",
+      "lastSuccessAt": "2026-06-27T07:00:11Z",
+      "message": null,
+      "state": "current"
+    },
+    {
+      "checkedAt": "2026-06-27T07:00:11Z",
+      "id": "entsoe",
+      "lastSuccessAt": null,
+      "message": "ENTSO-E security token is not configured.",
+      "state": "not_configured"
+    }
+  ],
+  "generatedAt": "2026-06-27T07:00:11Z",
+  "modelVersion": "1.0.0",
+  "snapshotId": "2026-06-27T07-00-11Z"
+}

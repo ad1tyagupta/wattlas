@@ -1,0 +1,143 @@
+{
+  "modelNote": "Provisional analyst indices derived from cited public signals. They are estimates, not observed regional grid measurements.",
+  "sources": [
+    {
+      "id": "equinix-frankfurt-2025",
+      "name": "Equinix Frankfurt expansion programme",
+      "tier": "B",
+      "url": "https://newsroom.equinix.com/2025-09-02-Starkung-der-regionalen-Wirtschaft-Equinix-investiert-uber-700-Millionen-US-Dollar-in-den-Ausbau-der-digitalen-Infrastruktur-in-Deutschland",
+      "publishedAt": "2025-09-02T00:00:00Z"
+    },
+    {
+      "id": "eirgrid-demand-connections",
+      "name": "EirGrid Data Centre Connection Offer Process",
+      "tier": "A",
+      "url": "https://www.eirgrid.ie/industry/becoming-customer/demand-connections",
+      "publishedAt": "2026-06-27T00:00:00Z"
+    },
+    {
+      "id": "amsterdam-congestion",
+      "name": "Municipality of Amsterdam electricity congestion guidance",
+      "tier": "A",
+      "url": "https://www.amsterdam.nl/leefomgeving/elektriciteitsvoorziening-amsterdam/ondernemen-congestiegebied/",
+      "publishedAt": "2026-06-27T00:00:00Z"
+    },
+    {
+      "id": "london-energy-infrastructure-2025",
+      "name": "London Assembly energy infrastructure report",
+      "tier": "A",
+      "url": "https://www.london.gov.uk/sites/default/files/2025-12/Planning%20Regeneration%20Committee%20-%20Energy%20Infrastructure%20Report%20FINAL.pdf",
+      "publishedAt": "2025-12-01T00:00:00Z"
+    },
+    {
+      "id": "microsoft-madrid-2024",
+      "name": "Microsoft Spain Central cloud region",
+      "tier": "B",
+      "url": "https://news.microsoft.com/es-es/2024/06/11/microsoft-opens-its-first-cloud-region-in-spain-to-accelerate-the-development-of-the-ai-economy/",
+      "publishedAt": "2024-06-11T00:00:00Z"
+    },
+    {
+      "id": "microsoft-italy-2024",
+      "name": "Microsoft Italy North infrastructure expansion",
+      "tier": "B",
+      "url": "https://news.microsoft.com/it-it/2024/10/02/microsoft-investe-43-mld-di-euro-per-potenziare-linfrastruttura-ai-e-la-capacita-cloud-in-italia/",
+      "publishedAt": "2024-10-02T00:00:00Z"
+    },
+    {
+      "id": "equinix-europe-xscale",
+      "name": "Equinix European xScale portfolio",
+      "tier": "B",
+      "url": "https://newsroom.equinix.com/Equinix-und-GIC-erweitern-xScale-Data-Center-Programm-um-3%2C9-Milliarden-US-Dollar",
+      "publishedAt": "2021-06-16T00:00:00Z"
+    },
+    {
+      "id": "stockholm-data-parks",
+      "name": "Stockholm Data Parks cooling and infrastructure programme",
+      "tier": "B",
+      "url": "https://stockholmdataparks.com/",
+      "publishedAt": "2026-06-27T00:00:00Z"
+    }
+  ],
+  "clusters": [
+    {
+      "id": "frankfurt-rhine-main",
+      "name": "Frankfurt Rhine-Main",
+      "regionId": "DE71",
+      "country": "DE",
+      "coordinates": [8.6821, 50.1109],
+      "sourceIds": ["equinix-frankfurt-2025"],
+      "confidence": 66,
+      "drivers2030": {"compute_load_pressure": 88, "connection_scarcity": 78, "reinforcement_gap": 76, "firm_flexible_supply_gap": 62, "cooling_water_stress": 40}
+    },
+    {
+      "id": "greater-dublin",
+      "name": "Greater Dublin",
+      "regionId": "IE06",
+      "country": "IE",
+      "coordinates": [-6.2603, 53.3498],
+      "sourceIds": ["eirgrid-demand-connections", "equinix-europe-xscale"],
+      "confidence": 78,
+      "drivers2030": {"compute_load_pressure": 86, "connection_scarcity": 94, "reinforcement_gap": 82, "firm_flexible_supply_gap": 78, "cooling_water_stress": 26}
+    },
+    {
+      "id": "amsterdam-north-holland",
+      "name": "Amsterdam / North Holland",
+      "regionId": "NL32",
+      "country": "NL",
+      "coordinates": [4.9041, 52.3676],
+      "sourceIds": ["amsterdam-congestion"],
+      "confidence": 74,
+      "drivers2030": {"compute_load_pressure": 80, "connection_scarcity": 96, "reinforcement_gap": 88, "firm_flexible_supply_gap": 74, "cooling_water_stress": 34}
+    },
+    {
+      "id": "west-london",
+      "name": "West London",
+      "regionId": "UKI7",
+      "country": "GB",
+      "coordinates": [-0.3763, 51.5072],
+      "sourceIds": ["london-energy-infrastructure-2025", "equinix-europe-xscale"],
+      "confidence": 70,
+      "drivers2030": {"compute_load_pressure": 76, "connection_scarcity": 82, "reinforcement_gap": 78, "firm_flexible_supply_gap": 70, "cooling_water_stress": 46}
+    },
+    {
+      "id": "ile-de-france",
+      "name": "Île-de-France",
+      "regionId": "FR10",
+      "country": "FR",
+      "coordinates": [2.3522, 48.8566],
+      "sourceIds": ["equinix-europe-xscale"],
+      "confidence": 62,
+      "drivers2030": {"compute_load_pressure": 70, "connection_scarcity": 58, "reinforcement_gap": 60, "firm_flexible_supply_gap": 54, "cooling_water_stress": 48}
+    },
+    {
+      "id": "madrid",
+      "name": "Community of Madrid",
+      "regionId": "ES30",
+      "country": "ES",
+      "coordinates": [-3.7038, 40.4168],
+      "sourceIds": ["microsoft-madrid-2024", "equinix-europe-xscale"],
+      "confidence": 72,
+      "drivers2030": {"compute_load_pressure": 82, "connection_scarcity": 54, "reinforcement_gap": 60, "firm_flexible_supply_gap": 50, "cooling_water_stress": 72}
+    },
+    {
+      "id": "lombardy",
+      "name": "Milan / Lombardy",
+      "regionId": "ITC4",
+      "country": "IT",
+      "coordinates": [9.19, 45.4642],
+      "sourceIds": ["microsoft-italy-2024", "equinix-europe-xscale"],
+      "confidence": 70,
+      "drivers2030": {"compute_load_pressure": 84, "connection_scarcity": 64, "reinforcement_gap": 68, "firm_flexible_supply_gap": 58, "cooling_water_stress": 62}
+    },
+    {
+      "id": "stockholm",
+      "name": "Stockholm / Mälardalen",
+      "regionId": "SE11",
+      "country": "SE",
+      "coordinates": [18.0686, 59.3293],
+      "sourceIds": ["stockholm-data-parks"],
+      "confidence": 56,
+      "drivers2030": {"compute_load_pressure": 66, "connection_scarcity": 42, "reinforcement_gap": 48, "firm_flexible_supply_gap": 40, "cooling_water_stress": 18}
+    }
+  ]
+}
