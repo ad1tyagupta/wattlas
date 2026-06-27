@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "Polygon", "coordinates": [[[54.0, 24.0], [55.0, 24.0], [55.0, 25.0], [54.0, 24.0]]]},
+      "properties": {"salbCode": "AE01", "name": "Abu Dhabi", "iso2cd": "AE", "admLevel": 1, "parentCode": null}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Polygon", "coordinates": [[[54.1, 24.1], [54.5, 24.1], [54.5, 24.5], [54.1, 24.1]]]},
+      "properties": {"salbCode": "AE0101", "name": "Abu Dhabi Region", "iso2cd": "AE", "admLevel": 2, "parentCode": "AE01"}
+    }
+  ]
+}

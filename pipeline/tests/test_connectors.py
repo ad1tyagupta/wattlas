@@ -1,8 +1,14 @@
 from datetime import UTC, datetime
+import json
+from pathlib import Path
+
+import pytest
 
 from grid_scope.connectors.entsoe import EntsoeConnector
 from grid_scope.connectors.eurostat import parse_population
 from grid_scope.connectors.gisco import filter_nuts2
+from grid_scope.connectors.un_geodata import UN_BOUNDARY_DISCLAIMER, normalize_countries
+from grid_scope.connectors.un_salb import normalize_salb
 from grid_scope.models import ConnectorState
 from grid_scope.storage import RawCaptureStore
 
@@ -49,3 +55,44 @@ def test_eurostat_special_values_remain_missing() -> None:
     }
 
     assert parse_population(payload) == {"DE71": 4_100_000, "NL32": None}
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_un_geodata_normalizes_country_identifiers_and_disclaimer() -> None:
+    payload = json.loads((FIXTURES / "un-geodata-sample.geojson").read_text())
+
+    result = normalize_countries(payload)
+
+    assert len(result["features"]) == 1
+    properties = result["features"][0]["properties"]
+    assert properties["id"] == "AE"
+    assert properties["iso3"] == "ARE"
+    assert properties["m49"] == "784"
+    assert properties["level"] == "country"
+    assert result["metadata"]["disclaimer"] == UN_BOUNDARY_DISCLAIMER
+
+
+def test_un_geodata_rejects_country_geometry_without_identifier() -> None:
+    with pytest.raises(ValueError, match="identifiable country"):
+        normalize_countries({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": []},
+                "properties": {"nam_en": "Unknown"},
+            }],
+        })
+
+
+def test_un_salb_retains_admin_parent_relationships() -> None:
+    payload = json.loads((FIXTURES / "un-salb-sample.geojson").read_text())
+
+    result = normalize_salb(payload)
+    properties = [feature["properties"] for feature in result["features"]]
+
+    assert properties[0]["level"] == "admin_1"
+    assert properties[1]["level"] == "admin_2"
+    assert properties[1]["parentId"] == "AE01"
+    assert {item["country"] for item in properties} == {"AE"}

@@ -1,0 +1,17 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": 1,
+      "geometry": {"type": "Polygon", "coordinates": [[[54.0, 24.0], [56.0, 24.0], [56.0, 26.0], [54.0, 24.0]]]},
+      "properties": {"iso2cd": "AE", "iso3cd": "ARE", "m49_cd": "784", "nam_en": "United Arab Emirates"}
+    },
+    {
+      "type": "Feature",
+      "id": 2,
+      "geometry": {"type": "Polygon", "coordinates": []},
+      "properties": {"geo_cd": 142, "subreg": "Asia"}
+    }
+  ]
+}
