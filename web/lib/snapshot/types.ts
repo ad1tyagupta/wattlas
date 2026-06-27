@@ -49,6 +49,9 @@ export type GeographyProperties = RegionProperties & {
   level: GeographyLevel;
   parentId: string | null;
   peerLevel: GeographyLevel;
+  categoryScoresByYear: Record<string, Record<InfrastructureCategory, LensScores>>;
+  demandMwByYear: Record<string, Record<InfrastructureCategory, DemandRange | null>>;
+  assetCount: number;
 };
 export type GeographyFeature = GeoJSON.Feature<GeoJSON.Geometry, GeographyProperties> & { id: string };
 export type GeographyCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry, GeographyProperties>;
@@ -65,6 +68,10 @@ export type AssetProperties = {
   locationPrecision: "exact" | "city_centroid" | "region_centroid";
   valueKind: "observed" | "reported" | "estimated" | "inherited" | "unavailable";
   sourceIds: string[];
+  operator?: string;
+  country: string;
+  confidence: number;
+  assumptionId?: string;
 };
 export type AssetCollection = GeoJSON.FeatureCollection<GeoJSON.Point, AssetProperties>;
 
@@ -93,7 +100,15 @@ export type SnapshotManifest = {
   generatedAt: string;
   modelVersion: string;
   activeYears: number[];
-  artifacts: { regions: string; projects: string; evidence: string };
+  artifacts: { countries: string; regions: string; assets: string; evidence: string };
+  coverage: {
+    countries: number;
+    regions: number;
+    assets: number;
+    dataCentres: number;
+    waterInfrastructure: number;
+  };
+  boundaryDisclaimer: string | null;
   connectors: ConnectorStatus[];
 };
 
@@ -119,7 +134,8 @@ export type EvidenceData = {
 
 export type SnapshotData = {
   manifest: SnapshotManifest;
+  countries: GeographyCollection;
   regions: RegionCollection;
-  projects: ProjectCollection;
+  assets: AssetCollection;
   evidence: EvidenceData;
 };

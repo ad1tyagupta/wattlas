@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { manifestSchema } from "@/lib/snapshot/schema";
+import {
+  assetFeatureCollectionSchema,
+  evidenceSchema,
+  geographyFeatureCollectionSchema,
+  manifestSchema,
+  regionFeatureCollectionSchema,
+} from "@/lib/snapshot/schema";
 import type { SnapshotData } from "@/lib/snapshot/types";
 
 async function readJson<T>(filePath: string): Promise<T> {
@@ -14,11 +20,16 @@ export async function loadSnapshot(): Promise<SnapshotData> {
     await readJson(path.join(publicData, "latest.json")),
   );
 
-  const [regions, projects, evidence] = await Promise.all([
+  const [countriesRaw, regionsRaw, assetsRaw, evidenceRaw] = await Promise.all([
+    readJson(path.join(publicData, manifest.artifacts.countries)),
     readJson(path.join(publicData, manifest.artifacts.regions)),
-    readJson(path.join(publicData, manifest.artifacts.projects)),
+    readJson(path.join(publicData, manifest.artifacts.assets)),
     readJson(path.join(publicData, manifest.artifacts.evidence)),
   ]);
 
-  return { manifest, regions, projects, evidence } as SnapshotData;
+  const countries = geographyFeatureCollectionSchema.parse(countriesRaw);
+  const regions = regionFeatureCollectionSchema.parse(regionsRaw);
+  const assets = assetFeatureCollectionSchema.parse(assetsRaw);
+  const evidence = evidenceSchema.parse(evidenceRaw);
+  return { manifest, countries, regions, assets, evidence } as SnapshotData;
 }
