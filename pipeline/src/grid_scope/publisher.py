@@ -47,11 +47,11 @@ class SnapshotPublisher:
 
     @staticmethod
     def _validate(artifacts: dict[str, bytes], manifest: dict[str, object]) -> None:
-        required = {"countries.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
+        required = {"countries.geojson", "admin1.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
         missing = required - artifacts.keys()
         if missing:
             raise ValueError(f"missing required artifacts: {', '.join(sorted(missing))}")
-        for filename in ("countries.geojson", "regions.geojson", "assets.geojson"):
+        for filename in ("countries.geojson", "admin1.geojson", "regions.geojson", "assets.geojson"):
             collection = json.loads(artifacts[filename])
             if collection.get("type") != "FeatureCollection":
                 raise ValueError(f"{filename} must be a FeatureCollection")
@@ -66,6 +66,13 @@ class SnapshotPublisher:
             feature.get("properties", {}).get("id") or feature.get("id")
             for feature in countries.get("features", [])
         }
+        admin1 = json.loads(artifacts["admin1.geojson"])
+        for feature in admin1.get("features", []):
+            properties = feature.get("properties") or {}
+            if properties.get("country") not in country_ids or properties.get("parentId") not in country_ids:
+                raise ValueError(
+                    f"admin1.geojson contains unknown parent country: {properties.get('parentId')}"
+                )
         assets = json.loads(artifacts["assets.geojson"])
         for feature in assets.get("features", []):
             coordinates = (feature.get("geometry") or {}).get("coordinates")

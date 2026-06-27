@@ -93,7 +93,7 @@ def test_global_builder_publishes_countries_assets_and_category_scores() -> None
         generated_at="2026-06-27T04:12:00Z",
     )
 
-    assert set(artifacts) == {"countries.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
+    assert set(artifacts) == {"countries.geojson", "admin1.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
     country_data = json.loads(artifacts["countries.geojson"])
     by_id = {feature["id"]: feature for feature in country_data["features"]}
     assert by_id["AE"]["properties"]["scores"]["infrastructureDemand"] is not None
@@ -147,3 +147,48 @@ def test_operational_assets_are_context_only_and_country_counts_explain_coverage
     asset = json.loads(artifacts["assets.geojson"])["features"][0]
     assert asset["properties"]["sourceType"] == "community_mapped"
     assert asset["properties"]["sourceUrl"].endswith("/node/101")
+
+
+def test_global_builder_assigns_assets_to_adm1_and_overrides_india_outline() -> None:
+    countries = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "id": "IN",
+            "geometry": {"type": "Polygon", "coordinates": [[[60, 5], [90, 5], [90, 35], [60, 5]]]},
+            "properties": {"id": "IN", "name": "India", "country": "IN", "level": "country"},
+        }],
+    }
+    india_outline = {"type": "Polygon", "coordinates": [[[68, 7], [97, 7], [97, 37], [68, 7]]]}
+    admin1 = {
+        "type": "FeatureCollection",
+        "metadata": {"indiaCountryGeometry": india_outline, "indiaBoundaryPerspective": "Government of India"},
+        "features": [{
+            "type": "Feature", "id": "IN-ASSAM",
+            "geometry": {"type": "Polygon", "coordinates": [[[90, 24], [96, 24], [96, 28], [90, 28], [90, 24]]]},
+            "properties": {"id": "IN-ASSAM", "name": "Assam", "country": "IN", "level": "admin_1", "parentId": "IN", "peerLevel": "admin_1"},
+        }],
+    }
+    registry = {
+        "sources": [{"id": "osm", "name": "OSM", "tier": "C", "url": "https://www.openstreetmap.org", "publishedAt": None}],
+        "assets": [{
+            "id": "asset-1", "name": "Assam facility", "geographyId": "IN", "country": "IN",
+            "category": "data_centre", "subtype": "other_data_centre", "lifecycle": "operational",
+            "coordinates": [92, 26], "locationPrecision": "exact", "valueKind": "observed",
+            "sourceIds": ["osm"], "sourceType": "community_mapped", "demandMw": None,
+        }],
+    }
+
+    artifacts = build_global_snapshot_artifacts(
+        countries=countries, admin1=admin1,
+        regions={"type": "FeatureCollection", "features": []},
+        registry=registry, generated_at="2026-06-28T00:00:00Z",
+    )
+
+    assert "admin1.geojson" in artifacts
+    country = json.loads(artifacts["countries.geojson"])["features"][0]
+    assert country["geometry"] == india_outline
+    assert country["properties"]["boundaryPerspective"] == "Government of India"
+    region = json.loads(artifacts["admin1.geojson"])["features"][0]
+    assert region["properties"]["assetSummary"]["total"] == 1
+    asset = json.loads(artifacts["assets.geojson"])["features"][0]
+    assert asset["properties"]["geographyId"] == "IN-ASSAM"

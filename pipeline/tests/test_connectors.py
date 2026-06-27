@@ -10,6 +10,7 @@ from grid_scope.connectors.eurostat import parse_population
 from grid_scope.connectors.gisco import filter_nuts2
 from grid_scope.connectors.ember import normalize_ember_rows
 from grid_scope.connectors.global_assets import load_asset_registry
+from grid_scope.connectors.geoboundaries import normalize_adm1, validate_india_adm1
 from grid_scope.connectors.osm_infrastructure import OsmInfrastructureConnector, parse_qlever_assets
 from grid_scope.connectors.un_geodata import UN_BOUNDARY_DISCLAIMER, normalize_countries
 from grid_scope.connectors.un_salb import normalize_salb
@@ -255,7 +256,7 @@ def test_qlever_osm_parser_normalizes_geometry_lifecycle_and_provenance() -> Non
     assets = parse_qlever_assets(payload, observed_at="2026-06-27T12:00:00Z")
 
     assert len(assets) == 3
-    assert assets[0] == {
+    expected_core = {
         "id": "osm-node-101",
         "name": "Alpha DC",
         "operator": "Alpha Cloud",
@@ -270,10 +271,10 @@ def test_qlever_osm_parser_normalizes_geometry_lifecycle_and_provenance() -> Non
         "sourceIds": ["openstreetmap-infrastructure"],
         "sourceType": "community_mapped",
         "sourceUrl": "https://www.openstreetmap.org/node/101",
-        "externalIds": {"osm": "node/101"},
         "lastObservedAt": "2026-06-27T12:00:00Z",
         "demandMw": None,
     }
+    assert {key: assets[0][key] for key in expected_core} == expected_core
     assert assets[1]["name"] == "Mapped desalination plant · OSM 202"
     assert assets[1]["coordinates"] == [55.0, 25.0]
     assert assets[2]["lifecycle"] == "under_construction"
@@ -291,6 +292,25 @@ def test_qlever_connector_rejects_partial_production_response() -> None:
             connector.fetch(client, now=datetime(2026, 6, 27, tzinfo=UTC))
 
 
+def test_qlever_osm_parser_preserves_rich_public_facility_details() -> None:
+    payload = json.loads((FIXTURES / "qlever-osm-infrastructure-sample.json").read_text())
+
+    asset = parse_qlever_assets(payload, observed_at="2026-06-27T12:00:00Z")[0]
+
+    assert asset["owner"] == "Alpha Infrastructure"
+    assert asset["website"] == "https://alpha.example/dc"
+    assert asset["facilityRef"] == "IAD-01"
+    assert asset["address"] == {
+        "street": "Compute Avenue", "houseNumber": "101", "city": "Ashburn",
+        "state": "Virginia", "postcode": "20147", "country": "US",
+    }
+    assert asset["startDate"] == "2021"
+    assert asset["reportedPower"] == "48 MW"
+    assert asset["externalIds"] == {
+        "osm": "node/101", "wikidata": "Q12345", "wikipedia": "en:Alpha Data Center",
+    }
+
+
 def test_qlever_connector_fetches_valid_small_fixture_when_threshold_is_overridden() -> None:
     payload = json.loads((FIXTURES / "qlever-osm-infrastructure-sample.json").read_text())
 
@@ -305,3 +325,40 @@ def test_qlever_connector_fetches_valid_small_fixture_when_threshold_is_overridd
     assert result.state == ConnectorState.CURRENT
     assert result.payload is not None
     assert len(json.loads(result.payload.body)["assets"]) == 3
+
+
+def test_geoboundaries_normalizes_global_adm1_with_stable_parent_ids() -> None:
+    payload = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[[76, 28], [77, 28], [77, 29], [76, 28]]]},
+            "properties": {"shapeID": "IND-ADM1-1", "shapeName": "Delhi", "shapeGroup": "IND", "shapeType": "ADM1"},
+        }],
+    }
+
+    result = normalize_adm1(payload, iso2_lookup={"IND": "IN"})
+
+    assert result["features"][0]["id"] == "IN-IND-ADM1-1"
+    assert result["features"][0]["properties"] == {
+        "id": "IN-IND-ADM1-1",
+        "name": "Delhi",
+        "country": "IN",
+        "level": "admin_1",
+        "parentId": "IN",
+        "peerLevel": "admin_1",
+        "sourceId": "geoboundaries-gbopen-adm1",
+        "boundaryPerspective": "government_of_india",
+    }
+
+
+def test_india_adm1_gate_requires_arunachal_assam_jammu_kashmir_and_ladakh() -> None:
+    features = [
+        {"properties": {"name": name, "country": "IN"}}
+        for name in ["Jammu and Kashmir", "Ladakh", "Assam", "Arunachal Pradesh"]
+    ]
+
+    validate_india_adm1(features)
+
+    with pytest.raises(ValueError, match="Arunachal Pradesh"):
+        validate_india_adm1(features[:-1])

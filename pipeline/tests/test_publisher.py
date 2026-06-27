@@ -8,6 +8,7 @@ from grid_scope.publisher import SnapshotPublisher
 def global_artifacts() -> dict[str, bytes]:
     return {
         "countries.geojson": b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"AE","geometry":{"type":"Polygon","coordinates":[]},"properties":{"id":"AE"}}]}',
+        "admin1.geojson": b'{"type":"FeatureCollection","features":[]}',
         "regions.geojson": b'{"type":"FeatureCollection","features":[]}',
         "assets.geojson": b'{"type":"FeatureCollection","features":[]}',
         "evidence.json": b'{"sources":[],"claims":[]}',
@@ -79,3 +80,11 @@ def test_publish_enforces_osm_coverage_guard_when_connector_is_present(tmp_path)
 
     with pytest.raises(ValueError, match="coverage guard"):
         publisher.publish("partial", global_artifacts(), manifest)
+
+
+def test_publish_rejects_invalid_admin1_parent_country(tmp_path) -> None:
+    invalid = global_artifacts()
+    invalid["admin1.geojson"] = b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"ZZ-1","geometry":{"type":"Polygon","coordinates":[]},"properties":{"id":"ZZ-1","country":"ZZ","parentId":"ZZ"}}]}'
+
+    with pytest.raises(ValueError, match="unknown parent country"):
+        SnapshotPublisher(tmp_path).publish("invalid", invalid, {"snapshotId": "invalid"})

@@ -19,7 +19,9 @@ _COORDINATE = re.compile(r"(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+(-?\d+(?:\.\d+)?
 QLEVER_INFRASTRUCTURE_QUERY = """
 PREFIX osmkey: <https://www.openstreetmap.org/wiki/Key:>
 PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-SELECT DISTINCT ?element ?name ?operator ?geometry ?category ?lifecycle ?openingDate ?startDate
+SELECT DISTINCT ?element ?name ?operator ?owner ?website ?facilityRef ?geometry ?category ?lifecycle
+  ?openingDate ?startDate ?street ?houseNumber ?city ?state ?postcode ?countryAddress
+  ?power ?wikidata ?wikipedia
 WHERE {
   {
     ?element osmkey:telecom "data_center" .
@@ -49,8 +51,20 @@ WHERE {
   ?element geo:hasGeometry/geo:asWKT ?geometry .
   OPTIONAL { ?element osmkey:name ?name . }
   OPTIONAL { ?element osmkey:operator ?operator . }
+  OPTIONAL { ?element osmkey:owner ?owner . }
+  OPTIONAL { ?element osmkey:website ?website . }
+  OPTIONAL { ?element osmkey:ref ?facilityRef . }
   OPTIONAL { ?element osmkey:opening_date ?openingDate . }
   OPTIONAL { ?element osmkey:start_date ?startDate . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:street> ?street . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:housenumber> ?houseNumber . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:city> ?city . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:state> ?state . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:postcode> ?postcode . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:addr:country> ?countryAddress . }
+  OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:data_center:power> ?power . }
+  OPTIONAL { ?element osmkey:wikidata ?wikidata . }
+  OPTIONAL { ?element osmkey:wikipedia ?wikipedia . }
 }
 """.strip()
 
@@ -120,6 +134,29 @@ def parse_qlever_assets(payload: dict[str, Any], *, observed_at: str) -> list[di
             "lastObservedAt": observed_at,
             "demandMw": None,
         }
+        optional = {
+            "owner": _value(binding, "owner"),
+            "website": _value(binding, "website"),
+            "facilityRef": _value(binding, "facilityRef"),
+            "startDate": _value(binding, "startDate"),
+            "openingDate": _value(binding, "openingDate"),
+            "reportedPower": _value(binding, "power"),
+        }
+        record.update({key: value for key, value in optional.items() if value is not None})
+        address = {
+            "street": _value(binding, "street"),
+            "houseNumber": _value(binding, "houseNumber"),
+            "city": _value(binding, "city"),
+            "state": _value(binding, "state"),
+            "postcode": _value(binding, "postcode"),
+            "country": _value(binding, "countryAddress"),
+        }
+        if any(address.values()):
+            record["address"] = address
+        for key in ("wikidata", "wikipedia"):
+            value = _value(binding, key)
+            if value:
+                record["externalIds"][key] = value
         existing = normalized.get(record_id)
         if existing and lifecycle_rank.get(existing["lifecycle"], 0) > lifecycle_rank.get(lifecycle, 0):
             continue

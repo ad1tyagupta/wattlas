@@ -4,6 +4,7 @@ import json
 from math import log1p
 from typing import Any
 
+from grid_scope.canonicalize import assign_asset_geography
 from grid_scope.scoring import lifecycle_timing_index, score_infrastructure_demand
 
 
@@ -241,14 +242,109 @@ def _score_assets(assets: list[dict[str, Any]], year: int) -> dict[str, Any]:
     }
 
 
+def _asset_summary(assets: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(assets),
+        "operational": sum(asset.get("lifecycle") == "operational" for asset in assets),
+        "planned": sum(asset.get("lifecycle") in {"announced", "planning_filed", "permitted", "under_construction"} for asset in assets),
+        "dataCentres": sum(asset.get("category") == "data_centre" for asset in assets),
+        "waterInfrastructure": sum(asset.get("category") == "water_infrastructure" for asset in assets),
+        "officialVerified": sum(asset.get("sourceType", "official_verified") == "official_verified" for asset in assets),
+        "communityMapped": sum(asset.get("sourceType") == "community_mapped" for asset in assets),
+    }
+
+
+def _scoring_payload(assets: list[dict[str, Any]]) -> dict[str, Any]:
+    category_scores_by_year: dict[str, dict[str, dict[str, int | None]]] = {}
+    scores_by_year: dict[str, dict[str, int | None]] = {}
+    contributions_by_year: dict[str, list[dict[str, Any]]] = {}
+    demand_by_year: dict[str, dict[str, dict[str, float] | None]] = {}
+    combined_by_year: dict[int, dict[str, Any]] = {}
+    for year in YEAR_FACTORS:
+        data_centres = [asset for asset in assets if asset["category"] == "data_centre"]
+        water = [asset for asset in assets if asset["category"] == "water_infrastructure"]
+        category_results = {
+            "combined": _score_assets(assets, year),
+            "data_centre": _score_assets(data_centres, year),
+            "water_infrastructure": _score_assets(water, year),
+        }
+        combined_by_year[year] = category_results["combined"]
+        category_scores_by_year[str(year)] = {key: value["scores"] for key, value in category_results.items()}
+        scores_by_year[str(year)] = category_results["combined"]["scores"]
+        contributions_by_year[str(year)] = category_results["combined"]["contributions"]
+        demand_by_year[str(year)] = {key: value["demandMw"] for key, value in category_results.items()}
+    return {
+        "categoryScoresByYear": category_scores_by_year,
+        "scoresByYear": scores_by_year,
+        "contributionsByYear": contributions_by_year,
+        "demandMwByYear": demand_by_year,
+        "current": combined_by_year[2030],
+    }
+
+
+def _enrich_regional_feature(
+    feature: dict[str, Any],
+    assets: list[dict[str, Any]],
+    generated_at: str,
+) -> dict[str, Any]:
+    original = feature.get("properties") or {}
+    region_id = original.get("id") or feature.get("id")
+    payload = _scoring_payload(assets)
+    current = payload.pop("current")
+    has_evidence = current["scores"]["infrastructureDemand"] is not None
+    return {
+        **feature,
+        "id": region_id,
+        "properties": {
+            **original,
+            "id": region_id,
+            "scoreYear": 2030,
+            "scores": payload["scoresByYear"]["2030"],
+            **payload,
+            "confidence": current["confidence"] if has_evidence else 0,
+            "coverage": 100 if has_evidence else 0,
+            "valueKind": "estimated" if has_evidence else "unavailable",
+            "updatedAt": generated_at,
+            "contributions": payload["contributionsByYear"]["2030"],
+            "sourceIds": sorted({source for asset in assets for source in asset.get("sourceIds", [])}),
+            "assetCount": len(assets),
+            "assetSummary": _asset_summary(assets),
+        },
+    }
+
+
 def build_global_snapshot_artifacts(
     *,
     countries: dict[str, Any],
+    admin1: dict[str, Any] | None = None,
     regions: dict[str, Any],
     registry: dict[str, Any],
     generated_at: str,
 ) -> dict[str, bytes]:
-    assets = registry["assets"]
+    admin1 = admin1 or {"type": "FeatureCollection", "features": []}
+    region_features = [
+        {
+            **feature,
+            "properties": {
+                **(feature.get("properties") or {}),
+                "level": (feature.get("properties") or {}).get("level", "admin_2"),
+                "parentId": (feature.get("properties") or {}).get("parentId", (feature.get("properties") or {}).get("country")),
+                "peerLevel": (feature.get("properties") or {}).get("peerLevel", "admin_2"),
+            },
+        }
+        for feature in regions.get("features", [])
+    ]
+    admin1_features = admin1.get("features", [])
+    assets = [dict(asset) for asset in registry["assets"]]
+    for asset in assets:
+        admin1_id = assign_asset_geography(asset, admin1_features)
+        if admin1_id != asset.get("geographyId") and admin1_id != asset.get("country"):
+            asset["admin1Id"] = admin1_id
+        detailed_id = assign_asset_geography(asset, region_features)
+        if detailed_id != asset.get("geographyId") and detailed_id != asset.get("country"):
+            asset["geographyId"] = detailed_id
+        elif asset.get("admin1Id"):
+            asset["geographyId"] = asset["admin1Id"]
     assets_by_country: dict[str, list[dict[str, Any]]] = {}
     for asset in assets:
         assets_by_country.setdefault(asset["country"], []).append(asset)
@@ -258,52 +354,29 @@ def build_global_snapshot_artifacts(
         original = source_feature["properties"]
         country_id = original["id"]
         country_assets = assets_by_country.get(country_id, [])
-        category_scores_by_year: dict[str, dict[str, dict[str, int | None]]] = {}
-        scores_by_year: dict[str, dict[str, int | None]] = {}
-        contributions_by_year: dict[str, list[dict[str, Any]]] = {}
-        demand_by_year: dict[str, dict[str, dict[str, float] | None]] = {}
-        combined_by_year: dict[int, dict[str, Any]] = {}
-        for year in YEAR_FACTORS:
-            data_centres = [asset for asset in country_assets if asset["category"] == "data_centre"]
-            water = [asset for asset in country_assets if asset["category"] == "water_infrastructure"]
-            category_results = {
-                "combined": _score_assets(country_assets, year),
-                "data_centre": _score_assets(data_centres, year),
-                "water_infrastructure": _score_assets(water, year),
-            }
-            combined_by_year[year] = category_results["combined"]
-            category_scores_by_year[str(year)] = {
-                key: value["scores"] for key, value in category_results.items()
-            }
-            scores_by_year[str(year)] = category_results["combined"]["scores"]
-            contributions_by_year[str(year)] = category_results["combined"]["contributions"]
-            demand_by_year[str(year)] = {
-                key: value["demandMw"] for key, value in category_results.items()
-            }
-
-        current = combined_by_year[2030]
+        payload = _scoring_payload(country_assets)
+        current = payload.pop("current")
+        scores_by_year = payload["scoresByYear"]
+        contributions_by_year = payload["contributionsByYear"]
         has_evidence = current["scores"]["infrastructureDemand"] is not None
-        asset_summary = {
-            "total": len(country_assets),
-            "operational": sum(asset.get("lifecycle") == "operational" for asset in country_assets),
-            "planned": sum(asset.get("lifecycle") in {"announced", "planning_filed", "permitted", "under_construction"} for asset in country_assets),
-            "dataCentres": sum(asset.get("category") == "data_centre" for asset in country_assets),
-            "waterInfrastructure": sum(asset.get("category") == "water_infrastructure" for asset in country_assets),
-            "officialVerified": sum(asset.get("sourceType", "official_verified") == "official_verified" for asset in country_assets),
-            "communityMapped": sum(asset.get("sourceType") == "community_mapped" for asset in country_assets),
-        }
+        asset_summary = _asset_summary(country_assets)
+        geometry = source_feature["geometry"]
+        country_properties = dict(original)
+        if country_id == "IN" and admin1.get("metadata", {}).get("indiaCountryGeometry"):
+            geometry = admin1["metadata"]["indiaCountryGeometry"]
+            country_properties["boundaryPerspective"] = admin1["metadata"].get("indiaBoundaryPerspective", "Government of India")
         country_features.append(
             {
                 "type": "Feature",
                 "id": country_id,
-                "geometry": source_feature["geometry"],
+                "geometry": geometry,
                 "properties": {
-                    **original,
+                    **country_properties,
                     "scoreYear": 2030,
                     "scores": scores_by_year["2030"],
                     "scoresByYear": scores_by_year,
-                    "categoryScoresByYear": category_scores_by_year,
-                    "demandMwByYear": demand_by_year,
+                    "categoryScoresByYear": payload["categoryScoresByYear"],
+                    "demandMwByYear": payload["demandMwByYear"],
                     "confidence": current["confidence"] if has_evidence else 0,
                     "coverage": 100 if has_evidence else 0,
                     "valueKind": "estimated" if has_evidence else "unavailable",
@@ -317,20 +390,22 @@ def build_global_snapshot_artifacts(
             }
         )
 
-    region_features = []
-    for feature in regions.get("features", []):
-        properties = feature.get("properties", {})
-        region_features.append(
-            {
-                **feature,
-                "properties": {
-                    **properties,
-                    "level": properties.get("level", "admin_2"),
-                    "parentId": properties.get("parentId", properties.get("country")),
-                    "peerLevel": properties.get("peerLevel", "admin_2"),
-                },
-            }
-        )
+    admin1_assets: dict[str, list[dict[str, Any]]] = {}
+    region_assets: dict[str, list[dict[str, Any]]] = {}
+    for asset in assets:
+        if asset.get("admin1Id"):
+            admin1_assets.setdefault(asset["admin1Id"], []).append(asset)
+        geography_id = asset.get("geographyId")
+        if geography_id:
+            region_assets.setdefault(geography_id, []).append(asset)
+    enriched_admin1 = [
+        _enrich_regional_feature(feature, admin1_assets.get((feature.get("properties") or {}).get("id") or feature.get("id"), []), generated_at)
+        for feature in admin1_features
+    ]
+    enriched_regions = [
+        _enrich_regional_feature(feature, region_assets.get((feature.get("properties") or {}).get("id") or feature.get("id"), []), generated_at)
+        for feature in region_features
+    ]
 
     asset_features = [
         {
@@ -363,7 +438,8 @@ def build_global_snapshot_artifacts(
     }
     return {
         "countries.geojson": json.dumps(country_collection, separators=(",", ":"), ensure_ascii=False).encode(),
-        "regions.geojson": json.dumps({"type": "FeatureCollection", "features": region_features}, separators=(",", ":"), ensure_ascii=False).encode(),
+        "admin1.geojson": json.dumps({"type": "FeatureCollection", "metadata": admin1.get("metadata", {}), "features": enriched_admin1}, separators=(",", ":"), ensure_ascii=False).encode(),
+        "regions.geojson": json.dumps({"type": "FeatureCollection", "features": enriched_regions}, separators=(",", ":"), ensure_ascii=False).encode(),
         "assets.geojson": json.dumps({"type": "FeatureCollection", "features": asset_features}, separators=(",", ":"), ensure_ascii=False).encode(),
         "evidence.json": json.dumps({"sources": registry["sources"], "claims": claims}, separators=(",", ":"), ensure_ascii=False).encode(),
     }
