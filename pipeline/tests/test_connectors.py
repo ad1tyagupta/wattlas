@@ -10,6 +10,7 @@ from grid_scope.connectors.eurostat import parse_population
 from grid_scope.connectors.gisco import filter_nuts2
 from grid_scope.connectors.ember import normalize_ember_rows
 from grid_scope.connectors.global_assets import load_asset_registry
+from grid_scope.connectors.osm_infrastructure import OsmInfrastructureConnector, parse_qlever_assets
 from grid_scope.connectors.un_geodata import UN_BOUNDARY_DISCLAIMER, normalize_countries
 from grid_scope.connectors.un_salb import normalize_salb
 from grid_scope.connectors.world_bank import WorldBankConnector, parse_indicator_page
@@ -244,3 +245,61 @@ def test_global_assets_reject_unknown_or_non_public_source(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="unknown source"):
         load_asset_registry(assets_path, sources_path)
+
+
+def test_qlever_osm_parser_normalizes_geometry_lifecycle_and_provenance() -> None:
+    payload = json.loads((FIXTURES / "qlever-osm-infrastructure-sample.json").read_text())
+
+    assets = parse_qlever_assets(payload, observed_at="2026-06-27T12:00:00Z")
+
+    assert len(assets) == 3
+    assert assets[0] == {
+        "id": "osm-node-101",
+        "name": "Alpha DC",
+        "operator": "Alpha Cloud",
+        "geographyId": "UNASSIGNED",
+        "category": "data_centre",
+        "subtype": "other_data_centre",
+        "lifecycle": "operational",
+        "targetYear": None,
+        "coordinates": [-77.1, 38.9],
+        "locationPrecision": "exact",
+        "valueKind": "observed",
+        "sourceIds": ["openstreetmap-infrastructure"],
+        "sourceType": "community_mapped",
+        "sourceUrl": "https://www.openstreetmap.org/node/101",
+        "externalIds": {"osm": "node/101"},
+        "lastObservedAt": "2026-06-27T12:00:00Z",
+        "demandMw": None,
+    }
+    assert assets[1]["name"] == "Mapped desalination plant · OSM 202"
+    assert assets[1]["coordinates"] == [55.0, 25.0]
+    assert assets[2]["lifecycle"] == "under_construction"
+
+
+def test_qlever_connector_rejects_partial_production_response() -> None:
+    payload = json.loads((FIXTURES / "qlever-osm-infrastructure-sample.json").read_text())
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    connector = OsmInfrastructureConnector("https://example.test/sparql", minimum_data_centres=3_500)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="too few data-centre records"):
+            connector.fetch(client, now=datetime(2026, 6, 27, tzinfo=UTC))
+
+
+def test_qlever_connector_fetches_valid_small_fixture_when_threshold_is_overridden() -> None:
+    payload = json.loads((FIXTURES / "qlever-osm-infrastructure-sample.json").read_text())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["content-type"] == "application/sparql-query"
+        return httpx.Response(200, json=payload)
+
+    connector = OsmInfrastructureConnector("https://example.test/sparql", minimum_data_centres=2)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = connector.fetch(client, now=datetime(2026, 6, 27, tzinfo=UTC))
+
+    assert result.state == ConnectorState.CURRENT
+    assert result.payload is not None
+    assert len(json.loads(result.payload.body)["assets"]) == 3

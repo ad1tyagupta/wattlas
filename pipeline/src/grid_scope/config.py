@@ -16,4 +16,5 @@ UN_GEODATA_URL = os.getenv(
     "https://geoportal.un.org/arcgis/sharing/rest/content/items/"
     "d7caaff3ef4b4f7c82689b7c4694ad92/data",
 )
+QLEVER_OSM_URL = os.getenv("QLEVER_OSM_URL", "https://qlever.dev/api/osm-planet")
 MODEL_VERSION = "2.0.0"

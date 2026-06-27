@@ -1,0 +1,29 @@
+{
+  "head": {"vars": ["element", "name", "operator", "geometry", "category", "lifecycle"]},
+  "results": {
+    "bindings": [
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/node/101"},
+        "name": {"type": "literal", "value": "Alpha DC"},
+        "operator": {"type": "literal", "value": "Alpha Cloud"},
+        "geometry": {"type": "literal", "value": "POINT(-77.10 38.90)"},
+        "category": {"type": "literal", "value": "data_centre"},
+        "lifecycle": {"type": "literal", "value": "operational"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/way/202"},
+        "geometry": {"type": "literal", "value": "POLYGON((54.9 24.9,55.1 24.9,55.1 25.1,54.9 25.1,54.9 24.9))"},
+        "category": {"type": "literal", "value": "water_infrastructure"},
+        "lifecycle": {"type": "literal", "value": "operational"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/way/303"},
+        "name": {"type": "literal", "value": "Future Compute Campus"},
+        "geometry": {"type": "literal", "value": "POLYGON((-91.8 32.4,-91.7 32.4,-91.7 32.5,-91.8 32.5,-91.8 32.4))"},
+        "category": {"type": "literal", "value": "data_centre"},
+        "lifecycle": {"type": "literal", "value": "under_construction"}
+      }
+    ]
+  },
+  "meta": {"query-time-ms": 12, "result-size-total": 3}
+}
