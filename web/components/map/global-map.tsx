@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef } from "react";
 import maplibregl, { type GeoJSONSource, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 
 import { baseMapStyle } from "@/components/map/map-style";
-import { assetColor, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
+import { assetColor, assetStrokeColorExpression, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
 import type {
   AssetCollection,
   GeographyCollection,
@@ -95,7 +95,13 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
     map.on("load", () => {
       map.addSource("countries", { type: "geojson", data: countriesRef.current, promoteId: "id" });
       map.addSource("regions", { type: "geojson", data: regionsRef.current, promoteId: "id" });
-      map.addSource("assets", { type: "geojson", data: assets });
+      map.addSource("assets", {
+        type: "geojson",
+        data: assets,
+        cluster: true,
+        clusterRadius: 48,
+        clusterMaxZoom: 6,
+      });
       map.addLayer({
         id: "countries-fill",
         type: "fill",
@@ -137,14 +143,39 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         },
       });
       map.addLayer({
+        id: "asset-clusters",
+        type: "circle",
+        source: "assets",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": "#E2B45C",
+          "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 100, 23, 500, 29],
+          "circle-opacity": 0.9,
+          "circle-stroke-color": "#07100F",
+          "circle-stroke-width": 2,
+        },
+      });
+      map.addLayer({
+        id: "asset-cluster-count",
+        type: "symbol",
+        source: "assets",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 11,
+        },
+        paint: { "text-color": "#07100F" },
+      });
+      map.addLayer({
         id: "data-centre-assets",
         type: "circle",
         source: "assets",
-        filter: ["==", ["get", "category"], "data_centre"],
+        filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "category"], "data_centre"]],
         paint: {
           "circle-color": assetColor("data_centre"),
           "circle-radius": 6,
-          "circle-stroke-color": "#07100F",
+          "circle-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.68, 1],
+          "circle-stroke-color": assetStrokeColorExpression(),
           "circle-stroke-width": 2,
         },
       });
@@ -152,29 +183,43 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         id: "water-assets",
         type: "circle",
         source: "assets",
-        filter: ["==", ["get", "category"], "water_infrastructure"],
+        filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "category"], "water_infrastructure"]],
         paint: {
           "circle-color": assetColor("water_infrastructure"),
           "circle-radius": 5,
-          "circle-stroke-color": "#E1EBE8",
+          "circle-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.68, 1],
+          "circle-stroke-color": assetStrokeColorExpression(),
           "circle-stroke-width": 1.25,
         },
       });
 
-      for (const layer of ["countries-fill", "regions-fill", "data-centre-assets", "water-assets"]) {
+      for (const layer of ["countries-fill", "regions-fill", "asset-clusters", "data-centre-assets", "water-assets"]) {
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
       }
       const selectGeography = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
         const properties = event.features?.[0]?.properties;
-        const id = properties?.geographyId ?? properties?.id;
+        const id = properties?.id;
         if (!id) return;
         onSelectRef.current(id);
       };
+      const selectAsset = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
+        const id = event.features?.[0]?.properties?.id;
+        if (id) onSelectRef.current(id);
+      };
+      map.on("click", "asset-clusters", async (event) => {
+        const feature = event.features?.[0];
+        const clusterId = Number(feature?.properties?.cluster_id);
+        const coordinates = feature?.geometry.type === "Point" ? feature.geometry.coordinates : null;
+        const source = map.getSource("assets") as GeoJSONSource | undefined;
+        if (!source || !coordinates || !Number.isFinite(clusterId)) return;
+        const zoom = await source.getClusterExpansionZoom(clusterId);
+        map.easeTo({ center: [coordinates[0], coordinates[1]], zoom });
+      });
       map.on("click", "countries-fill", selectGeography);
       map.on("click", "regions-fill", selectGeography);
-      map.on("click", "data-centre-assets", selectGeography);
-      map.on("click", "water-assets", selectGeography);
+      map.on("click", "data-centre-assets", selectAsset);
+      map.on("click", "water-assets", selectAsset);
       container.setAttribute("data-map-loaded", "true");
     });
     return () => {

@@ -56,3 +56,12 @@ export function countryBorderWidthExpression(selectedId: string | null): Express
 export function assetColor(category: Exclude<InfrastructureCategory, "combined">): string {
   return category === "data_centre" ? "#8FAEFF" : "#72D9BD";
 }
+
+export function assetStrokeColorExpression(): ExpressionSpecification {
+  return [
+    "case",
+    ["==", ["get", "sourceType"], "official_verified"],
+    "#F1F6F4",
+    "#07100F",
+  ] as ExpressionSpecification;
+}

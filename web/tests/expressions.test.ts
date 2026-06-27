@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assetColor,
+  assetStrokeColorExpression,
   countryBorderWidthExpression,
   scoreColor,
 } from "@/lib/map/expressions";
@@ -33,5 +34,11 @@ describe("global map expressions", () => {
   it("assigns distinct infrastructure colors", () => {
     expect(assetColor("data_centre")).toBe("#8FAEFF");
     expect(assetColor("water_infrastructure")).toBe("#72D9BD");
+  });
+
+  it("distinguishes officially verified facilities", () => {
+    const expression = JSON.stringify(assetStrokeColorExpression());
+    expect(expression).toContain("official_verified");
+    expect(expression).toContain("#F1F6F4");
   });
 });
