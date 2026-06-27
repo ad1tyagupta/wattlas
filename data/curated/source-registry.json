@@ -1,0 +1,116 @@
+{
+  "sources": [
+    {
+      "id": "meta-richland-parish-2024",
+      "name": "Meta announces Richland Parish data center",
+      "tier": "B",
+      "url": "https://about.fb.com/news/2025/12/metas-richland-parish-data-center-supports-louisiana-economy-875-million-in-contracts/",
+      "publishedAt": "2025-12-04T00:00:00Z"
+    },
+    {
+      "id": "aws-saudi-region-2024",
+      "name": "AWS announces Saudi Arabia Region for 2026",
+      "tier": "B",
+      "url": "https://press.aboutamazon.com/2024/3/aws-to-launch-an-infrastructure-region-in-the-kingdom-of-saudi-arabia",
+      "publishedAt": "2024-03-04T00:00:00Z"
+    },
+    {
+      "id": "aws-australia-investment-2025",
+      "name": "AWS announces Australian data-centre investment through 2029",
+      "tier": "B",
+      "url": "https://www.aboutamazon.com.au/news/aws/accelerating-australia-and-new-zealands-ai-ambitions-built-on-20-years-of-innovation",
+      "publishedAt": "2026-05-14T00:00:00Z"
+    },
+    {
+      "id": "google-india-ai-hub-2025",
+      "name": "Google announces AI hub in Visakhapatnam",
+      "tier": "B",
+      "url": "https://blog.google/intl/en-in/company-news/our-first-ai-hub-in-india-powered-by-a-15-billion-investment/",
+      "publishedAt": "2025-10-14T00:00:00Z"
+    },
+    {
+      "id": "china-east-data-west-2022",
+      "name": "China launches East Data, West Computing project",
+      "tier": "A",
+      "url": "https://english.www.gov.cn/statecouncil/ministries/202202/23/content_WS6215bd65c6d09c94e48a56c8.html",
+      "publishedAt": "2022-02-23T00:00:00Z"
+    },
+    {
+      "id": "microsoft-south-africa-2025",
+      "name": "Microsoft announces South Africa cloud and AI infrastructure investment",
+      "tier": "B",
+      "url": "https://news.microsoft.com/source/emea/features/microsoft-invests-zar-5-4bn-in-south-africa/",
+      "publishedAt": "2025-03-06T00:00:00Z"
+    },
+    {
+      "id": "scala-ai-city-2025",
+      "name": "Scala Data Centers announces AI City in Brazil",
+      "tier": "B",
+      "url": "https://scaladatacenters.com/en/with-an-initial-investment-of-usd-500-million-scala-data-centers-and-rio-grande-do-sul-government-sign-agreement-for-largest-digital-infrastructure-project-in-the-state-of-southern-brazil/",
+      "publishedAt": "2024-09-11T00:00:00Z"
+    },
+    {
+      "id": "microsoft-uk-investment-2025",
+      "name": "Microsoft announces UK AI infrastructure investment",
+      "tier": "B",
+      "url": "https://blogs.microsoft.com/on-the-issues/2025/09/16/microsoft-30-billion-uk-ai-future",
+      "publishedAt": "2025-09-16T00:00:00Z"
+    },
+    {
+      "id": "dewa-hassyan-2024",
+      "name": "DEWA Hassyan seawater reverse-osmosis project",
+      "tier": "A",
+      "url": "https://dewa.gov.ae/en/about-us/media-publications/latest-news/2024/04/dewa-and-acwa-power-reach-financial-close",
+      "publishedAt": "2024-04-17T00:00:00Z"
+    },
+    {
+      "id": "acciona-casablanca-2025",
+      "name": "ACCIONA Casablanca desalination financing",
+      "tier": "B",
+      "url": "https://www.acciona.com/updates/news/acciona-signs-financing-casablanca-desalination-plant",
+      "publishedAt": "2025-06-26T00:00:00Z"
+    },
+    {
+      "id": "pub-tuas-2025",
+      "name": "Singapore PUB Tuas Water Reclamation Plant",
+      "tier": "A",
+      "url": "https://www.pub.gov.sg/Professionals/Requirements/Used-Water/DTSS/Tuas-Water-Reclamation-Plant",
+      "publishedAt": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "watercorp-alkimos-2025",
+      "name": "Western Australia Alkimos Seawater Desalination Plant",
+      "tier": "A",
+      "url": "https://www.watercorporation.com.au/Our-water/Desalination/Alkimos-Seawater-Desalination-Plant",
+      "publishedAt": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "pure-water-san-diego-2025",
+      "name": "City of San Diego Pure Water Program",
+      "tier": "A",
+      "url": "https://www.sandiego.gov/public-utilities/sustainability/pure-water-sd",
+      "publishedAt": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "swpc-seven-year-plan-2025",
+      "name": "Saudi Water Partnership Company seven-year statement",
+      "tier": "A",
+      "url": "https://www.swpc.sa/en/seven-year-statement/",
+      "publishedAt": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "world-bank-electricity",
+      "name": "World Bank electricity indicators",
+      "tier": "A",
+      "url": "https://data.worldbank.org/indicator/EG.USE.ELEC.KH.PC",
+      "publishedAt": "2026-06-27T00:00:00Z"
+    },
+    {
+      "id": "ember-global-electricity",
+      "name": "Ember Global Electricity Data Explorer",
+      "tier": "A",
+      "url": "https://ember-energy.org/data/global-electricity/",
+      "publishedAt": "2026-05-01T00:00:00Z"
+    }
+  ]
+}
