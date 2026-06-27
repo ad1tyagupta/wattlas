@@ -90,6 +90,45 @@ def test_un_geodata_rejects_country_geometry_without_identifier() -> None:
         })
 
 
+def test_un_geodata_ignores_internal_pseudo_country_polygons() -> None:
+    result = normalize_countries({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {"iso2cd": "xp", "iso3cd": "xap", "m49_cd": "356", "nam_en": ""},
+        }],
+    })
+
+    assert result["features"] == []
+
+
+def test_un_geodata_ignores_status_99_disputed_area_polygons() -> None:
+    result = normalize_countries({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {"iso2cd": "SD", "iso3cd": "SDN", "m49_cd": "729", "nam_en": "", "stscod": 99},
+        }],
+    })
+
+    assert result["features"] == []
+
+
+def test_un_geodata_ignores_boundary_line_layers() -> None:
+    result = normalize_countries({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[0, 0], [1, 1]]},
+            "properties": {"iso2cd": "AQ", "iso3cd": "ATA", "m49_cd": "010"},
+        }],
+    })
+
+    assert result["features"] == []
+
+
 def test_un_salb_retains_admin_parent_relationships() -> None:
     payload = json.loads((FIXTURES / "un-salb-sample.geojson").read_text())
 

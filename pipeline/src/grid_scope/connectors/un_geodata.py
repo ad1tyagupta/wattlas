@@ -18,8 +18,14 @@ UN_BOUNDARY_DISCLAIMER = (
 def normalize_countries(collection: dict) -> dict:
     features: list[dict] = []
     for source in collection.get("features", []):
+        if (source.get("geometry") or {}).get("type") not in {"Polygon", "MultiPolygon"}:
+            continue
         properties = source.get("properties") or {}
         iso2 = properties.get("iso2cd") or properties.get("ISO2CD")
+        if iso2 and (len(iso2) != 2 or not iso2.isalpha() or iso2 != iso2.upper()):
+            continue
+        if properties.get("stscod") == 99 or properties.get("STSCOD") == 99:
+            continue
         if not iso2:
             if properties.get("nam_en") or properties.get("NAME_EN"):
                 raise ValueError("UN geometry has no identifiable country")
