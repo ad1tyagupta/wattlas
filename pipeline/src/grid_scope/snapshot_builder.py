@@ -184,7 +184,9 @@ def _score_assets(assets: list[dict[str, Any]], year: int) -> dict[str, Any]:
     active = [
         asset
         for asset in assets
-        if asset.get("targetYear") is None or asset.get("targetYear") <= year
+        if asset.get("lifecycle") in {"announced", "planning_filed", "permitted", "under_construction"}
+        and asset.get("demandMw") is not None
+        and (asset.get("targetYear") is None or asset.get("targetYear") <= year)
     ]
     if not active:
         return {
@@ -280,7 +282,16 @@ def build_global_snapshot_artifacts(
             }
 
         current = combined_by_year[2030]
-        has_evidence = bool(country_assets)
+        has_evidence = current["scores"]["infrastructureDemand"] is not None
+        asset_summary = {
+            "total": len(country_assets),
+            "operational": sum(asset.get("lifecycle") == "operational" for asset in country_assets),
+            "planned": sum(asset.get("lifecycle") in {"announced", "planning_filed", "permitted", "under_construction"} for asset in country_assets),
+            "dataCentres": sum(asset.get("category") == "data_centre" for asset in country_assets),
+            "waterInfrastructure": sum(asset.get("category") == "water_infrastructure" for asset in country_assets),
+            "officialVerified": sum(asset.get("sourceType", "official_verified") == "official_verified" for asset in country_assets),
+            "communityMapped": sum(asset.get("sourceType") == "community_mapped" for asset in country_assets),
+        }
         country_features.append(
             {
                 "type": "Feature",
@@ -301,6 +312,7 @@ def build_global_snapshot_artifacts(
                     "contributionsByYear": contributions_by_year,
                     "sourceIds": sorted({source for asset in country_assets for source in asset.get("sourceIds", [])}),
                     "assetCount": len(country_assets),
+                    "assetSummary": asset_summary,
                 },
             }
         )

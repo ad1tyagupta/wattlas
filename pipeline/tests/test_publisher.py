@@ -51,3 +51,31 @@ def test_publish_rejects_duplicate_asset_ids_and_keeps_last_good(tmp_path) -> No
         publisher.publish("second", invalid, {"snapshotId": "second"})
 
     assert json.loads((tmp_path / "latest.json").read_text())["snapshotId"] == "first"
+
+
+def test_publish_rejects_invalid_asset_coordinates_and_unknown_country(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    invalid = global_artifacts()
+    invalid["assets.geojson"] = json.dumps({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "id": "bad",
+            "geometry": {"type": "Point", "coordinates": [190, 95]},
+            "properties": {"country": "ZZ"},
+        }],
+    }).encode()
+
+    with pytest.raises(ValueError, match="invalid coordinates"):
+        publisher.publish("invalid", invalid, {"snapshotId": "invalid"})
+
+
+def test_publish_enforces_osm_coverage_guard_when_connector_is_present(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    manifest = {
+        "snapshotId": "partial",
+        "coverage": {"dataCentres": 14},
+        "connectors": [{"id": "osm_infrastructure", "state": "current"}],
+    }
+
+    with pytest.raises(ValueError, match="coverage guard"):
+        publisher.publish("partial", global_artifacts(), manifest)

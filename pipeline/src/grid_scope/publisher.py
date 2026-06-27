@@ -19,7 +19,7 @@ class SnapshotPublisher:
         artifacts: dict[str, bytes],
         manifest: dict[str, object],
     ) -> Path:
-        self._validate(artifacts)
+        self._validate(artifacts, manifest)
 
         temporary = self.snapshots_dir / f"{snapshot_id}.tmp"
         destination = self.snapshots_dir / snapshot_id
@@ -46,7 +46,7 @@ class SnapshotPublisher:
         return destination
 
     @staticmethod
-    def _validate(artifacts: dict[str, bytes]) -> None:
+    def _validate(artifacts: dict[str, bytes], manifest: dict[str, object]) -> None:
         required = {"countries.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
         missing = required - artifacts.keys()
         if missing:
@@ -62,3 +62,30 @@ class SnapshotPublisher:
         countries = json.loads(artifacts["countries.geojson"])
         if not countries.get("features"):
             raise ValueError("countries.geojson must contain at least one country")
+        country_ids = {
+            feature.get("properties", {}).get("id") or feature.get("id")
+            for feature in countries.get("features", [])
+        }
+        assets = json.loads(artifacts["assets.geojson"])
+        for feature in assets.get("features", []):
+            coordinates = (feature.get("geometry") or {}).get("coordinates")
+            if (
+                not isinstance(coordinates, list)
+                or len(coordinates) != 2
+                or not -180 <= coordinates[0] <= 180
+                or not -90 <= coordinates[1] <= 90
+            ):
+                raise ValueError("assets.geojson contains invalid coordinates")
+            country = (feature.get("properties") or {}).get("country")
+            if country not in country_ids:
+                raise ValueError(f"assets.geojson contains unknown country: {country}")
+        connectors = manifest.get("connectors") if isinstance(manifest, dict) else None
+        has_osm = any(
+            connector.get("id") == "osm_infrastructure"
+            and connector.get("state") in {"current", "cached"}
+            for connector in (connectors or [])
+            if isinstance(connector, dict)
+        )
+        coverage = manifest.get("coverage", {}) if isinstance(manifest, dict) else {}
+        if has_osm and isinstance(coverage, dict) and coverage.get("dataCentres", 0) < 3_500:
+            raise ValueError("OSM data-centre coverage guard failed")
