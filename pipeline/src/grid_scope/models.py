@@ -78,6 +78,27 @@ class AssetSubtype(StrEnum):
     RESERVOIR = "reservoir"
 
 
+DATA_CENTRE_SUBTYPES = frozenset(
+    {
+        AssetSubtype.HYPERSCALE,
+        AssetSubtype.COLOCATION,
+        AssetSubtype.CLOUD,
+        AssetSubtype.AI_HPC,
+        AssetSubtype.OTHER_DATA_CENTRE,
+    }
+)
+
+WATER_INFRASTRUCTURE_SUBTYPES = frozenset(
+    {
+        AssetSubtype.DESALINATION,
+        AssetSubtype.WASTEWATER,
+        AssetSubtype.WATER_REUSE,
+        AssetSubtype.PIPELINE_PUMPING,
+        AssetSubtype.RESERVOIR,
+    }
+)
+
+
 class LocationPrecision(StrEnum):
     EXACT = "exact"
     CITY_CENTROID = "city_centroid"
@@ -152,8 +173,8 @@ class RegionalEnergyForecast(ContractModel):
     def provenance_is_present(self) -> "RegionalEnergyForecast":
         if not self.method_id.strip():
             raise ValueError("regional energy forecasts require a nonblank method ID")
-        if not any(source_id.strip() for source_id in self.source_ids):
-            raise ValueError("regional energy forecasts require at least one nonblank source ID")
+        if not self.source_ids or any(not source_id.strip() for source_id in self.source_ids):
+            raise ValueError("regional energy forecasts require nonblank source IDs")
         return self
 
 
@@ -268,6 +289,13 @@ class AssetProperties(ContractModel):
         if self.category != AssetCategory.POWER_GENERATION:
             if self.subtype is None:
                 raise ValueError("non-generation assets require a subtype")
+            if self.category == AssetCategory.DATA_CENTRE and self.subtype not in DATA_CENTRE_SUBTYPES:
+                raise ValueError("data-centre assets require a data-centre subtype")
+            if (
+                self.category == AssetCategory.WATER_INFRASTRUCTURE
+                and self.subtype not in WATER_INFRASTRUCTURE_SUBTYPES
+            ):
+                raise ValueError("water-infrastructure assets require a water-infrastructure subtype")
             if any(value is not None for value in generation_fields):
                 raise ValueError("non-generation assets cannot contain generation-only fields")
             return self
@@ -280,9 +308,9 @@ class AssetProperties(ContractModel):
         if (
             any(metric is not None for metric in generation_ranges)
             and self.value_kind in (ValueKind.REPORTED, ValueKind.ESTIMATED)
-            and not any(source_id.strip() for source_id in self.source_ids)
+            and (not self.source_ids or any(not source_id.strip() for source_id in self.source_ids))
         ):
-            raise ValueError("reported or estimated generation metrics require at least one nonblank source ID")
+            raise ValueError("reported or estimated generation metrics require nonblank source IDs")
         if (
             self.commissioning_year is not None
             and self.retirement_year is not None

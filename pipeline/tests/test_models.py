@@ -84,6 +84,67 @@ def test_asset_supports_water_infrastructure_subtypes() -> None:
     assert asset.subtype == "desalination"
 
 
+@pytest.mark.parametrize(
+    ("category", "subtype"),
+    [
+        ("data_centre", "hyperscale"),
+        ("data_centre", "colocation"),
+        ("data_centre", "cloud"),
+        ("data_centre", "ai_hpc"),
+        ("data_centre", "other_data_centre"),
+        ("water_infrastructure", "desalination"),
+        ("water_infrastructure", "wastewater"),
+        ("water_infrastructure", "water_reuse"),
+        ("water_infrastructure", "pipeline_pumping"),
+        ("water_infrastructure", "reservoir"),
+    ],
+)
+def test_non_generation_assets_accept_only_their_valid_subtypes(category: str, subtype: str) -> None:
+    asset = AssetProperties(
+        id=f"valid-{category}-{subtype}",
+        name="Valid infrastructure asset",
+        geography_id="US",
+        category=category,
+        subtype=subtype,
+        lifecycle="operational",
+        location_precision="exact",
+        value_kind="observed",
+        source_ids=["source-1"],
+    )
+
+    assert asset.subtype == subtype
+
+
+@pytest.mark.parametrize(
+    ("category", "subtype"),
+    [
+        ("data_centre", "desalination"),
+        ("data_centre", "wastewater"),
+        ("data_centre", "water_reuse"),
+        ("data_centre", "pipeline_pumping"),
+        ("data_centre", "reservoir"),
+        ("water_infrastructure", "hyperscale"),
+        ("water_infrastructure", "colocation"),
+        ("water_infrastructure", "cloud"),
+        ("water_infrastructure", "ai_hpc"),
+        ("water_infrastructure", "other_data_centre"),
+    ],
+)
+def test_non_generation_assets_reject_cross_family_subtypes(category: str, subtype: str) -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id=f"invalid-{category}-{subtype}",
+            name="Invalid infrastructure asset",
+            geography_id="US",
+            category=category,
+            subtype=subtype,
+            lifecycle="operational",
+            location_precision="exact",
+            value_kind="observed",
+            source_ids=["source-1"],
+        )
+
+
 def test_asset_preserves_public_provenance_fields() -> None:
     asset = AssetProperties(
         id="osm-node-101",
@@ -344,7 +405,10 @@ def test_non_generation_asset_still_requires_subtype() -> None:
 
 @pytest.mark.parametrize("field_name", ["capacity_mw", "dependable_capacity_mw", "annual_generation_gwh"])
 @pytest.mark.parametrize("value_kind", ["reported", "estimated"])
-@pytest.mark.parametrize("source_ids", [[], [""], ["   "]])
+@pytest.mark.parametrize(
+    "source_ids",
+    [[], [""], ["   "], ["", "official-generator-register"], ["official-generator-register", "   "]],
+)
 def test_reported_or_estimated_generation_metrics_require_nonblank_evidence(
     field_name: str,
     value_kind: str,
@@ -367,23 +431,6 @@ def test_reported_or_estimated_generation_metrics_require_nonblank_evidence(
             source_ids=source_ids,
             **generation_values,
         )
-
-
-def test_generation_metric_evidence_accepts_at_least_one_nonblank_source() -> None:
-    asset = AssetProperties(
-        id="generator-with-mixed-source-ids",
-        name="Cited generator",
-        geography_id="DE12",
-        category="power_generation",
-        lifecycle="operational",
-        technology="gas",
-        annual_generation_gwh={"low": 98, "central": 100, "high": 102},
-        location_precision="exact",
-        value_kind="reported",
-        source_ids=["", "official-generator-register"],
-    )
-
-    assert asset.source_ids == ["", "official-generator-register"]
 
 
 @pytest.mark.parametrize(
@@ -431,7 +478,10 @@ def test_regional_energy_forecast_requires_nonblank_method_id(method_id: str) ->
         )
 
 
-@pytest.mark.parametrize("source_ids", [[], [""], ["   "]])
+@pytest.mark.parametrize(
+    "source_ids",
+    [[], [""], ["   "], ["", "source-generation"], ["source-generation", "   "]],
+)
 def test_regional_energy_forecast_requires_nonblank_source_id(source_ids: list[str]) -> None:
     with pytest.raises(ValidationError):
         RegionalEnergyForecast(
