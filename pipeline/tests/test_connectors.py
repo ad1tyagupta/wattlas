@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 import httpx
@@ -11,9 +12,12 @@ from grid_scope.connectors.gisco import filter_nuts2
 from grid_scope.connectors.ember import normalize_ember_rows
 from grid_scope.connectors.global_assets import load_asset_registry
 from grid_scope.connectors.geoboundaries import normalize_adm1, validate_india_adm1
+from grid_scope.connectors.gem_power import GemPowerConnector, parse_gem_power
 from grid_scope.connectors.osm_infrastructure import OsmInfrastructureConnector, parse_qlever_assets
+from grid_scope.connectors.osm_power import OsmPowerConnector, parse_qlever_power
 from grid_scope.connectors.un_geodata import UN_BOUNDARY_DISCLAIMER, normalize_countries
 from grid_scope.connectors.un_salb import normalize_salb
+from grid_scope.connectors.wri_power import WriPowerConnector, parse_wri_power
 from grid_scope.connectors.world_bank import WorldBankConnector, parse_indicator_page
 from grid_scope.models import ConnectorState
 from grid_scope.storage import RawCaptureStore
@@ -363,3 +367,213 @@ def test_india_adm1_gate_requires_arunachal_assam_jammu_kashmir_and_ladakh() -> 
 
     with pytest.raises(ValueError, match="Arunachal Pradesh"):
         validate_india_adm1(features[:-1])
+
+
+def test_gem_power_parser_preserves_unit_hierarchy_capacity_and_provenance() -> None:
+    records = parse_gem_power(FIXTURES / "gem-power-sample.csv")
+
+    nuclear = next(item for item in records if item["externalIds"]["gemUnit"] == "GEM-U-1")
+
+    assert nuclear["category"] == "power_generation"
+    assert nuclear["technology"] == "nuclear"
+    assert nuclear["capacityMw"] == {"low": 1_200, "central": 1_200, "high": 1_200}
+    assert nuclear["capacityValueKind"] == "reported"
+    assert nuclear["plantId"] == "gem-plant-GEM-P-1"
+    assert nuclear["unitId"] == "gem-unit-GEM-U-1"
+    assert nuclear["lifecycle"] == "operational"
+    assert nuclear["coordinates"] == [77.25, 28.62]
+    assert nuclear["owner"] == "Public Energy Authority"
+    assert nuclear["operator"] == "National Nuclear Operator"
+    assert nuclear["sourceUrl"] == "https://www.gem.wiki/Example_Nuclear"
+    assert nuclear["licence"] == "CC-BY-4.0"
+    assert nuclear["updatedAt"] == "2026-03-15"
+
+
+def test_gem_power_parser_normalizes_lifecycles_and_keeps_missing_capacity_unavailable() -> None:
+    records = parse_gem_power(FIXTURES / "gem-power-sample.csv")
+
+    by_unit = {item["externalIds"]["gemUnit"]: item for item in records}
+    assert by_unit["GEM-U-2"]["lifecycle"] == "under_construction"
+    assert by_unit["GEM-U-2"]["technology"] == "solar"
+    assert by_unit["GEM-U-3"]["lifecycle"] == "announced"
+    assert by_unit["GEM-U-3"]["technology"] == "wind"
+    assert by_unit["GEM-U-3"]["capacityMw"] is None
+    assert by_unit["GEM-U-3"]["capacityValueKind"] == "unavailable"
+    assert by_unit["GEM-U-4"]["lifecycle"] == "retired"
+    assert by_unit["GEM-U-5"]["lifecycle"] == "cancelled"
+    assert by_unit["GEM-U-5"]["technology"] == "gas"
+    assert by_unit["GEM-U-6"]["lifecycle"] == "shelved"
+
+
+def test_wri_power_parser_preserves_fuels_generation_history_and_source_details() -> None:
+    payload = json.loads((FIXTURES / "wri-power-sample.json").read_text())
+
+    records = parse_wri_power(payload, updated_at="2021-06-01")
+
+    gas = next(item for item in records if item["externalIds"]["wri"] == "WRI-100")
+    assert gas["technology"] == "gas"
+    assert gas["primaryFuel"] == "CCGT"
+    assert gas["secondaryFuel"] == "Oil"
+    assert gas["capacityMw"]["central"] == 640
+    assert gas["generationHistoryGwh"] == {"2017": 2_812.5, "2018": 2_900.0}
+    assert gas["coordinates"] == [-77.04, 38.91]
+    assert gas["owner"] == "Grid Power LLC"
+    assert gas["operator"] == "Grid Operations Inc"
+    assert gas["sourceUrl"] == "https://example.org/wri/WRI-100"
+    assert gas["licence"] == "CC-BY-4.0"
+    assert gas["updatedAt"] == "2021-06-01"
+
+
+def test_wri_power_parser_uses_latest_generation_year_independent_of_json_order() -> None:
+    payload = {"data": [{
+        "gppd_idnr": "WRI-ORDER", "name": "Ordering Plant", "latitude": "", "longitude": "",
+        "capacity_mw": 100, "primary_fuel": "Gas", "generation_gwh_2018": 800,
+        "generation_gwh_2017": 700,
+    }]}
+
+    record = parse_wri_power(payload)[0]
+
+    assert record["coordinates"] is None
+    assert record["generationHistoryGwh"] == {"2017": 700, "2018": 800}
+    assert record["reportedGenerationGwh"]["central"] == 800
+
+
+def test_osm_power_parser_keeps_only_utility_scale_plants_and_normalizes_aliases() -> None:
+    payload = json.loads((FIXTURES / "qlever-osm-power-sample.json").read_text())
+
+    records = parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")
+
+    assert [item["externalIds"]["osm"] for item in records] == ["way/701", "relation/702"]
+    assert [item["technology"] for item in records] == ["solar", "wind"]
+    assert records[0]["capacityMw"]["central"] == 75
+    assert records[1]["capacityMw"] is None
+    assert records[0]["sourceType"] == "community_mapped"
+    assert records[0]["sourceUrl"] == "https://www.openstreetmap.org/way/701"
+    assert records[0]["licence"] == "ODbL-1.0"
+    assert records[0]["owner"] == "Sun Holdings"
+    assert records[0]["operator"] == "Sun Operations"
+
+
+def test_osm_power_parser_reads_thousands_separated_megawatts() -> None:
+    payload = {"results": {"bindings": [{
+        "element": {"value": "https://www.openstreetmap.org/way/900"},
+        "name": {"value": "Large Hydro"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "hydro"},
+        "output": {"value": "1,200 MW"},
+    }]}}
+
+    record = parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")[0]
+
+    assert record["capacityMw"]["central"] == 1_200
+
+
+@pytest.mark.parametrize(
+    ("parser", "payload"),
+    [
+        (parse_wri_power, {"data": [{
+            "gppd_idnr": "BAD", "name": "Bad", "latitude": 95, "longitude": 0,
+            "capacity_mw": 10, "primary_fuel": "Solar",
+        }]}),
+        (parse_wri_power, {"data": [{
+            "gppd_idnr": "BAD", "name": "Bad", "latitude": 1, "longitude": 1,
+            "capacity_mw": -10, "primary_fuel": "Solar",
+        }]}),
+    ],
+)
+def test_power_parsers_reject_malformed_coordinates_and_impossible_capacity(parser, payload) -> None:
+    with pytest.raises(ValueError, match="coordinates|capacity"):
+        parser(payload)
+
+
+def test_gem_power_connector_is_not_configured_without_public_release() -> None:
+    result = GemPowerConnector(path=None, url=None).fetch(now=datetime(2026, 6, 28, tzinfo=UTC))
+
+    assert result.state == ConnectorState.NOT_CONFIGURED
+    assert result.payload is None
+
+
+def test_gem_power_parser_reads_xlsx_without_a_dataframe_dependency(tmp_path) -> None:
+    workbook = tmp_path / "gem-power.xlsx"
+    headers = [
+        "Plant ID", "Unit ID", "Project Name", "Unit Name", "Latitude", "Longitude",
+        "Status", "Capacity (MW)", "Technology", "GEM Wiki URL", "Last Updated",
+    ]
+    values = [
+        "GEM-X-1", "GEM-X-U-1", "Workbook Solar", "Workbook Solar Unit", "10", "20",
+        "Operating", "42", "Photovoltaic", "https://www.gem.wiki/Workbook_Solar", "2026-03-15",
+    ]
+
+    def row_xml(row_number: int, cells: list[str]) -> str:
+        return "<row r=\"{}\">{}</row>".format(
+            row_number,
+            "".join(
+                f'<c r="{chr(65 + index)}{row_number}" t="inlineStr"><is><t>{value}</t></is></c>'
+                for index, value in enumerate(cells)
+            ),
+        )
+
+    worksheet = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+        f"{row_xml(1, headers)}{row_xml(2, values)}"
+        "</sheetData></worksheet>"
+    )
+    with ZipFile(workbook, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+
+    records = parse_gem_power(workbook)
+
+    assert records[0]["externalIds"] == {"gemPlant": "GEM-X-1", "gemUnit": "GEM-X-U-1"}
+    assert records[0]["technology"] == "solar"
+    assert records[0]["capacityMw"]["central"] == 42
+
+
+def test_power_connectors_enforce_production_coverage_guards() -> None:
+    gem = GemPowerConnector(path=FIXTURES / "gem-power-sample.csv", minimum_records=100)
+    with pytest.raises(ValueError, match="too few GEM power records"):
+        gem.fetch(now=datetime(2026, 6, 28, tzinfo=UTC))
+
+    wri_payload = (FIXTURES / "wri-power-sample.json").read_bytes()
+    osm_payload = json.loads((FIXTURES / "qlever-osm-power-sample.json").read_text())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=wri_payload, headers={"content-type": "application/json"})
+        return httpx.Response(200, json=osm_payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="too few WRI power records"):
+            WriPowerConnector("https://example.test/wri.json", minimum_records=100).fetch(
+                client, now=datetime(2026, 6, 28, tzinfo=UTC)
+            )
+        with pytest.raises(ValueError, match="too few OSM power records"):
+            OsmPowerConnector("https://example.test/sparql", minimum_records=100).fetch(
+                client, now=datetime(2026, 6, 28, tzinfo=UTC)
+            )
+
+
+def test_power_connectors_capture_release_checksum_and_attribution() -> None:
+    wri_payload = (FIXTURES / "wri-power-sample.json").read_bytes()
+    osm_payload = json.loads((FIXTURES / "qlever-osm-power-sample.json").read_text())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=wri_payload, headers={"content-type": "application/json"})
+        assert request.headers["content-type"] == "application/sparql-query"
+        return httpx.Response(200, json=osm_payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        wri_result = WriPowerConnector("https://example.test/wri.json", minimum_records=1).fetch(
+            client, now=datetime(2026, 6, 28, tzinfo=UTC)
+        )
+        osm_result = OsmPowerConnector("https://example.test/sparql", minimum_records=1).fetch(
+            client, now=datetime(2026, 6, 28, tzinfo=UTC)
+        )
+
+    wri_body = json.loads(wri_result.payload.body)
+    osm_body = json.loads(osm_result.payload.body)
+    assert len(wri_body["upstreamChecksumSha256"]) == 64
+    assert wri_body["sourceUrl"] == "https://example.test/wri.json"
+    assert osm_body["licence"] == "ODbL-1.0"
+    assert osm_body["attribution"] == "© OpenStreetMap contributors"

@@ -1,0 +1,38 @@
+{
+  "data": [
+    {
+      "gppd_idnr": "WRI-100",
+      "country": "USA",
+      "country_long": "United States of America",
+      "name": "Riverbend Combined Cycle",
+      "latitude": 38.91,
+      "longitude": -77.04,
+      "capacity_mw": 640,
+      "primary_fuel": "CCGT",
+      "other_fuel1": "Oil",
+      "other_fuel2": null,
+      "commissioning_year": 2014,
+      "owner": "Grid Power LLC",
+      "operator": "Grid Operations Inc",
+      "status": "operating",
+      "url": "https://example.org/wri/WRI-100",
+      "generation_gwh_2017": 2812.5,
+      "generation_gwh_2018": 2900.0
+    },
+    {
+      "gppd_idnr": "WRI-101",
+      "country": "BRA",
+      "country_long": "Brazil",
+      "name": "Serra Solar",
+      "latitude": -9.5,
+      "longitude": -40.6,
+      "capacity_mw": null,
+      "primary_fuel": "Photovoltaic",
+      "owner": "Serra Energia",
+      "operator": null,
+      "status": "operational",
+      "url": "https://example.org/wri/WRI-101",
+      "generation_gwh_2017": null
+    }
+  ]
+}

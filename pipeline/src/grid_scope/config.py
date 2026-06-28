@@ -18,4 +18,7 @@ UN_GEODATA_URL = os.getenv(
     "d7caaff3ef4b4f7c82689b7c4694ad92/data",
 )
 QLEVER_OSM_URL = os.getenv("QLEVER_OSM_URL", "https://qlever.dev/api/osm-planet")
+GEM_GIPT_PATH = Path(os.environ["GEM_GIPT_PATH"]) if os.getenv("GEM_GIPT_PATH") else None
+GEM_GIPT_URL = os.getenv("GEM_GIPT_URL") or None
+WRI_POWER_URL = os.getenv("WRI_POWER_URL") or None
 MODEL_VERSION = "2.1.0"

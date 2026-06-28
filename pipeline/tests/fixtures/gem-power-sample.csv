@@ -1,0 +1,7 @@
+Plant ID,Unit ID,Project Name,Unit Name,Country,Subnational unit,Latitude,Longitude,Status,Capacity (MW),Technology,Fuel 1,Fuel 2,Owner,Operator,Start year,Retired year,Expected COD,GEM Wiki URL,Last Updated
+GEM-P-1,GEM-U-1,Example Nuclear,Example Nuclear Unit 1,India,Delhi,28.62,77.25,Operating,1200,Nuclear,Nuclear,,Public Energy Authority,National Nuclear Operator,2018,,,https://www.gem.wiki/Example_Nuclear,2026-03-15
+GEM-P-2,GEM-U-2,Desert Sun,Desert Sun Phase 1,United Arab Emirates,Abu Dhabi,24.45,54.38,Construction,250,Photovoltaic,Solar,,Solar Owner,Solar Operator,,,2028,https://www.gem.wiki/Desert_Sun,2026-03-15
+GEM-P-3,GEM-U-3,North Wind,North Wind Phase A,United Kingdom,Scotland,56.49,-4.20,Pre-construction,,Onshore Wind,Wind,,Wind Owner,Wind Operator,,,2029,https://www.gem.wiki/North_Wind,2026-03-15
+GEM-P-4,GEM-U-4,Old Coal,Old Coal Unit 2,United States,Ohio,40.42,-82.91,Retired,500,Coal,Coal,,Legacy Power,Legacy Power,1974,2020,,https://www.gem.wiki/Old_Coal,2026-03-15
+GEM-P-5,GEM-U-5,Cancelled Gas,Cancelled Gas Unit,United States,Texas,31.00,-99.90,Cancelled,700,CCGT,Gas,Oil,Gas Developer,Gas Developer,,,2027,https://www.gem.wiki/Cancelled_Gas,2026-03-15
+GEM-P-6,GEM-U-6,Shelved Hydro,Shelved Hydro Phase,Canada,Ontario,50.00,-85.00,Shelved,300,Hydroelectric,Hydro,,Hydro Owner,Hydro Operator,,,2030,https://www.gem.wiki/Shelved_Hydro,2026-03-15

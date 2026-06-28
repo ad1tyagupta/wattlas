@@ -1,0 +1,34 @@
+{
+  "head": {"vars": ["element", "name", "geometry", "source", "output", "lifecycle"]},
+  "results": {
+    "bindings": [
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/way/701"},
+        "name": {"type": "literal", "value": "Mesa Solar Farm"},
+        "geometry": {"type": "literal", "value": "POLYGON((-112.1 33.4,-112.0 33.4,-112.0 33.5,-112.1 33.4))"},
+        "source": {"type": "literal", "value": "photovoltaic"},
+        "output": {"type": "literal", "value": "75 MW"},
+        "lifecycle": {"type": "literal", "value": "operating"},
+        "owner": {"type": "literal", "value": "Sun Holdings"},
+        "operator": {"type": "literal", "value": "Sun Operations"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/relation/702"},
+        "name": {"type": "literal", "value": "Prairie Wind"},
+        "geometry": {"type": "literal", "value": "POINT(-98.2 38.5)"},
+        "source": {"type": "literal", "value": "onshore_wind"},
+        "lifecycle": {"type": "literal", "value": "construction"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/node/703"},
+        "name": {"type": "literal", "value": "Household Rooftop"},
+        "geometry": {"type": "literal", "value": "POINT(-98.0 38.0)"},
+        "source": {"type": "literal", "value": "photovoltaic"},
+        "output": {"type": "literal", "value": "8 kW"},
+        "location": {"type": "literal", "value": "roof"},
+        "scale": {"type": "literal", "value": "household"},
+        "lifecycle": {"type": "literal", "value": "operating"}
+      }
+    ]
+  }
+}
