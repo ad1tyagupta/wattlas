@@ -5,3 +5,7 @@ GEM-P-3,GEM-U-3,North Wind,North Wind Phase A,United Kingdom,Scotland,56.49,-4.2
 GEM-P-4,GEM-U-4,Old Coal,Old Coal Unit 2,United States,Ohio,40.42,-82.91,Retired,500,Coal,Coal,,Legacy Power,Legacy Power,1974,2020,,https://www.gem.wiki/Old_Coal,2026-03-15
 GEM-P-5,GEM-U-5,Cancelled Gas,Cancelled Gas Unit,United States,Texas,31.00,-99.90,Cancelled,700,CCGT,Gas,Oil,Gas Developer,Gas Developer,,,2027,https://www.gem.wiki/Cancelled_Gas,2026-03-15
 GEM-P-6,GEM-U-6,Shelved Hydro,Shelved Hydro Phase,Canada,Ontario,50.00,-85.00,Shelved,300,Hydroelectric,Hydro,,Hydro Owner,Hydro Operator,,,2030,https://www.gem.wiki/Shelved_Hydro,2026-03-15
+GEM-P-7,GEM-U-7,Mothballed Oil,Mothballed Oil Unit,Mexico,Sonora,29.00,-110.00,Mothballed,90,Oil,Oil,,Oil Owner,Oil Operator,1999,,,https://www.gem.wiki/Mothballed_Oil,2026-03-15
+GEM-P-8,GEM-U-8,Planned Biomass,Planned Biomass Phase,Sweden,Skane,55.60,13.00,Planned,45,Biomass,Biomass,,Bio Owner,Bio Operator,,,2029,https://www.gem.wiki/Planned_Biomass,2026-03-15
+GEM-P-9,GEM-U-9,Canceled Geothermal,Canceled Geothermal Phase,Kenya,Nakuru,-0.30,36.10,Canceled,60,Geothermal,Geothermal,,Geo Owner,Geo Operator,,,2028,https://www.gem.wiki/Canceled_Geothermal,2026-03-15
+GEM-P-10,GEM-U-10,Paused Gas,Paused Gas Unit,Australia,Queensland,-23.00,143.00,Paused,150,Gas,Gas,,Paused Owner,Paused Operator,2015,,,https://www.gem.wiki/Paused_Gas,2026-03-15

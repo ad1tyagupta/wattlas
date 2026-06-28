@@ -113,6 +113,29 @@ def _coordinates(latitude: Any, longitude: Any) -> list[float] | None:
     return [round(lon, 6), round(lat, 6)]
 
 
+def _geojson_point_coordinates(geometry: Any) -> list[float] | None:
+    if geometry is None:
+        return None
+    if not isinstance(geometry, dict) or geometry.get("type") != "Point":
+        raise ValueError("WRI GeoJSON fallback requires a GeoJSON Point geometry")
+    coordinates = geometry.get("coordinates")
+    if (
+        not isinstance(coordinates, (list, tuple))
+        or len(coordinates) < 2
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in coordinates
+        )
+    ):
+        raise ValueError("WRI GeoJSON Point has malformed coordinates")
+    lon, lat = (float(value) for value in coordinates[:2])
+    if not -180 <= lon <= 180 or not -90 <= lat <= 90:
+        raise ValueError(f"invalid WRI GeoJSON Point coordinates: {lon}, {lat}")
+    return [round(lon, 6), round(lat, 6)]
+
+
 def _year(value: Any) -> int | None:
     if value is None or str(value).strip() == "":
         return None
@@ -134,7 +157,13 @@ def parse_wri_power(
     elif isinstance(payload, dict) and isinstance(payload.get("data"), list):
         rows = payload["data"]
     elif isinstance(payload, dict) and isinstance(payload.get("features"), list):
-        rows = [feature.get("properties", {}) for feature in payload["features"]]
+        rows = []
+        for feature in payload["features"]:
+            if not isinstance(feature, dict) or not isinstance(feature.get("properties"), dict):
+                raise ValueError("WRI GeoJSON feature lacks properties")
+            row = dict(feature["properties"])
+            row["_sourceGeometry"] = feature.get("geometry")
+            rows.append(row)
     else:
         raise ValueError("unexpected WRI power payload")
 
@@ -146,6 +175,11 @@ def parse_wri_power(
             raise ValueError(f"WRI row {index} lacks plant ID or name")
         capacity, capacity_kind = _capacity(row.get("capacity_mw"))
         primary_fuel = row.get("primary_fuel")
+        source_geometry = row.get("_sourceGeometry")
+        geometry_coordinates = _geojson_point_coordinates(source_geometry)
+        coordinates = _coordinates(row.get("latitude"), row.get("longitude"))
+        if coordinates is None:
+            coordinates = geometry_coordinates
         history: dict[str, float] = {}
         for key, value in row.items():
             match = re.fullmatch(r"generation_gwh_(\d{4})", str(key))
@@ -187,7 +221,8 @@ def parse_wri_power(
             "externalIds": {"wri": external_id},
             "countryIso3": row.get("country"),
             "country": row.get("country_long"),
-            "coordinates": _coordinates(row.get("latitude"), row.get("longitude")),
+            "coordinates": coordinates,
+            "sourceGeometry": source_geometry,
             "owner": row.get("owner"),
             "operator": row.get("operator"),
             "commissioningYear": _year(row.get("commissioning_year")),
@@ -196,7 +231,9 @@ def parse_wri_power(
             "sourceUrl": source_url,
             "licence": WRI_LICENCE,
             "updatedAt": updated_at or row.get("updated_at"),
-            "sourceRecord": dict(row),
+            "sourceRecord": {
+                key: value for key, value in row.items() if key != "_sourceGeometry"
+            },
         })
     return records
 

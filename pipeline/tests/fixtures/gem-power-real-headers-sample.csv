@@ -1,2 +1,2 @@
-GEM Location ID,GEM Unit/Phase ID,Project/Plant Name,Unit/Phase Name,Country,Latitude,Longitude,Status,Capacity (MW),Technology,Owner,Operator,GEM Wiki URL,Last Updated
+GEM Location ID,GEM Unit/Phase ID,Project/Plant Name,Unit/Phase Name,Country/Area,Latitude,Longitude,Status,Capacity (MW),Technology,Owner,Operator,GEM Wiki URL,Last Updated
 GEM-LOC-900,GEM-PHASE-901,Real Header Wind Project,Real Header Wind Phase 1,Denmark,56.1,10.2,Operating,180,Onshore Wind,Real Wind Owner,Real Wind Operator,https://www.gem.wiki/Real_Header_Wind,2026-03-15

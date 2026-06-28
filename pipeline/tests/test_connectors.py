@@ -403,6 +403,11 @@ def test_gem_power_parser_normalizes_lifecycles_and_keeps_missing_capacity_unava
     assert by_unit["GEM-U-5"]["lifecycle"] == "cancelled"
     assert by_unit["GEM-U-5"]["technology"] == "gas"
     assert by_unit["GEM-U-6"]["lifecycle"] == "shelved"
+    assert by_unit["GEM-U-7"]["lifecycle"] == "paused"
+    assert by_unit["GEM-U-7"]["rawStatus"] == "Mothballed"
+    assert by_unit["GEM-U-8"]["lifecycle"] == "announced"
+    assert by_unit["GEM-U-9"]["lifecycle"] == "cancelled"
+    assert by_unit["GEM-U-10"]["lifecycle"] == "paused"
 
 
 def test_gem_power_parser_accepts_real_gipt_hierarchy_headers() -> None:
@@ -413,6 +418,63 @@ def test_gem_power_parser_accepts_real_gipt_hierarchy_headers() -> None:
     assert records[0]["plantName"] == "Real Header Wind Project"
     assert records[0]["name"] == "Real Header Wind Phase 1"
     assert records[0]["technology"] == "wind"
+    assert records[0]["country"] == "Denmark"
+
+
+def test_gem_power_parser_resolves_workbook_relationships_and_finds_header_row(tmp_path) -> None:
+    workbook = tmp_path / "realistic-gipt.xlsx"
+
+    def row_xml(row_number: int, cells: list[str]) -> str:
+        return "<row r=\"{}\">{}</row>".format(
+            row_number,
+            "".join(
+                f'<c r="{chr(65 + index)}{row_number}" t="inlineStr"><is><t>{value}</t></is></c>'
+                for index, value in enumerate(cells)
+            ),
+        )
+
+    about_sheet = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<sheetData>{row_xml(1, ['Global Integrated Power Tracker'])}</sheetData></worksheet>"
+    )
+    headers = [
+        "GEM Location ID", "GEM Unit/Phase ID", "Project/Plant Name", "Unit/Phase Name",
+        "Country/Area", "Latitude", "Longitude", "Status", "Capacity (MW)", "Technology",
+    ]
+    values = [
+        "GEM-REAL-1", "GEM-REAL-U-1", "Relationship Solar", "Relationship Solar Phase",
+        "Spain", "40.4", "-3.7", "Operating", "88", "Photovoltaic",
+    ]
+    units_sheet = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+        f"{row_xml(1, ['GIPT units export'])}{row_xml(3, headers)}{row_xml(4, values)}"
+        "</sheetData></worksheet>"
+    )
+    workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+      xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <sheets>
+        <sheet name="About" sheetId="1" r:id="rIdAbout"/>
+        <sheet name="Units and phases" sheetId="2" r:id="rIdUnits"/>
+      </sheets>
+    </workbook>"""
+    relationships = """<?xml version="1.0" encoding="UTF-8"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rIdAbout" Type="worksheet" Target="worksheets/sheet7.xml"/>
+      <Relationship Id="rIdUnits" Type="worksheet" Target="worksheets/sheet2.xml"/>
+    </Relationships>"""
+    with ZipFile(workbook, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", relationships)
+        archive.writestr("xl/worksheets/sheet7.xml", about_sheet)
+        archive.writestr("xl/worksheets/sheet2.xml", units_sheet)
+
+    records = parse_gem_power(workbook)
+
+    assert records[0]["externalIds"] == {
+        "gemPlant": "GEM-REAL-1", "gemUnit": "GEM-REAL-U-1",
+    }
+    assert records[0]["name"] == "Relationship Solar Phase"
 
 
 def test_wri_power_parser_preserves_fuels_generation_history_and_source_details() -> None:
@@ -448,6 +510,52 @@ def test_wri_power_parser_uses_latest_generation_year_independent_of_json_order(
     assert record["reportedGenerationGwh"]["central"] == 800
 
 
+def test_wri_power_parser_uses_and_preserves_geojson_point_geometry() -> None:
+    payload = {"type": "FeatureCollection", "features": [{
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [12.5, 41.9]},
+        "properties": {
+            "gppd_idnr": "WRI-GEO-1", "name": "GeoJSON Plant",
+            "capacity_mw": 50, "primary_fuel": "Solar",
+        },
+    }]}
+
+    record = parse_wri_power(payload)[0]
+
+    assert record["coordinates"] == [12.5, 41.9]
+    assert record["sourceGeometry"] == {"type": "Point", "coordinates": [12.5, 41.9]}
+
+
+def test_wri_power_parser_rejects_non_point_geojson_fallback() -> None:
+    payload = {"type": "FeatureCollection", "features": [{
+        "type": "Feature",
+        "geometry": {"type": "Polygon", "coordinates": []},
+        "properties": {
+            "gppd_idnr": "WRI-GEO-BAD", "name": "Bad Geometry",
+            "capacity_mw": 50, "primary_fuel": "Solar",
+        },
+    }]}
+
+    with pytest.raises(ValueError, match="GeoJSON Point"):
+        parse_wri_power(payload)
+
+
+def test_wri_power_parser_accepts_valid_three_dimensional_geojson_point() -> None:
+    payload = {"type": "FeatureCollection", "features": [{
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [7.4, 46.9, 540]},
+        "properties": {
+            "gppd_idnr": "WRI-GEO-3D", "name": "Alpine Hydro",
+            "capacity_mw": 25, "primary_fuel": "Hydro",
+        },
+    }]}
+
+    record = parse_wri_power(payload)[0]
+
+    assert record["coordinates"] == [7.4, 46.9]
+    assert record["sourceGeometry"]["coordinates"] == [7.4, 46.9, 540]
+
+
 def test_osm_power_parser_keeps_only_utility_scale_plants_and_normalizes_aliases() -> None:
     payload = json.loads((FIXTURES / "qlever-osm-power-sample.json").read_text())
 
@@ -474,6 +582,46 @@ def test_osm_power_query_excludes_explicit_household_and_rooftop_records_server_
     )
 
 
+def test_osm_power_query_uses_real_lifecycle_tag_branches() -> None:
+    assert "UNION" in QLEVER_POWER_QUERY
+    assert 'osmkey:power "plant"' in QLEVER_POWER_QUERY
+    assert "Key:construction:power" in QLEVER_POWER_QUERY
+    assert 'osmkey:power "construction"' in QLEVER_POWER_QUERY
+    assert "Key:proposed:power" in QLEVER_POWER_QUERY
+    assert 'osmkey:power "proposed"' in QLEVER_POWER_QUERY
+    assert 'BIND("under_construction" AS ?lifecycle)' in QLEVER_POWER_QUERY
+    assert 'BIND("announced" AS ?lifecycle)' in QLEVER_POWER_QUERY
+
+
+def test_osm_power_parser_preserves_lifecycle_evidence_and_dedupes_deterministically() -> None:
+    operational = {
+        "element": {"value": "https://www.openstreetmap.org/way/950"},
+        "name": {"value": "Transition Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "gas"},
+        "lifecycle": {"value": "operational"},
+        "rawLifecycle": {"value": "power=plant"},
+    }
+    construction = {
+        **operational,
+        "lifecycle": {"value": "under_construction"},
+        "rawLifecycle": {"value": "construction:power=plant"},
+    }
+
+    first = parse_qlever_power(
+        {"results": {"bindings": [operational, construction]}},
+        observed_at="2026-06-28T10:00:00Z",
+    )
+    second = parse_qlever_power(
+        {"results": {"bindings": [construction, operational]}},
+        observed_at="2026-06-28T10:00:00Z",
+    )
+
+    assert first == second
+    assert first[0]["lifecycle"] == "under_construction"
+    assert first[0]["rawStatus"] == "construction:power=plant"
+
+
 def test_osm_power_parser_reads_thousands_separated_megawatts() -> None:
     payload = {"results": {"bindings": [{
         "element": {"value": "https://www.openstreetmap.org/way/900"},
@@ -486,6 +634,51 @@ def test_osm_power_parser_reads_thousands_separated_megawatts() -> None:
     record = parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")[0]
 
     assert record["capacityMw"]["central"] == 1_200
+
+
+def test_osm_power_parser_reads_dot_decimal_megawatts() -> None:
+    payload = {"results": {"bindings": [{
+        "element": {"value": "https://www.openstreetmap.org/way/901"},
+        "name": {"value": "Decimal Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "gas"},
+        "output": {"value": "1.2 MW"},
+    }]}}
+
+    record = parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")[0]
+
+    assert record["capacityMw"]["central"] == 1.2
+
+
+@pytest.mark.parametrize("reported_output", ["1,20 MW", "50 MW; 30 MW"])
+def test_osm_power_parser_rejects_ambiguous_capacity_formats(reported_output) -> None:
+    payload = {"results": {"bindings": [{
+        "element": {"value": "https://www.openstreetmap.org/way/902"},
+        "name": {"value": "Ambiguous Capacity Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "gas"},
+        "output": {"value": reported_output},
+    }]}}
+
+    with pytest.raises(ValueError, match="ambiguous|malformed"):
+        parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")
+
+
+def test_osm_power_parser_rejects_conflicting_capacity_bindings() -> None:
+    binding = {
+        "element": {"value": "https://www.openstreetmap.org/way/903"},
+        "name": {"value": "Conflicting Capacity Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "gas"},
+        "lifecycle": {"value": "operational"},
+    }
+    payload = {"results": {"bindings": [
+        {**binding, "output": {"value": "50 MW"}},
+        {**binding, "output": {"value": "30 MW"}},
+    ]}}
+
+    with pytest.raises(ValueError, match="conflicting OSM capacity"):
+        parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")
 
 
 @pytest.mark.parametrize(

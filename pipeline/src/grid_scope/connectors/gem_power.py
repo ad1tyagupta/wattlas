@@ -6,6 +6,7 @@ import io
 import json
 import math
 from pathlib import Path
+import posixpath
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -60,7 +61,12 @@ _LIFECYCLE_ALIASES = {
     "pre-construction": "announced",
     "planned": "announced",
     "announced": "announced",
+    "mothballed": "paused",
+    "mothball": "paused",
+    "paused": "paused",
+    "inactive": "paused",
     "retired": "retired",
+    "decommissioned": "retired",
     "cancelled": "cancelled",
     "canceled": "cancelled",
     "shelved": "shelved",
@@ -152,28 +158,13 @@ def _year(value: str | None, *, label: str) -> int | None:
     return int(match.group())
 
 
-def _xlsx_rows(data: bytes) -> list[dict[str, str]]:
+def _worksheet_matrix(
+    archive: ZipFile,
+    worksheet_path: str,
+    shared_strings: list[str],
+) -> list[list[str]]:
     namespace = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-    try:
-        with ZipFile(io.BytesIO(data)) as archive:
-            shared_strings: list[str] = []
-            if "xl/sharedStrings.xml" in archive.namelist():
-                shared_root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
-                shared_strings = [
-                    "".join(text.text or "" for text in item.findall(".//m:t", namespace))
-                    for item in shared_root.findall("m:si", namespace)
-                ]
-            worksheet_names = sorted(
-                name
-                for name in archive.namelist()
-                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
-            )
-            if not worksheet_names:
-                raise ValueError("GEM workbook has no worksheets")
-            worksheet_root = ET.fromstring(archive.read(worksheet_names[0]))
-    except (BadZipFile, ET.ParseError, KeyError) as error:
-        raise ValueError("invalid GEM Excel workbook") from error
-
+    worksheet_root = ET.fromstring(archive.read(worksheet_path))
     table: list[list[str]] = []
     for row in worksheet_root.findall(".//m:sheetData/m:row", namespace):
         cells: dict[int, str] = {}
@@ -196,12 +187,99 @@ def _xlsx_rows(data: bytes) -> list[dict[str, str]]:
             cells[column - 1] = value
         width = max(cells, default=-1) + 1
         table.append([cells.get(index, "") for index in range(width)])
-    if not table:
-        return []
-    headers = [header.strip() for header in table[0]]
+    return table
+
+
+def _workbook_worksheets(archive: ZipFile) -> list[tuple[str, str]]:
+    physical_paths = sorted(
+        name
+        for name in archive.namelist()
+        if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+    )
+    if "xl/workbook.xml" not in archive.namelist():
+        return [(Path(path).stem, path) for path in physical_paths]
+
+    main_namespace = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    relationship_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+    relationships_path = "xl/_rels/workbook.xml.rels"
+    if relationships_path not in archive.namelist():
+        raise ValueError("GEM workbook is missing workbook relationships")
+    relationships_root = ET.fromstring(archive.read(relationships_path))
+    relationships = {
+        relationship.attrib.get("Id"): relationship.attrib.get("Target")
+        for relationship in relationships_root
+    }
+
+    worksheets: list[tuple[str, str]] = []
+    for sheet in workbook_root.findall(".//m:sheets/m:sheet", main_namespace):
+        target = relationships.get(sheet.attrib.get(relationship_id))
+        if not target:
+            continue
+        normalized_target = target.lstrip("/")
+        if not normalized_target.startswith("xl/"):
+            normalized_target = posixpath.normpath(posixpath.join("xl", normalized_target))
+        if normalized_target in archive.namelist():
+            worksheets.append((sheet.attrib.get("name", ""), normalized_target))
+    return worksheets
+
+
+def _hierarchy_header_index(table: list[list[str]]) -> int | None:
+    plant_headers = {_key(value) for value in (
+        "Plant ID", "GEM Plant ID", "GEM Location ID", "Project ID",
+    )}
+    unit_headers = {_key(value) for value in (
+        "Unit ID", "GEM Unit ID", "GEM Unit/Phase ID",
+    )}
+    for index, row in enumerate(table[:100]):
+        headers = {_key(value) for value in row if value.strip()}
+        if headers & plant_headers and headers & unit_headers:
+            return index
+    return None
+
+
+def _xlsx_rows(data: bytes) -> list[dict[str, str]]:
+    namespace = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    try:
+        with ZipFile(io.BytesIO(data)) as archive:
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                shared_root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+                shared_strings = [
+                    "".join(text.text or "" for text in item.findall(".//m:t", namespace))
+                    for item in shared_root.findall("m:si", namespace)
+                ]
+            worksheets = _workbook_worksheets(archive)
+            if not worksheets:
+                raise ValueError("GEM workbook has no worksheets")
+            prioritized = sorted(
+                enumerate(worksheets),
+                key=lambda item: (
+                    not any(
+                        hint in item[1][0].lower()
+                        for hint in ("unit", "phase", "data")
+                    ),
+                    item[0],
+                ),
+            )
+            selected_table: list[list[str]] | None = None
+            header_index: int | None = None
+            for _, (_, worksheet_path) in prioritized:
+                table = _worksheet_matrix(archive, worksheet_path, shared_strings)
+                candidate_index = _hierarchy_header_index(table)
+                if candidate_index is not None:
+                    selected_table = table
+                    header_index = candidate_index
+                    break
+    except (BadZipFile, ET.ParseError, IndexError, KeyError) as error:
+        raise ValueError("invalid GEM Excel workbook") from error
+
+    if selected_table is None or header_index is None:
+        raise ValueError("GEM workbook has no unit-data hierarchy header row")
+    headers = [header.strip() for header in selected_table[header_index]]
     return [
         {header: values[index] if index < len(values) else "" for index, header in enumerate(headers)}
-        for values in table[1:]
+        for values in selected_table[header_index + 1:]
         if any(value.strip() for value in values)
     ]
 
@@ -259,7 +337,7 @@ def parse_gem_power(source: Path | str | bytes, *, suffix: str | None = None) ->
             "plantId": f"gem-plant-{plant_id}",
             "unitId": f"gem-unit-{unit_id}",
             "externalIds": {"gemPlant": plant_id, "gemUnit": unit_id},
-            "country": _row_value(row, "Country"),
+            "country": _row_value(row, "Country", "Country/Area"),
             "subnationalUnit": _row_value(row, "Subnational unit", "State/Province"),
             "coordinates": _coordinates(
                 _row_value(row, "Latitude"), _row_value(row, "Longitude")

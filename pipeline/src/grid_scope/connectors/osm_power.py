@@ -23,17 +23,44 @@ _COORDINATE = re.compile(r"(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+(-?\d+(?:\.\d+)?
 QLEVER_POWER_QUERY = """
 PREFIX osmkey: <https://www.openstreetmap.org/wiki/Key:>
 PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-SELECT DISTINCT ?element ?name ?operator ?owner ?geometry ?source ?output ?lifecycle
+SELECT DISTINCT ?element ?name ?operator ?owner ?geometry ?source ?output ?lifecycle ?rawLifecycle
   ?location ?scale ?startDate ?wikidata ?wikipedia
 WHERE {
-  ?element osmkey:power "plant" .
+  {
+    ?element osmkey:power "plant" .
+    FILTER NOT EXISTS { ?element <https://www.openstreetmap.org/wiki/Key:construction:power> "plant" . }
+    FILTER NOT EXISTS { ?element <https://www.openstreetmap.org/wiki/Key:proposed:power> "plant" . }
+    FILTER NOT EXISTS { ?element osmkey:power "construction" . }
+    FILTER NOT EXISTS { ?element osmkey:power "proposed" . }
+    BIND("operational" AS ?lifecycle)
+    BIND("power=plant" AS ?rawLifecycle)
+  } UNION {
+    ?element <https://www.openstreetmap.org/wiki/Key:construction:power> "plant" .
+    BIND("under_construction" AS ?lifecycle)
+    BIND("construction:power=plant" AS ?rawLifecycle)
+  } UNION {
+    ?element osmkey:power "construction" .
+    ?element osmkey:construction ?constructionValue .
+    FILTER(?constructionValue IN ("plant", "power"))
+    BIND("under_construction" AS ?lifecycle)
+    BIND(CONCAT("power=construction;construction=", STR(?constructionValue)) AS ?rawLifecycle)
+  } UNION {
+    ?element <https://www.openstreetmap.org/wiki/Key:proposed:power> "plant" .
+    BIND("announced" AS ?lifecycle)
+    BIND("proposed:power=plant" AS ?rawLifecycle)
+  } UNION {
+    ?element osmkey:power "proposed" .
+    ?element osmkey:proposed ?proposedValue .
+    FILTER(?proposedValue IN ("plant", "power"))
+    BIND("announced" AS ?lifecycle)
+    BIND(CONCAT("power=proposed;proposed=", STR(?proposedValue)) AS ?rawLifecycle)
+  }
   ?element geo:hasGeometry/geo:asWKT ?geometry .
   OPTIONAL { ?element osmkey:name ?name . }
   OPTIONAL { ?element osmkey:operator ?operator . }
   OPTIONAL { ?element osmkey:owner ?owner . }
   OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:plant:source> ?source . }
   OPTIONAL { ?element <https://www.openstreetmap.org/wiki/Key:plant:output:electricity> ?output . }
-  OPTIONAL { ?element osmkey:status ?lifecycle . }
   OPTIONAL { ?element osmkey:location ?location . }
   OPTIONAL { ?element osmkey:scale ?scale . }
   FILTER(!BOUND(?location) || LCASE(STR(?location)) NOT IN ("roof", "rooftop"))
@@ -124,14 +151,16 @@ def _representative_coordinates(wkt: str) -> list[float]:
 def _capacity(value: str | None) -> tuple[dict[str, float] | None, str]:
     if value is None:
         return None, "unavailable"
-    match = re.search(r"(-?\d[\d,.]*)\s*(kW|MW|GW)\b", value, re.IGNORECASE)
+    match = re.fullmatch(
+        r"\s*(-?(?:(?:\d{1,3}(?:,\d{3})+)|(?:\d+))(?:\.\d+)?)\s*(kW|MW|GW)\s*",
+        value,
+        re.IGNORECASE,
+    )
     if not match:
+        if re.search(r"\d", value):
+            raise ValueError(f"ambiguous or malformed capacity: {value}")
         return None, "unavailable"
-    raw_amount = match.group(1)
-    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+", raw_amount):
-        raw_amount = raw_amount.replace(",", "")
-    else:
-        raw_amount = raw_amount.replace(",", ".")
+    raw_amount = match.group(1).replace(",", "")
     amount = float(raw_amount)
     unit = match.group(2).lower()
     capacity = amount / 1_000 if unit == "kw" else amount * 1_000 if unit == "gw" else amount
@@ -173,6 +202,23 @@ def _utility_scale_basis(
     return None
 
 
+def _record_preference(record: dict[str, Any]) -> tuple[int, int, str]:
+    lifecycle_rank = {
+        "under_construction": 6,
+        "announced": 5,
+        "operational": 4,
+        "paused": 3,
+        "shelved": 2,
+        "retired": 1,
+        "cancelled": 0,
+    }
+    return (
+        lifecycle_rank.get(record["lifecycle"], -1),
+        int(record["capacityMw"] is not None),
+        json.dumps(record, sort_keys=True, ensure_ascii=False),
+    )
+
+
 def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for binding in payload.get("results", {}).get("bindings", []):
@@ -183,8 +229,9 @@ def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dic
         element_type, element_id = match.groups()
         capacity, capacity_kind = _capacity(_value(binding, "output"))
         raw_source = _value(binding, "source")
-        raw_status = _value(binding, "lifecycle")
-        lifecycle = _lifecycle(raw_status)
+        normalized_status = _value(binding, "lifecycle")
+        raw_status = _value(binding, "rawLifecycle") or normalized_status
+        lifecycle = _lifecycle(normalized_status)
         utility_scale_basis = _utility_scale_basis(
             binding,
             element_type=element_type,
@@ -230,7 +277,19 @@ def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dic
                 if isinstance(value, dict) and value.get("value") is not None
             },
         }
-        records[record["id"]] = record
+        existing = records.get(record["id"])
+        if (
+            existing is not None
+            and existing["capacityMw"] is not None
+            and record["capacityMw"] is not None
+            and existing["capacityMw"]["central"] != record["capacityMw"]["central"]
+        ):
+            raise ValueError(
+                f"conflicting OSM capacity bindings for {osm_reference}: "
+                f"{existing['capacityMw']['central']} and {record['capacityMw']['central']} MW"
+            )
+        if existing is None or _record_preference(record) > _record_preference(existing):
+            records[record["id"]] = record
     return list(records.values())
 
 
