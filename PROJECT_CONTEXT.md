@@ -48,6 +48,23 @@ The original Europe-first scope remains the validated foundation and historical 
 
 The approved global design is recorded in `docs/plans/2026-06-27-wattlas-global-expansion-design.md`.
 
+### Approved global state power-balance expansion
+
+The next approved release turns Wattlas into an evidence-first global ADM1 electricity-balance atlas while preserving every earlier product decision.
+
+- **Regional visibility:** show first-order state/province-equivalent borders faintly from the world view, strengthen them with zoom, add labels at medium zoom, and retain deeper layers such as European NUTS-2 at closer zoom.
+- **Regional population:** use official ADM1 population first and WorldPop Global2 estimates otherwise, with source year, confidence, and observed/estimated labels.
+- **Power generation:** add utility-scale operating, construction, and planned plants as a third infrastructure category; exclude household and rooftop generators.
+- **Generator technologies:** use individual colours for solar, wind, hydropower, nuclear, gas, coal, oil, biomass, geothermal, and other, reinforced by marker shape or outline.
+- **Hybrid electricity balance:** use official ADM1 demand, generation, interchange, and shortage data where available; otherwise publish controlled low/base/high estimates tied to national totals and public spatial covariates.
+- **Deficit terminology:** keep local generation gap, net balance, and officially observed unmet demand separate. Never call demand minus local generation a definitive shortage when imports are unknown.
+- **Time:** show the latest actual data plus 2026–2031 demand, supply, capacity, and balance projections.
+- **Power Balance lens:** add a fourth explainable analytical lens while retaining Infrastructure Demand as primary and Site Attractiveness/System Risk as supporting lenses.
+- **Attribution:** add the subtle persistent line `Created by Aditya Gupta · Open-source project`, linking to the GitHub repository.
+- **Quality posture:** every regional result exposes source, date, method, confidence, coverage, and value kind; unavailable data remains unavailable rather than zero.
+
+The approved design is recorded in `docs/plans/2026-06-28-global-state-power-balance-design.md`.
+
 ## Decisions already approved
 
 - **Initial user:** the project owner, who works at Siemens Energy.
