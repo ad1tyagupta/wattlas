@@ -14,7 +14,7 @@ from grid_scope.connectors.global_assets import load_asset_registry
 from grid_scope.connectors.geoboundaries import normalize_adm1, validate_india_adm1
 from grid_scope.connectors.gem_power import GemPowerConnector, parse_gem_power
 from grid_scope.connectors.osm_infrastructure import OsmInfrastructureConnector, parse_qlever_assets
-from grid_scope.connectors.osm_power import OsmPowerConnector, parse_qlever_power
+from grid_scope.connectors.osm_power import QLEVER_POWER_QUERY, OsmPowerConnector, parse_qlever_power
 from grid_scope.connectors.un_geodata import UN_BOUNDARY_DISCLAIMER, normalize_countries
 from grid_scope.connectors.un_salb import normalize_salb
 from grid_scope.connectors.wri_power import WriPowerConnector, parse_wri_power
@@ -405,6 +405,16 @@ def test_gem_power_parser_normalizes_lifecycles_and_keeps_missing_capacity_unava
     assert by_unit["GEM-U-6"]["lifecycle"] == "shelved"
 
 
+def test_gem_power_parser_accepts_real_gipt_hierarchy_headers() -> None:
+    records = parse_gem_power(FIXTURES / "gem-power-real-headers-sample.csv")
+
+    assert records[0]["plantId"] == "gem-plant-GEM-LOC-900"
+    assert records[0]["unitId"] == "gem-unit-GEM-PHASE-901"
+    assert records[0]["plantName"] == "Real Header Wind Project"
+    assert records[0]["name"] == "Real Header Wind Phase 1"
+    assert records[0]["technology"] == "wind"
+
+
 def test_wri_power_parser_preserves_fuels_generation_history_and_source_details() -> None:
     payload = json.loads((FIXTURES / "wri-power-sample.json").read_text())
 
@@ -452,6 +462,16 @@ def test_osm_power_parser_keeps_only_utility_scale_plants_and_normalizes_aliases
     assert records[0]["licence"] == "ODbL-1.0"
     assert records[0]["owner"] == "Sun Holdings"
     assert records[0]["operator"] == "Sun Operations"
+    assert records[0]["utilityScaleBasis"] == "reported_capacity_at_least_1mw"
+    assert records[1]["utilityScaleBasis"] == "planned_or_construction_lifecycle"
+
+
+def test_osm_power_query_excludes_explicit_household_and_rooftop_records_server_side() -> None:
+    assert 'LCASE(STR(?location)) NOT IN ("roof", "rooftop")' in QLEVER_POWER_QUERY
+    assert (
+        'LCASE(STR(?scale)) NOT IN ("household", "residential", "domestic")'
+        in QLEVER_POWER_QUERY
+    )
 
 
 def test_osm_power_parser_reads_thousands_separated_megawatts() -> None:

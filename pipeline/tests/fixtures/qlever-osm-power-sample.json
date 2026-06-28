@@ -28,6 +28,18 @@
         "location": {"type": "literal", "value": "roof"},
         "scale": {"type": "literal", "value": "household"},
         "lifecycle": {"type": "literal", "value": "operating"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/node/704"},
+        "name": {"type": "literal", "value": "Ambiguous Home Power"},
+        "geometry": {"type": "literal", "value": "POINT(-98.1 38.1)"},
+        "lifecycle": {"type": "literal", "value": "operating"}
+      },
+      {
+        "element": {"type": "uri", "value": "https://www.openstreetmap.org/node/705"},
+        "geometry": {"type": "literal", "value": "POINT(-98.2 38.2)"},
+        "source": {"type": "literal", "value": "photovoltaic"},
+        "lifecycle": {"type": "literal", "value": "operating"}
       }
     ]
   }

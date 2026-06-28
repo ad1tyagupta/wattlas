@@ -225,9 +225,13 @@ def _read_rows(source: Path | str | bytes, *, suffix: str | None = None) -> list
 def parse_gem_power(source: Path | str | bytes, *, suffix: str | None = None) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for index, row in enumerate(_read_rows(source, suffix=suffix), start=2):
-        plant_id = _row_value(row, "Plant ID", "GEM Plant ID", "Project ID")
-        unit_id = _row_value(row, "Unit ID", "GEM Unit ID")
-        name = _row_value(row, "Unit Name", "Project Name", "Plant Name")
+        plant_id = _row_value(
+            row, "Plant ID", "GEM Plant ID", "GEM Location ID", "Project ID"
+        )
+        unit_id = _row_value(row, "Unit ID", "GEM Unit ID", "GEM Unit/Phase ID")
+        name = _row_value(
+            row, "Unit Name", "Unit/Phase Name", "Project Name", "Project/Plant Name", "Plant Name"
+        )
         if not plant_id or not unit_id or not name:
             raise ValueError(f"GEM row {index} lacks plant ID, unit ID, or name")
         raw_status = _row_value(row, "Status", "Unit status")
@@ -241,7 +245,9 @@ def parse_gem_power(source: Path | str | bytes, *, suffix: str | None = None) ->
         record = {
             "id": f"gem-unit-{unit_id}",
             "name": name,
-            "plantName": _row_value(row, "Project Name", "Plant Name") or name,
+            "plantName": _row_value(
+                row, "Project Name", "Project/Plant Name", "Plant Name"
+            ) or name,
             "category": "power_generation",
             "technology": _technology(raw_technology, primary_fuel),
             "primaryFuel": primary_fuel,

@@ -36,6 +36,8 @@ WHERE {
   OPTIONAL { ?element osmkey:status ?lifecycle . }
   OPTIONAL { ?element osmkey:location ?location . }
   OPTIONAL { ?element osmkey:scale ?scale . }
+  FILTER(!BOUND(?location) || LCASE(STR(?location)) NOT IN ("roof", "rooftop"))
+  FILTER(!BOUND(?scale) || LCASE(STR(?scale)) NOT IN ("household", "residential", "domestic"))
   OPTIONAL { ?element osmkey:start_date ?startDate . }
   OPTIONAL { ?element osmkey:wikidata ?wikidata . }
   OPTIONAL { ?element osmkey:wikipedia ?wikipedia . }
@@ -138,12 +140,37 @@ def _capacity(value: str | None) -> tuple[dict[str, float] | None, str]:
     return {"low": capacity, "central": capacity, "high": capacity}, "reported"
 
 
-def _is_household_or_rooftop(binding: dict[str, Any], capacity: dict[str, float] | None) -> bool:
+def _is_household_or_rooftop(binding: dict[str, Any]) -> bool:
     location = _key(_value(binding, "location"))
     scale = _key(_value(binding, "scale"))
-    if location in {"roof", "rooftop"} or scale in {"household", "residential", "domestic"}:
-        return True
-    return capacity is not None and capacity["central"] < 1
+    return location in {"roof", "rooftop"} or scale in {
+        "household", "residential", "domestic",
+    }
+
+
+def _utility_scale_basis(
+    binding: dict[str, Any],
+    *,
+    element_type: str,
+    capacity: dict[str, float] | None,
+    lifecycle: str,
+    plant_source: str | None,
+) -> str | None:
+    if _is_household_or_rooftop(binding):
+        return None
+    if capacity is not None:
+        return "reported_capacity_at_least_1mw" if capacity["central"] >= 1 else None
+    if lifecycle in {"under_construction", "announced"}:
+        return "planned_or_construction_lifecycle"
+    if (
+        element_type in {"way", "relation"}
+        and _value(binding, "name")
+        and plant_source
+    ):
+        return "named_plant_geometry_with_source"
+    if any(_value(binding, field) for field in ("owner", "operator", "wikidata")):
+        return "ownership_or_external_identity"
+    return None
 
 
 def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dict[str, Any]]:
@@ -155,10 +182,18 @@ def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dic
             raise ValueError(f"invalid OSM element URL: {element_url}")
         element_type, element_id = match.groups()
         capacity, capacity_kind = _capacity(_value(binding, "output"))
-        if _is_household_or_rooftop(binding, capacity):
-            continue
         raw_source = _value(binding, "source")
         raw_status = _value(binding, "lifecycle")
+        lifecycle = _lifecycle(raw_status)
+        utility_scale_basis = _utility_scale_basis(
+            binding,
+            element_type=element_type,
+            capacity=capacity,
+            lifecycle=lifecycle,
+            plant_source=raw_source,
+        )
+        if utility_scale_basis is None:
+            continue
         osm_reference = f"{element_type}/{element_id}"
         external_ids = {"osm": osm_reference}
         for key in ("wikidata", "wikipedia"):
@@ -172,8 +207,9 @@ def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dic
             "technology": _technology(raw_source),
             "primaryFuel": raw_source,
             "secondaryFuel": None,
-            "lifecycle": _lifecycle(raw_status),
+            "lifecycle": lifecycle,
             "rawStatus": raw_status,
+            "utilityScaleBasis": utility_scale_basis,
             "capacityMw": capacity,
             "capacityValueKind": capacity_kind,
             "plantId": f"osm-power-{element_type}-{element_id}",
