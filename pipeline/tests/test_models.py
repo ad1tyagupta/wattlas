@@ -342,8 +342,18 @@ def test_non_generation_asset_still_requires_subtype() -> None:
         )
 
 
+@pytest.mark.parametrize("field_name", ["capacity_mw", "dependable_capacity_mw", "annual_generation_gwh"])
 @pytest.mark.parametrize("value_kind", ["reported", "estimated"])
-def test_reported_or_estimated_generation_capacity_requires_evidence(value_kind: str) -> None:
+@pytest.mark.parametrize("source_ids", [[], [""], ["   "]])
+def test_reported_or_estimated_generation_metrics_require_nonblank_evidence(
+    field_name: str,
+    value_kind: str,
+    source_ids: list[str],
+) -> None:
+    generation_values = {
+        field_name: {"low": 98, "central": 100, "high": 102},
+    }
+
     with pytest.raises(ValidationError):
         AssetProperties(
             id=f"uncited-{value_kind}-generator",
@@ -352,11 +362,28 @@ def test_reported_or_estimated_generation_capacity_requires_evidence(value_kind:
             category="power_generation",
             lifecycle="operational",
             technology="gas",
-            capacity_mw={"low": 98, "central": 100, "high": 102},
             location_precision="exact",
             value_kind=value_kind,
-            source_ids=[],
+            source_ids=source_ids,
+            **generation_values,
         )
+
+
+def test_generation_metric_evidence_accepts_at_least_one_nonblank_source() -> None:
+    asset = AssetProperties(
+        id="generator-with-mixed-source-ids",
+        name="Cited generator",
+        geography_id="DE12",
+        category="power_generation",
+        lifecycle="operational",
+        technology="gas",
+        annual_generation_gwh={"low": 98, "central": 100, "high": 102},
+        location_precision="exact",
+        value_kind="reported",
+        source_ids=["", "official-generator-register"],
+    )
+
+    assert asset.source_ids == ["", "official-generator-register"]
 
 
 @pytest.mark.parametrize(
@@ -380,4 +407,224 @@ def test_power_generation_asset_rejects_negative_capacity_or_generation(field_na
             value_kind="reported",
             source_ids=["official-generator-register"],
             **generation_values,
+        )
+
+
+@pytest.mark.parametrize("method_id", ["", "   "])
+def test_regional_energy_forecast_requires_nonblank_method_id(method_id: str) -> None:
+    with pytest.raises(ValidationError):
+        RegionalEnergyForecast(
+            year=2026,
+            metrics={
+                "demand_gwh": {"low": 980, "central": 1000, "high": 1040},
+                "local_generation_gwh": {"low": 760, "central": 820, "high": 890},
+                "local_generation_gap_gwh": {"low": 90, "central": 180, "high": 280},
+                "installed_capacity_mw": 420,
+                "dependable_capacity_mw": {"low": 210, "central": 275, "high": 330},
+                "peak_demand_mw": {"low": 290, "central": 310, "high": 340},
+            },
+            method_id=method_id,
+            source_ids=["source-generation"],
+            confidence=74,
+            coverage=82,
+            value_kind="estimated",
+        )
+
+
+@pytest.mark.parametrize("source_ids", [[], [""], ["   "]])
+def test_regional_energy_forecast_requires_nonblank_source_id(source_ids: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        RegionalEnergyForecast(
+            year=2026,
+            metrics={
+                "demand_gwh": {"low": 980, "central": 1000, "high": 1040},
+                "local_generation_gwh": {"low": 760, "central": 820, "high": 890},
+                "local_generation_gap_gwh": {"low": 90, "central": 180, "high": 280},
+                "installed_capacity_mw": 420,
+                "dependable_capacity_mw": {"low": 210, "central": 275, "high": 330},
+                "peak_demand_mw": {"low": 290, "central": 310, "high": 340},
+            },
+            method_id="regional-energy-v1",
+            source_ids=source_ids,
+            confidence=74,
+            coverage=82,
+            value_kind="estimated",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "generation_value"),
+    [
+        ("technology", "solar"),
+        ("secondary_fuel", "battery storage"),
+        ("capacity_mw", {"low": 98, "central": 100, "high": 102}),
+        ("dependable_capacity_mw", {"low": 8, "central": 12, "high": 16}),
+        ("annual_generation_gwh", {"low": 90, "central": 105, "high": 120}),
+        ("commissioning_year", 2020),
+        ("retirement_year", 2050),
+        ("plant_id", "plant-1"),
+        ("unit_id", "unit-a"),
+    ],
+)
+def test_non_generation_assets_reject_generation_only_fields(
+    field_name: str,
+    generation_value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id=f"asset-with-{field_name}",
+            name="Invalid data centre",
+            geography_id="US",
+            category="data_centre",
+            subtype="hyperscale",
+            lifecycle="operational",
+            location_precision="exact",
+            value_kind="observed",
+            source_ids=["source-1"],
+            **{field_name: generation_value},
+        )
+
+
+def test_power_generation_asset_rejects_infrastructure_subtype() -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id="generator-with-infrastructure-subtype",
+            name="Invalid generator",
+            geography_id="DE12",
+            category="power_generation",
+            subtype="hyperscale",
+            lifecycle="operational",
+            technology="solar",
+            location_precision="exact",
+            value_kind="observed",
+            source_ids=["source-1"],
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "demand_gwh",
+        "local_generation_gwh",
+        "local_generation_gap_gwh",
+        "net_balance_gwh",
+        "dependable_capacity_mw",
+        "peak_demand_mw",
+    ],
+)
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_power_balance_rejects_nonfinite_ranges(field_name: str, nonfinite: float) -> None:
+    metrics = {
+        "demand_gwh": {"low": 980, "central": 1000, "high": 1040},
+        "local_generation_gwh": {"low": 760, "central": 820, "high": 890},
+        "local_generation_gap_gwh": {"low": 90, "central": 180, "high": 280},
+        "net_balance_gwh": {"low": -20, "central": 0, "high": 20},
+        "installed_capacity_mw": 420,
+        "dependable_capacity_mw": {"low": 210, "central": 275, "high": 330},
+        "peak_demand_mw": {"low": 290, "central": 310, "high": 340},
+        field_name: {"low": nonfinite, "central": nonfinite, "high": nonfinite},
+    }
+
+    with pytest.raises(ValidationError):
+        PowerBalanceMetrics(**metrics)
+
+
+@pytest.mark.parametrize("field_name", ["installed_capacity_mw", "observed_unmet_demand_gwh"])
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_power_balance_rejects_nonfinite_scalars(field_name: str, nonfinite: float) -> None:
+    metrics = {
+        "demand_gwh": {"low": 980, "central": 1000, "high": 1040},
+        "local_generation_gwh": {"low": 760, "central": 820, "high": 890},
+        "local_generation_gap_gwh": {"low": 90, "central": 180, "high": 280},
+        "installed_capacity_mw": 420,
+        "dependable_capacity_mw": {"low": 210, "central": 275, "high": 330},
+        "peak_demand_mw": {"low": 290, "central": 310, "high": 340},
+        field_name: nonfinite,
+    }
+
+    with pytest.raises(ValidationError):
+        PowerBalanceMetrics(**metrics)
+
+
+@pytest.mark.parametrize("field_name", ["capacity_mw", "dependable_capacity_mw", "annual_generation_gwh"])
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_power_generation_asset_rejects_nonfinite_ranges(field_name: str, nonfinite: float) -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id=f"nonfinite-{field_name}",
+            name="Invalid generator",
+            geography_id="DE12",
+            category="power_generation",
+            lifecycle="operational",
+            technology="wind",
+            location_precision="exact",
+            value_kind="reported",
+            source_ids=["official-generator-register"],
+            **{field_name: {"low": nonfinite, "central": nonfinite, "high": nonfinite}},
+        )
+
+
+@pytest.mark.parametrize("field_name", ["confidence", "coverage"])
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_regional_energy_forecast_rejects_nonfinite_quality_metrics(
+    field_name: str,
+    nonfinite: float,
+) -> None:
+    forecast = {
+        "year": 2026,
+        "metrics": {
+            "demand_gwh": {"low": 980, "central": 1000, "high": 1040},
+            "local_generation_gwh": {"low": 760, "central": 820, "high": 890},
+            "local_generation_gap_gwh": {"low": 90, "central": 180, "high": 280},
+            "installed_capacity_mw": 420,
+            "dependable_capacity_mw": {"low": 210, "central": 275, "high": 330},
+            "peak_demand_mw": {"low": 290, "central": 310, "high": 340},
+        },
+        "method_id": "regional-energy-v1",
+        "source_ids": ["source-generation"],
+        "confidence": 74,
+        "coverage": 82,
+        "value_kind": "estimated",
+        field_name: nonfinite,
+    }
+
+    with pytest.raises(ValidationError):
+        RegionalEnergyForecast(**forecast)
+
+
+@pytest.mark.parametrize("field_name", ["commissioning_year", "retirement_year"])
+@pytest.mark.parametrize("invalid_year", [0, -1, float("nan"), float("inf"), float("-inf")])
+def test_power_generation_asset_rejects_nonpositive_or_nonfinite_years(
+    field_name: str,
+    invalid_year: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id=f"invalid-{field_name}",
+            name="Invalid generator",
+            geography_id="DE12",
+            category="power_generation",
+            lifecycle="operational",
+            technology="wind",
+            location_precision="exact",
+            value_kind="observed",
+            source_ids=["official-generator-register"],
+            **{field_name: invalid_year},
+        )
+
+
+def test_power_generation_asset_rejects_retirement_before_commissioning() -> None:
+    with pytest.raises(ValidationError):
+        AssetProperties(
+            id="generator-with-reversed-lifecycle-years",
+            name="Invalid generator",
+            geography_id="DE12",
+            category="power_generation",
+            lifecycle="operational",
+            technology="wind",
+            commissioning_year=2030,
+            retirement_year=2029,
+            location_precision="exact",
+            value_kind="observed",
+            source_ids=["official-generator-register"],
         )

@@ -105,9 +105,9 @@ class DemandRange(ContractModel):
 
 
 class MetricRange(ContractModel):
-    low: float
-    central: float
-    high: float
+    low: float = Field(allow_inf_nan=False)
+    central: float = Field(allow_inf_nan=False)
+    high: float = Field(allow_inf_nan=False)
 
     @model_validator(mode="after")
     def bounds_are_ordered(self) -> "MetricRange":
@@ -121,8 +121,8 @@ class PowerBalanceMetrics(ContractModel):
     local_generation_gwh: MetricRange
     local_generation_gap_gwh: MetricRange
     net_balance_gwh: MetricRange | None = None
-    observed_unmet_demand_gwh: float | None = Field(default=None, ge=0)
-    installed_capacity_mw: float = Field(ge=0)
+    observed_unmet_demand_gwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    installed_capacity_mw: float = Field(ge=0, allow_inf_nan=False)
     dependable_capacity_mw: MetricRange
     peak_demand_mw: MetricRange
 
@@ -144,9 +144,17 @@ class RegionalEnergyForecast(ContractModel):
     metrics: PowerBalanceMetrics
     method_id: str
     source_ids: list[str] = Field(default_factory=list)
-    confidence: float = Field(ge=0, le=100)
-    coverage: float = Field(ge=0, le=100)
+    confidence: float = Field(ge=0, le=100, allow_inf_nan=False)
+    coverage: float = Field(ge=0, le=100, allow_inf_nan=False)
     value_kind: ValueKind
+
+    @model_validator(mode="after")
+    def provenance_is_present(self) -> "RegionalEnergyForecast":
+        if not self.method_id.strip():
+            raise ValueError("regional energy forecasts require a nonblank method ID")
+        if not any(source_id.strip() for source_id in self.source_ids):
+            raise ValueError("regional energy forecasts require at least one nonblank source ID")
+        return self
 
 
 class SourceRef(ContractModel):
@@ -225,8 +233,8 @@ class AssetProperties(ContractModel):
     capacity_mw: MetricRange | None = None
     dependable_capacity_mw: MetricRange | None = None
     annual_generation_gwh: MetricRange | None = None
-    commissioning_year: int | None = None
-    retirement_year: int | None = None
+    commissioning_year: int | None = Field(default=None, gt=0)
+    retirement_year: int | None = Field(default=None, gt=0)
     plant_id: str | None = None
     unit_id: str | None = None
     target_year: int | None = Field(default=None, ge=2026, le=2031)
@@ -243,23 +251,44 @@ class AssetProperties(ContractModel):
     def generation_and_demand_are_valid(self) -> "AssetProperties":
         if self.demand_mw is not None and not self.source_ids:
             raise ValueError("demand-contributing assets require at least one source")
-        if self.category != AssetCategory.POWER_GENERATION and self.subtype is None:
-            raise ValueError("non-generation assets require a subtype")
-        if self.category == AssetCategory.POWER_GENERATION and self.technology is None:
-            raise ValueError("power-generation assets require a technology")
         generation_ranges = (
             self.capacity_mw,
             self.dependable_capacity_mw,
             self.annual_generation_gwh,
         )
+        generation_fields = (
+            self.technology,
+            self.secondary_fuel,
+            *generation_ranges,
+            self.commissioning_year,
+            self.retirement_year,
+            self.plant_id,
+            self.unit_id,
+        )
+        if self.category != AssetCategory.POWER_GENERATION:
+            if self.subtype is None:
+                raise ValueError("non-generation assets require a subtype")
+            if any(value is not None for value in generation_fields):
+                raise ValueError("non-generation assets cannot contain generation-only fields")
+            return self
+        if self.subtype is not None:
+            raise ValueError("power-generation assets cannot contain an infrastructure subtype")
+        if self.technology is None:
+            raise ValueError("power-generation assets require a technology")
         if any(metric is not None and metric.low < 0 for metric in generation_ranges):
             raise ValueError("generation capacity and output cannot be negative")
         if (
-            self.capacity_mw is not None
+            any(metric is not None for metric in generation_ranges)
             and self.value_kind in (ValueKind.REPORTED, ValueKind.ESTIMATED)
-            and not self.source_ids
+            and not any(source_id.strip() for source_id in self.source_ids)
         ):
-            raise ValueError("reported or estimated generation capacity requires at least one source")
+            raise ValueError("reported or estimated generation metrics require at least one nonblank source ID")
+        if (
+            self.commissioning_year is not None
+            and self.retirement_year is not None
+            and self.retirement_year < self.commissioning_year
+        ):
+            raise ValueError("retirement year cannot precede commissioning year")
         return self
 
 
