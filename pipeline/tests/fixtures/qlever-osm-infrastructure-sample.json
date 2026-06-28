@@ -25,6 +25,7 @@
       },
       {
         "element": {"type": "uri", "value": "https://www.openstreetmap.org/way/202"},
+        "website": {"type": "literal", "value": "www,example.com"},
         "geometry": {"type": "literal", "value": "POLYGON((54.9 24.9,55.1 24.9,55.1 25.1,54.9 25.1,54.9 24.9))"},
         "category": {"type": "literal", "value": "water_infrastructure"},
         "lifecycle": {"type": "literal", "value": "operational"}

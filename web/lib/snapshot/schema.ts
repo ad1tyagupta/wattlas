@@ -94,6 +94,7 @@ export const manifestSchema = z.object({
     .refine((years) => years.join(",") === "2026,2027,2028,2029,2030,2031"),
   artifacts: z.object({
     countries: z.string(),
+    admin1: z.string(),
     regions: z.string(),
     assets: z.string(),
     evidence: z.string(),
@@ -101,6 +102,8 @@ export const manifestSchema = z.object({
   coverage: z.object({
     countries: z.number().int().nonnegative(),
     regions: z.number().int().nonnegative(),
+    admin1Regions: z.number().int().nonnegative(),
+    countriesWithAdmin1: z.number().int().nonnegative(),
     assets: z.number().int().nonnegative(),
     dataCentres: z.number().int().nonnegative(),
     waterInfrastructure: z.number().int().nonnegative(),
@@ -182,6 +185,21 @@ export const assetPropertiesSchema = z.object({
   sourceUrl: z.string().url().nullable().optional(),
   externalIds: z.record(z.string(), z.string()).default({}),
   lastObservedAt: z.string().datetime().nullable().optional(),
+  owner: z.string().nullable().optional(),
+  website: z.string().url().nullable().optional(),
+  facilityRef: z.string().nullable().optional(),
+  address: z.object({
+    street: z.string().nullable().optional(),
+    houseNumber: z.string().nullable().optional(),
+    city: z.string().nullable().optional(),
+    state: z.string().nullable().optional(),
+    postcode: z.string().nullable().optional(),
+    country: z.string().nullable().optional(),
+  }).nullable().optional(),
+  startDate: z.string().nullable().optional(),
+  openingDate: z.string().nullable().optional(),
+  reportedPower: z.string().nullable().optional(),
+  admin1Id: z.string().nullable().optional(),
 }).refine(({ demandMw, sourceIds }) => demandMw === null || sourceIds.length > 0, {
   message: "Demand-contributing assets require at least one source",
   path: ["sourceIds"],
@@ -203,8 +221,12 @@ export const geographyFeatureCollectionSchema = z.object({
   type: z.literal("FeatureCollection"),
   metadata: z.object({
     source: z.string().optional(),
+    sourceUrl: z.string().url().optional(),
+    license: z.string().optional(),
+    indiaBoundaryPerspective: z.string().optional(),
+    indiaAttribution: z.string().optional(),
     disclaimer: z.string().optional(),
-  }).optional(),
+  }).passthrough().optional(),
   features: z.array(z.object({
     type: z.literal("Feature"),
     id: z.string(),

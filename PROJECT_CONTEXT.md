@@ -2,7 +2,7 @@
 
 ## Status
 
-The Europe-first working vertical slice and the global Wattlas map were implemented on 2026-06-27. Global facility coverage was expanded the same day using community-maintained OpenStreetMap infrastructure merged with curated official project evidence.
+The Europe-first working vertical slice and the global Wattlas map were implemented on 2026-06-27. Global facility coverage was expanded the same day using community-maintained OpenStreetMap infrastructure merged with curated official project evidence. Global ADM1 state/province intelligence, the declared Government of India boundary perspective, and richer facility inspection were implemented on 2026-06-28.
 
 ## Origin
 
@@ -37,7 +37,7 @@ The original Europe-first scope remains the validated foundation and historical 
 - **Product name:** Wattlas.
 - **Audience:** both infrastructure professionals (investors, developers, utilities, and energy planners) and an interested general public.
 - **Geography:** global country coverage with thick national boundaries; progressively reveal subnational boundaries and scores where reliable public data exists.
-- **Boundary policy:** use UN-recognized boundaries and terminology, without independently adjudicating disputed claims.
+- **Boundary policy:** use UN national geometry generally, geoBoundaries `gbOpen` ADM1 state/province geometry, and GISCO NUTS-2 for deeper European detail. India is the approved exception: its national and state/union-territory geometry uses the declared **Government of India perspective**, with explicit attribution rather than silently adjudicating disputed claims.
 - **Infrastructure:** combine data centres and water infrastructure in one electrical-demand model, with toggles that isolate each category.
 - **Water scope:** desalination, wastewater treatment, water reuse, electrically material pipelines/pumping, and reservoirs. Only documented or estimated electrical consumption contributes to demand; hydropower and passive storage remain supply/context layers.
 - **Asset timing:** upcoming 2026–2031 projects drive the score; existing assets provide context.
@@ -143,10 +143,13 @@ The implementation plan is recorded in `docs/superpowers/plans/2026-06-27-opport
 The working version now includes:
 
 - A Next.js 16 / React 19 analytical shell using the approved Huashu visual system.
-- A clustered global MapLibre map with 246 UN countries, all 334 GISCO NUTS-2 regions, and thick national boundaries.
-- Snapshot `2026-06-27T17-11-15Z` with 3,634 facilities: 3,533 data centres and 101 water-infrastructure assets across 112 countries.
+- A clustered global MapLibre map with 246 countries, 3,229 geoBoundaries ADM1 states/provinces across 197 countries, all 334 GISCO NUTS-2 regions, and thick national boundaries.
+- Snapshot `2026-06-28T05-11-05Z` with 3,628 facilities: 3,527 data centres and 101 water-infrastructure assets.
+- A zoom hierarchy that keeps national borders strongest, reveals global ADM1 boundaries at medium zoom, and reveals European NUTS-2 boundaries closer in.
+- The Government of India perspective for India, validated to include all 36 states/union territories and specifically Jammu and Kashmir, Ladakh, Assam, and Arunachal Pradesh.
 - QLever/OpenStreetMap ingestion with ODbL attribution, stable source links, community/official provenance, lifecycle, operator, and location-precision labels.
-- Individual facility inspection and country summaries split by operational/planned, category, and official/community source.
+- Individual facility inspection grouped into Identity, Location, Operations, Energy, and Sources, with owner/operator, public address tags, references, dates, reported power, external IDs, precise coordinates, provenance, and honest unavailable states.
+- Country, ADM1, and NUTS-2 summaries split by operational/planned, category, and official/community source.
 - 2026–2031 Infrastructure Demand, Site Attractiveness, and System Risk views.
 - Explicit score arithmetic, confidence, coverage, value kind, evidence dossiers, source state, and comparison.
 - A Python 3.13 / DuckDB snapshot pipeline using UN Geodata, QLever/OpenStreetMap, GISCO, Eurostat, curated public evidence, and an optional ENTSO-E connector.
@@ -154,4 +157,4 @@ The working version now includes:
 - An active local Codex refresh automation at 04:00 Europe/Berlin once per day.
 - A GitHub Actions refresh alternative at approximately 04:00 Europe/Berlin once per day, with manual dispatch.
 
-Production is Git-connected at `https://wattlas.vercel.app`. GitHub Actions checks public data daily, rejects partial OSM responses below the coverage threshold, retains the last known good capture on failure, and commits validated snapshot changes.
+Production is Git-connected at `https://wattlas.vercel.app`. The daily pipeline keeps the version-pinned boundary artifact separate from frequently changing facility data, rejects partial OSM responses below the coverage threshold, retains the last known good capture on failure, and commits validated snapshot changes.

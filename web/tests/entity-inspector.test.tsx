@@ -16,6 +16,9 @@ describe("EntityInspector", () => {
         locationPrecision: "exact", valueKind: "observed", sourceIds: ["openstreetmap-infrastructure"],
         sourceType: "community_mapped", sourceUrl: "https://www.openstreetmap.org/node/101",
         externalIds: { osm: "node/101" }, lastObservedAt: "2026-06-27T12:00:00Z", confidence: 86,
+        owner: "Alpha Infrastructure", website: "https://alpha.example/dc", facilityRef: "IAD-01",
+        address: { street: "Compute Avenue", houseNumber: "101", city: "Ashburn", state: "Virginia", postcode: "20147", country: "US" },
+        startDate: "2021", reportedPower: "48 MW",
       },
     } as AssetFeature;
 
@@ -26,6 +29,14 @@ describe("EntityInspector", () => {
     expect(screen.getByText("Operational")).toBeInTheDocument();
     expect(screen.getByText("Not publicly available")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open source record" })).toHaveAttribute("href", "https://www.openstreetmap.org/node/101");
+    expect(screen.getByRole("heading", { name: "Identity" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Location" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Operations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Energy" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
+    expect(screen.getByText("Alpha Infrastructure")).toBeInTheDocument();
+    expect(screen.getByText(/101 Compute Avenue/)).toBeInTheDocument();
+    expect(screen.getByText("48 MW")).toBeInTheDocument();
   });
 
   it("shows country facility coverage splits", () => {

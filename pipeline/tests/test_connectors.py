@@ -309,6 +309,7 @@ def test_qlever_osm_parser_preserves_rich_public_facility_details() -> None:
     assert asset["externalIds"] == {
         "osm": "node/101", "wikidata": "Q12345", "wikipedia": "en:Alpha Data Center",
     }
+    assert "website" not in parse_qlever_assets(payload, observed_at="2026-06-27T12:00:00Z")[1]
 
 
 def test_qlever_connector_fetches_valid_small_fixture_when_threshold_is_overridden() -> None:

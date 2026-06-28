@@ -6,7 +6,6 @@ import {
   evidenceSchema,
   geographyFeatureCollectionSchema,
   manifestSchema,
-  regionFeatureCollectionSchema,
 } from "@/lib/snapshot/schema";
 import type { SnapshotData } from "@/lib/snapshot/types";
 
@@ -28,8 +27,9 @@ export async function loadSnapshot(): Promise<SnapshotData> {
   ]);
 
   const countries = geographyFeatureCollectionSchema.parse(countriesRaw);
-  const regions = regionFeatureCollectionSchema.parse(regionsRaw);
+  const regions = geographyFeatureCollectionSchema.parse(regionsRaw);
   const assets = assetFeatureCollectionSchema.parse(assetsRaw);
   const evidence = evidenceSchema.parse(evidenceRaw);
-  return { manifest, countries, regions, assets, evidence } as SnapshotData;
+  const admin1 = { type: "FeatureCollection", features: [] } as SnapshotData["admin1"];
+  return { manifest, countries, admin1, regions, assets, evidence } as SnapshotData;
 }

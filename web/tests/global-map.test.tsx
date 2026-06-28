@@ -39,13 +39,14 @@ describe("GlobalMap", () => {
     render(
       <GlobalMap
         countries={{ type: "FeatureCollection", features: [] }}
+        admin1={{ type: "FeatureCollection", features: [] }}
         regions={{ type: "FeatureCollection", features: [] }}
         assets={{ type: "FeatureCollection", features: [] }}
         lens="infrastructureDemand"
         year={2030}
         selectedId={null}
         onSelect={() => undefined}
-        coverage={{ countries: 246, regions: 334, assets: 14, dataCentres: 8, waterInfrastructure: 6 }}
+        coverage={{ countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 14, dataCentres: 8, waterInfrastructure: 6 }}
       />,
     );
 
@@ -53,19 +54,21 @@ describe("GlobalMap", () => {
     expect(screen.getByRole("region", { name: "Global opportunity map" })).toBeInTheDocument();
     expect(screen.getByText(/246 countries · 14 infrastructure assets/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toHaveAttribute("href", "https://www.openstreetmap.org/copyright");
+    expect(screen.getByText(/India boundary perspective: Government of India/i)).toBeInTheDocument();
   });
 
   it("clusters infrastructure while preserving selectable facility layers", () => {
     render(
       <GlobalMap
         countries={{ type: "FeatureCollection", features: [] }}
+        admin1={{ type: "FeatureCollection", features: [] }}
         regions={{ type: "FeatureCollection", features: [] }}
         assets={{ type: "FeatureCollection", features: [] }}
         lens="infrastructureDemand"
         year={2030}
         selectedId={null}
         onSelect={() => undefined}
-        coverage={{ countries: 246, regions: 334, assets: 4395, dataCentres: 4265, waterInfrastructure: 130 }}
+        coverage={{ countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 4395, dataCentres: 4265, waterInfrastructure: 130 }}
       />,
     );
 
@@ -77,5 +80,24 @@ describe("GlobalMap", () => {
       "data-centre-assets",
       "water-assets",
     ]));
+  });
+
+  it("renders global ADM1 before the deeper Europe NUTS-2 layer", () => {
+    render(
+      <GlobalMap
+        countries={{ type: "FeatureCollection", features: [] }}
+        admin1={{ type: "FeatureCollection", features: [] }}
+        regions={{ type: "FeatureCollection", features: [] }}
+        assets={{ type: "FeatureCollection", features: [] }}
+        lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined}
+        coverage={{ countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 3634, dataCentres: 3533, waterInfrastructure: 101 }}
+      />,
+    );
+
+    expect(mapCalls.sources.map(([id]) => id)).toContain("admin1");
+    const adm1Line = mapCalls.layers.find((layer) => layer.id === "admin1-line");
+    const nuts2Line = mapCalls.layers.find((layer) => layer.id === "regions-line");
+    expect(adm1Line?.minzoom).toBeLessThan(nuts2Line?.minzoom as number);
+    expect(mapCalls.layers.find((layer) => layer.id === "countries-line")?.paint).toMatchObject({ "line-opacity": 0.94 });
   });
 });

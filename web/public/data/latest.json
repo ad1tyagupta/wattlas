@@ -1,7 +1,7 @@
 {
-  "snapshotId": "2026-06-27T17-11-15Z",
-  "generatedAt": "2026-06-27T17:11:15Z",
-  "modelVersion": "2.0.0",
+  "snapshotId": "2026-06-28T05-11-05Z",
+  "generatedAt": "2026-06-28T05:11:05Z",
+  "modelVersion": "2.1.0",
   "activeYears": [
     2026,
     2027,
@@ -11,16 +11,19 @@
     2031
   ],
   "artifacts": {
-    "countries": "snapshots/2026-06-27T17-11-15Z/countries.geojson",
-    "regions": "snapshots/2026-06-27T17-11-15Z/regions.geojson",
-    "assets": "snapshots/2026-06-27T17-11-15Z/assets.geojson",
-    "evidence": "snapshots/2026-06-27T17-11-15Z/evidence.json"
+    "countries": "snapshots/2026-06-28T05-11-05Z/countries.geojson",
+    "admin1": "snapshots/2026-06-28T05-11-05Z/admin1.geojson",
+    "regions": "snapshots/2026-06-28T05-11-05Z/regions.geojson",
+    "assets": "snapshots/2026-06-28T05-11-05Z/assets.geojson",
+    "evidence": "snapshots/2026-06-28T05-11-05Z/evidence.json"
   },
   "coverage": {
     "countries": 246,
     "regions": 334,
-    "assets": 3634,
-    "dataCentres": 3533,
+    "admin1Regions": 3229,
+    "countriesWithAdmin1": 197,
+    "assets": 3628,
+    "dataCentres": 3527,
     "waterInfrastructure": 101
   },
   "boundaryDisclaimer": "The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.",
@@ -28,64 +31,72 @@
     {
       "id": "un_geodata",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "gisco",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "eurostat",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "osm_infrastructure",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "global_assets",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "source_registry",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
+      "message": null
+    },
+    {
+      "id": "geoboundaries_adm1",
+      "state": "current",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "curated_evidence",
       "state": "current",
-      "checkedAt": "2026-06-27T17:11:15Z",
-      "lastSuccessAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
+      "lastSuccessAt": "2026-06-28T05:11:05Z",
       "message": null
     },
     {
       "id": "entsoe",
       "state": "not_configured",
-      "checkedAt": "2026-06-27T17:11:15Z",
+      "checkedAt": "2026-06-28T05:11:05Z",
       "lastSuccessAt": null,
       "message": "ENTSO-E security token is not configured."
     }
   ],
   "checksums": {
-    "countries.geojson": "4c7122bd1d813d06872b246096f2e92b709a704cc7703b058fd4c54ecd4f922f",
-    "regions.geojson": "ada91db5b9345dd66684566bc2e3206e270913db1f4f606f0f712156a46be677",
-    "assets.geojson": "36c4cf5d9eb7b05b6a94268c12454789a2827ae6e63e3229d87cc92e748e5556",
-    "evidence.json": "78299d72e5be2807826ba52cf163d5c08206cdeb761fa6a1207d86b23df33ffe"
+    "countries.geojson": "8ebe875ab4663e6e0f280922b5016abab7457d115b179d3c20c06f6fb410ec29",
+    "admin1.geojson": "4098c909841ef32da4cc53b5ab0fadd79c7c310cdd97919bd0bc6a9dce6a91a9",
+    "regions.geojson": "f558ae58ff6c63c7a406e83b1a0bbf13e2ea157188f4586b8badf0be257801f4",
+    "assets.geojson": "4d20e5de14604d720bbbf6bb587312d09384b7e3a76e954de736f57b4e88eb05",
+    "evidence.json": "8e712ff5f2c763c53e6d821d91d189b9f3d54cebefe3a0973504a0b70325cba9"
   }
 }

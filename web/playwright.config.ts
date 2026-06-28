@@ -20,6 +20,10 @@ export default defineConfig({
       name: "in-app-pane",
       use: { ...devices["Desktop Chrome"], viewport: { width: 760, height: 820 } },
     },
+    {
+      name: "mobile",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 } },
+    },
   ],
   webServer: process.env.GRID_SCOPE_REUSE_SERVER ? undefined : {
     command: "npm run dev -- --hostname localhost --port 3000",

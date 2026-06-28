@@ -11,6 +11,7 @@ import httpx
 
 from grid_scope.config import (
     CURATED_PATH,
+    GLOBAL_ADMIN1_PATH,
     GLOBAL_ASSETS_PATH,
     MODEL_VERSION,
     PUBLISH_DIR,
@@ -143,7 +144,10 @@ def refresh() -> Path:
     source_registry_result = CuratedConnector(
         SOURCE_REGISTRY_PATH, source_id="source_registry"
     ).fetch(now=now)
-    for result in (global_assets_result, source_registry_result):
+    global_admin1_result = CuratedConnector(
+        GLOBAL_ADMIN1_PATH, source_id="geoboundaries_adm1"
+    ).fetch(now=now)
+    for result in (global_assets_result, source_registry_result, global_admin1_result):
         assert result.payload is not None
         store.save(result.source_id, result.payload.body, result.payload.media_type)
 
@@ -163,6 +167,7 @@ def refresh() -> Path:
     store.save_canonical_assets(registry["assets"])
     artifacts = build_global_snapshot_artifacts(
         countries=countries,
+        admin1=json.loads(global_admin1_result.payload.body),
         regions=json.loads(europe_artifacts["regions.geojson"]),
         registry=registry,
         generated_at=generated_at,
@@ -175,6 +180,7 @@ def refresh() -> Path:
         osm_status,
         global_assets_result,
         source_registry_result,
+        global_admin1_result,
         curated_result,
         entsoe_status,
     ]
@@ -187,6 +193,7 @@ def refresh() -> Path:
         "activeYears": [2026, 2027, 2028, 2029, 2030, 2031],
         "artifacts": {
             "countries": f"snapshots/{snapshot_id}/countries.geojson",
+            "admin1": f"snapshots/{snapshot_id}/admin1.geojson",
             "regions": f"snapshots/{snapshot_id}/regions.geojson",
             "assets": f"snapshots/{snapshot_id}/assets.geojson",
             "evidence": f"snapshots/{snapshot_id}/evidence.json",
@@ -194,6 +201,11 @@ def refresh() -> Path:
         "coverage": {
             "countries": country_count,
             "regions": len(json.loads(artifacts["regions.geojson"])["features"]),
+            "admin1Regions": len(json.loads(artifacts["admin1.geojson"])["features"]),
+            "countriesWithAdmin1": len({
+                feature["properties"]["country"]
+                for feature in json.loads(artifacts["admin1.geojson"])["features"]
+            }),
             "assets": len(asset_features),
             "dataCentres": sum(feature["properties"]["category"] == "data_centre" for feature in asset_features),
             "waterInfrastructure": sum(feature["properties"]["category"] == "water_infrastructure" for feature in asset_features),

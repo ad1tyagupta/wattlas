@@ -74,6 +74,16 @@ def _value(binding: dict[str, Any], key: str) -> str | None:
     return str(value).strip() if value is not None and str(value).strip() else None
 
 
+def _public_url(binding: dict[str, Any], key: str) -> str | None:
+    value = _value(binding, key)
+    if not value or any(character in value for character in (" ", ",", ";")):
+        return None
+    if value.startswith("www."):
+        value = f"https://{value}"
+    parsed = urlparse(value)
+    return value if parsed.scheme in {"http", "https"} and parsed.netloc else None
+
+
 def _representative_coordinates(wkt: str) -> list[float]:
     pairs = [(float(lon), float(lat)) for lon, lat in _COORDINATE.findall(wkt)]
     if not pairs:
@@ -136,7 +146,7 @@ def parse_qlever_assets(payload: dict[str, Any], *, observed_at: str) -> list[di
         }
         optional = {
             "owner": _value(binding, "owner"),
-            "website": _value(binding, "website"),
+            "website": _public_url(binding, "website"),
             "facilityRef": _value(binding, "facilityRef"),
             "startDate": _value(binding, "startDate"),
             "openingDate": _value(binding, "openingDate"),

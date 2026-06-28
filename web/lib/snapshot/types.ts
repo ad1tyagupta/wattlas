@@ -79,6 +79,21 @@ export type AssetProperties = {
   valueKind: "observed" | "reported" | "estimated" | "inherited" | "unavailable";
   sourceIds: string[];
   operator?: string | null;
+  owner?: string | null;
+  website?: string | null;
+  facilityRef?: string | null;
+  address?: {
+    street?: string | null;
+    houseNumber?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postcode?: string | null;
+    country?: string | null;
+  } | null;
+  startDate?: string | null;
+  openingDate?: string | null;
+  reportedPower?: string | null;
+  admin1Id?: string | null;
   country: string;
   confidence: number;
   assumptionId?: string;
@@ -115,10 +130,12 @@ export type SnapshotManifest = {
   generatedAt: string;
   modelVersion: string;
   activeYears: number[];
-  artifacts: { countries: string; regions: string; assets: string; evidence: string };
+  artifacts: { countries: string; admin1: string; regions: string; assets: string; evidence: string };
   coverage: {
     countries: number;
     regions: number;
+    admin1Regions: number;
+    countriesWithAdmin1: number;
     assets: number;
     dataCentres: number;
     waterInfrastructure: number;
@@ -150,7 +167,8 @@ export type EvidenceData = {
 export type SnapshotData = {
   manifest: SnapshotManifest;
   countries: GeographyCollection;
-  regions: RegionCollection;
+  admin1: GeographyCollection;
+  regions: GeographyCollection;
   assets: AssetCollection;
   evidence: EvidenceData;
 };

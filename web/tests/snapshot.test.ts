@@ -14,6 +14,7 @@ const validManifest = {
   activeYears: [2026, 2027, 2028, 2029, 2030, 2031],
   artifacts: {
     countries: "countries.geojson",
+    admin1: "admin1.geojson",
     regions: "regions.geojson",
     assets: "assets.geojson",
     evidence: "evidence.json",
@@ -21,6 +22,8 @@ const validManifest = {
   coverage: {
     countries: 246,
     regions: 334,
+    admin1Regions: 3229,
+    countriesWithAdmin1: 197,
     assets: 14,
     dataCentres: 8,
     waterInfrastructure: 6,
@@ -102,10 +105,28 @@ describe("global snapshot entities", () => {
     expect(asset.sourceUrl).toContain("openstreetmap.org/node/101");
   });
 
+  it("preserves rich public facility fields without inventing power", () => {
+    const asset = assetPropertiesSchema.parse({
+      id: "osm-node-101", name: "Alpha DC", geographyId: "US-VA", country: "US",
+      category: "data_centre", subtype: "other_data_centre", lifecycle: "operational",
+      demandMw: null, locationPrecision: "exact", valueKind: "observed", sourceIds: ["osm"],
+      sourceType: "community_mapped", confidence: 86, externalIds: { osm: "node/101", wikidata: "Q123" },
+      owner: "Alpha Infrastructure", website: "https://alpha.example", facilityRef: "IAD-01",
+      address: { street: "Compute Avenue", houseNumber: "101", city: "Ashburn", state: "Virginia", postcode: "20147", country: "US" },
+      startDate: "2021", reportedPower: "48 MW",
+    });
+
+    expect(asset.address?.city).toBe("Ashburn");
+    expect(asset.reportedPower).toBe("48 MW");
+    expect(asset.demandMw).toBeNull();
+  });
+
   it("loads the published countries and assets", async () => {
     const snapshot = await loadSnapshot();
 
     expect(snapshot.countries.features.length).toBeGreaterThan(190);
+    expect(snapshot.admin1.features).toHaveLength(0);
+    expect(snapshot.manifest.coverage.admin1Regions).toBeGreaterThan(3_000);
     expect(snapshot.assets.features.length).toBeGreaterThan(10);
     expect(snapshot.manifest.coverage.assets).toBe(snapshot.assets.features.length);
   });

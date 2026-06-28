@@ -11,13 +11,13 @@ import type {
   AssetCollection,
   GeographyCollection,
   LensKey,
-  RegionCollection,
   SnapshotManifest,
 } from "@/lib/snapshot/types";
 
 type Props = {
   countries: GeographyCollection;
-  regions: RegionCollection;
+  admin1: GeographyCollection;
+  regions: GeographyCollection;
   assets: AssetCollection;
   lens: LensKey;
   year: number;
@@ -44,7 +44,7 @@ function activeCountries(countries: GeographyCollection, lens: LensKey, year: nu
   };
 }
 
-function activeRegions(regions: RegionCollection, lens: LensKey, year: number): GeoJSON.FeatureCollection {
+function activeRegions(regions: GeographyCollection, lens: LensKey, year: number): GeoJSON.FeatureCollection {
   return {
     ...regions,
     features: regions.features.map((feature) => ({
@@ -57,13 +57,15 @@ function activeRegions(regions: RegionCollection, lens: LensKey, year: number): 
   };
 }
 
-export function GlobalMap({ countries, regions, assets, lens, year, selectedId, onSelect, coverage }: Props) {
+export function GlobalMap({ countries, admin1, regions, assets, lens, year, selectedId, onSelect, coverage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const onSelectRef = useRef(onSelect);
   const preparedCountries = useMemo(() => activeCountries(countries, lens, year), [countries, lens, year]);
+  const preparedAdmin1 = useMemo(() => activeCountries(admin1, lens, year), [admin1, lens, year]);
   const preparedRegions = useMemo(() => activeRegions(regions, lens, year), [regions, lens, year]);
   const countriesRef = useRef(preparedCountries);
+  const admin1Ref = useRef(preparedAdmin1);
   const regionsRef = useRef(preparedRegions);
   const selectedIdRef = useRef(selectedId);
   const lensRef = useRef(lens);
@@ -71,10 +73,11 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
   useEffect(() => {
     onSelectRef.current = onSelect;
     countriesRef.current = preparedCountries;
+    admin1Ref.current = preparedAdmin1;
     regionsRef.current = preparedRegions;
     selectedIdRef.current = selectedId;
     lensRef.current = lens;
-  }, [lens, onSelect, preparedCountries, preparedRegions, selectedId]);
+  }, [lens, onSelect, preparedAdmin1, preparedCountries, preparedRegions, selectedId]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -94,6 +97,7 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
 
     map.on("load", () => {
       map.addSource("countries", { type: "geojson", data: countriesRef.current, promoteId: "id" });
+      map.addSource("admin1", { type: "geojson", data: admin1Ref.current, promoteId: "id" });
       map.addSource("regions", { type: "geojson", data: regionsRef.current, promoteId: "id" });
       map.addSource("assets", {
         type: "geojson",
@@ -112,10 +116,31 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         },
       });
       map.addLayer({
+        id: "admin1-fill",
+        type: "fill",
+        source: "admin1",
+        minzoom: 2.2,
+        paint: {
+          "fill-color": mapColorExpression(lensRef.current),
+          "fill-opacity": ["case", ["==", ["get", "activeScore"], null], 0.04, 0.34],
+        },
+      });
+      map.addLayer({
+        id: "admin1-line",
+        type: "line",
+        source: "admin1",
+        minzoom: 2.2,
+        paint: {
+          "line-color": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], "#E1EBE8", "#38514C"],
+          "line-width": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], 2.1, 0.55],
+          "line-opacity": 0.72,
+        },
+      });
+      map.addLayer({
         id: "regions-fill",
         type: "fill",
         source: "regions",
-        minzoom: 3,
+        minzoom: 4.5,
         paint: {
           "fill-color": mapColorExpression(lensRef.current),
           "fill-opacity": ["case", ["==", ["get", "activeScore"], null], 0.1, 0.58],
@@ -125,7 +150,7 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         id: "regions-line",
         type: "line",
         source: "regions",
-        minzoom: 3,
+        minzoom: 4.5,
         paint: {
           "line-color": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], "#E1EBE8", "#47635E"],
           "line-width": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], 2.2, 0.5],
@@ -193,7 +218,7 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         },
       });
 
-      for (const layer of ["countries-fill", "regions-fill", "asset-clusters", "data-centre-assets", "water-assets"]) {
+      for (const layer of ["countries-fill", "admin1-fill", "regions-fill", "asset-clusters", "data-centre-assets", "water-assets"]) {
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
       }
@@ -217,6 +242,7 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
         map.easeTo({ center: [coordinates[0], coordinates[1]], zoom });
       });
       map.on("click", "countries-fill", selectGeography);
+      map.on("click", "admin1-fill", selectGeography);
       map.on("click", "regions-fill", selectGeography);
       map.on("click", "data-centre-assets", selectAsset);
       map.on("click", "water-assets", selectAsset);
@@ -233,10 +259,12 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
     const map = mapRef.current;
     if (!map?.isStyleLoaded()) return;
     (map.getSource("countries") as GeoJSONSource | undefined)?.setData(preparedCountries);
+    (map.getSource("admin1") as GeoJSONSource | undefined)?.setData(preparedAdmin1);
     (map.getSource("regions") as GeoJSONSource | undefined)?.setData(preparedRegions);
     if (map.getLayer("countries-fill")) map.setPaintProperty("countries-fill", "fill-color", mapColorExpression(lens));
+    if (map.getLayer("admin1-fill")) map.setPaintProperty("admin1-fill", "fill-color", mapColorExpression(lens));
     if (map.getLayer("regions-fill")) map.setPaintProperty("regions-fill", "fill-color", mapColorExpression(lens));
-  }, [lens, preparedCountries, preparedRegions]);
+  }, [lens, preparedAdmin1, preparedCountries, preparedRegions]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -248,20 +276,25 @@ export function GlobalMap({ countries, regions, assets, lens, year, selectedId, 
     if (map.getLayer("regions-line")) {
       map.setPaintProperty("regions-line", "line-width", ["case", ["==", ["get", "id"], selectedId ?? ""], 2.2, 0.5]);
     }
+    if (map.getLayer("admin1-line")) {
+      map.setPaintProperty("admin1-line", "line-width", ["case", ["==", ["get", "id"], selectedId ?? ""], 2.1, 0.55]);
+    }
   }, [selectedId]);
 
   const label = lens === "infrastructureDemand" ? "Infrastructure Demand" : lens === "siteAttractiveness" ? "Site Attractiveness" : "System Risk";
   return (
-    <section className="map-panel" aria-label="Global opportunity map">
+    <section className="map-panel" aria-label="Global opportunity map" data-admin1-count={admin1.features.length}>
       <div className="map-meta">
         <span>{year}</span>
         <strong>{label}</strong>
         <small>{coverage.countries} countries · {coverage.assets} infrastructure assets</small>
       </div>
       <div ref={containerRef} className="map-container" data-testid="global-map" />
-      <a className="data-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">
-        Infrastructure © OpenStreetMap contributors · ODbL
-      </a>
+      <div className="data-attribution">
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">Infrastructure © OpenStreetMap contributors · ODbL</a>
+        <span> · </span><a href="https://www.geoboundaries.org/" target="_blank" rel="noreferrer">Regions © geoBoundaries · CC BY 4.0</a>
+        <span> · India boundary perspective: Government of India</span>
+      </div>
     </section>
   );
 }

@@ -6,6 +6,8 @@ from typing import Any
 
 from grid_scope.canonicalize import assign_asset_geography
 from grid_scope.scoring import lifecycle_timing_index, score_infrastructure_demand
+from shapely.geometry import mapping, shape
+from shapely.ops import unary_union
 
 
 YEAR_FACTORS = {
@@ -292,6 +294,32 @@ def _enrich_regional_feature(
     payload = _scoring_payload(assets)
     current = payload.pop("current")
     has_evidence = current["scores"]["infrastructureDemand"] is not None
+    inherited_scores = original.get("scoresByYear") if not has_evidence else None
+    if inherited_scores:
+        payload["scoresByYear"] = inherited_scores
+        payload["contributionsByYear"] = original.get("contributionsByYear", payload["contributionsByYear"])
+        payload["categoryScoresByYear"] = {
+            year: {
+                "combined": scores,
+                "data_centre": _empty_scores(),
+                "water_infrastructure": _empty_scores(),
+            }
+            for year, scores in inherited_scores.items()
+        }
+        has_evidence = inherited_scores.get("2030", {}).get("infrastructureDemand") is not None
+    elif not assets:
+        payload["scoresByYear"] = {"2030": _empty_scores()}
+        payload["contributionsByYear"] = {"2030": []}
+        payload["categoryScoresByYear"] = {
+            "2030": {
+                "combined": _empty_scores(),
+                "data_centre": _empty_scores(),
+                "water_infrastructure": _empty_scores(),
+            }
+        }
+        payload["demandMwByYear"] = {
+            "2030": {"combined": None, "data_centre": None, "water_infrastructure": None}
+        }
     return {
         **feature,
         "id": region_id,
@@ -301,12 +329,15 @@ def _enrich_regional_feature(
             "scoreYear": 2030,
             "scores": payload["scoresByYear"]["2030"],
             **payload,
-            "confidence": current["confidence"] if has_evidence else 0,
+            "confidence": current["confidence"] if current["scores"]["infrastructureDemand"] is not None else original.get("confidence", 0),
             "coverage": 100 if has_evidence else 0,
             "valueKind": "estimated" if has_evidence else "unavailable",
             "updatedAt": generated_at,
             "contributions": payload["contributionsByYear"]["2030"],
-            "sourceIds": sorted({source for asset in assets for source in asset.get("sourceIds", [])}),
+            "sourceIds": sorted(
+                {source for asset in assets for source in asset.get("sourceIds", [])}
+                | set(original.get("sourceIds", []))
+            ),
             "assetCount": len(assets),
             "assetSummary": _asset_summary(assets),
         },
@@ -335,12 +366,19 @@ def build_global_snapshot_artifacts(
         for feature in regions.get("features", [])
     ]
     admin1_features = admin1.get("features", [])
+    admin1_by_country: dict[str, list[dict[str, Any]]] = {}
+    regions_by_country: dict[str, list[dict[str, Any]]] = {}
+    for feature in admin1_features:
+        admin1_by_country.setdefault((feature.get("properties") or {}).get("country", ""), []).append(feature)
+    for feature in region_features:
+        regions_by_country.setdefault((feature.get("properties") or {}).get("country", ""), []).append(feature)
     assets = [dict(asset) for asset in registry["assets"]]
     for asset in assets:
-        admin1_id = assign_asset_geography(asset, admin1_features)
+        country = asset.get("country", "")
+        admin1_id = assign_asset_geography(asset, admin1_by_country.get(country, []))
         if admin1_id != asset.get("geographyId") and admin1_id != asset.get("country"):
             asset["admin1Id"] = admin1_id
-        detailed_id = assign_asset_geography(asset, region_features)
+        detailed_id = assign_asset_geography(asset, regions_by_country.get(country, []))
         if detailed_id != asset.get("geographyId") and detailed_id != asset.get("country"):
             asset["geographyId"] = detailed_id
         elif asset.get("admin1Id"):
@@ -362,8 +400,17 @@ def build_global_snapshot_artifacts(
         asset_summary = _asset_summary(country_assets)
         geometry = source_feature["geometry"]
         country_properties = dict(original)
-        if country_id == "IN" and admin1.get("metadata", {}).get("indiaCountryGeometry"):
-            geometry = admin1["metadata"]["indiaCountryGeometry"]
+        if country_id == "IN" and admin1_features:
+            india_geometry = admin1.get("metadata", {}).get("indiaCountryGeometry")
+            if not india_geometry:
+                india_shapes = [
+                    shape(feature["geometry"])
+                    for feature in admin1_features
+                    if (feature.get("properties") or {}).get("country") == "IN"
+                ]
+                india_geometry = mapping(unary_union(india_shapes)) if india_shapes else None
+            if india_geometry:
+                geometry = india_geometry
             country_properties["boundaryPerspective"] = admin1["metadata"].get("indiaBoundaryPerspective", "Government of India")
         country_features.append(
             {
@@ -438,7 +485,7 @@ def build_global_snapshot_artifacts(
     }
     return {
         "countries.geojson": json.dumps(country_collection, separators=(",", ":"), ensure_ascii=False).encode(),
-        "admin1.geojson": json.dumps({"type": "FeatureCollection", "metadata": admin1.get("metadata", {}), "features": enriched_admin1}, separators=(",", ":"), ensure_ascii=False).encode(),
+        "admin1.geojson": json.dumps({"type": "FeatureCollection", "metadata": {key: value for key, value in admin1.get("metadata", {}).items() if key != "indiaCountryGeometry"}, "features": enriched_admin1}, separators=(",", ":"), ensure_ascii=False).encode(),
         "regions.geojson": json.dumps({"type": "FeatureCollection", "features": enriched_regions}, separators=(",", ":"), ensure_ascii=False).encode(),
         "assets.geojson": json.dumps({"type": "FeatureCollection", "features": asset_features}, separators=(",", ":"), ensure_ascii=False).encode(),
         "evidence.json": json.dumps({"sources": registry["sources"], "claims": claims}, separators=(",", ":"), ensure_ascii=False).encode(),

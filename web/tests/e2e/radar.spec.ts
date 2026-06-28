@@ -13,8 +13,9 @@ test("renders the map and updates the analytical view", async ({ page }, testInf
   await expect(page.getByText("Daily refreshed", { exact: true })).toBeVisible();
   await expect(page.locator(".maplibregl-canvas")).toBeVisible();
   await expect(page.locator(".map-container")).toHaveAttribute("data-map-loaded", "true");
+  await expect(page.locator(".map-panel")).toHaveAttribute("data-admin1-count", "3229", { timeout: 30_000 });
   await expect(page.locator(".map-meta")).toContainText("246 countries");
-  await expect(page.locator(".map-meta")).toContainText("3634 infrastructure assets");
+  await expect(page.locator(".map-meta")).toContainText("3628 infrastructure assets");
   await expect(page.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toBeVisible();
 
   const mapBox = await page.locator(".map-container").boundingBox();
@@ -58,4 +59,26 @@ test("keeps the analytical canvas usable in the in-app pane", async ({ page }, t
   expect(layout.inspector?.width).toBe(300);
   expect(layout.map?.right).toBeLessThanOrEqual(layout.inspector?.left ?? 0);
   expect(layout.inspector?.right).toBeLessThanOrEqual(layout.viewport);
+});
+
+test("stacks the map and inspector without mobile overflow", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "mobile assertion");
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".map-container")).toHaveAttribute("data-map-loaded", "true");
+
+  const layout = await page.evaluate(() => {
+    const map = document.querySelector(".map-panel")?.getBoundingClientRect();
+    const inspector = document.querySelector(".region-inspector")?.getBoundingClientRect();
+    return {
+      viewport: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      map: map ? { top: map.top, bottom: map.bottom, width: map.width } : null,
+      inspector: inspector ? { top: inspector.top, width: inspector.width } : null,
+    };
+  });
+
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewport);
+  expect(layout.map?.width).toBe(layout.viewport);
+  expect(layout.inspector?.width).toBe(layout.viewport);
+  expect(layout.inspector?.top).toBeGreaterThanOrEqual(layout.map?.bottom ?? 0);
 });

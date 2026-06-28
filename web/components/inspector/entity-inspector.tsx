@@ -25,6 +25,12 @@ function formatObserved(value?: string | null): string {
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(value));
 }
 
+function formatAddress(address: AssetFeature["properties"]["address"]): string {
+  if (!address) return "Full address unavailable";
+  const street = [address.houseNumber, address.street].filter(Boolean).join(" ");
+  return [street, address.city, address.state, address.postcode, address.country].filter(Boolean).join(", ") || "Full address unavailable";
+}
+
 export function EntityInspector({ geography, asset, lens, year, onOpenEvidence, onAddComparison }: Props) {
   if (asset) {
     const properties = asset.properties;
@@ -33,13 +39,38 @@ export function EntityInspector({ geography, asset, lens, year, onOpenEvidence, 
         <div className="inspector-kicker">Selected facility · {properties.country}</div>
         <h1>{properties.name}</h1>
         <p className="region-meta">{properties.operator || "Operator unavailable"}</p>
-        <div className="facility-facts">
-          <span>Lifecycle<strong>{humanize(properties.lifecycle)}</strong></span>
-          <span>Source type<strong>{properties.sourceType === "official_verified" ? "Officially verified" : "Community mapped"}</strong></span>
-          <span>Location<strong>{humanize(properties.locationPrecision)}</strong></span>
-          <span>Last observed<strong>{formatObserved(properties.lastObservedAt)}</strong></span>
-          <span>Category<strong>{properties.category === "data_centre" ? "Data centre" : "Water infrastructure"}</strong></span>
-          <span>Demand MW<strong>{properties.demandMw ? `${properties.demandMw.low}–${properties.demandMw.high} MW` : "Not publicly available"}</strong></span>
+        <div className="facility-detail-groups">
+          <section className="facility-detail-group"><h2>Identity</h2><div className="facility-facts">
+            <span>Operator<strong>{properties.operator || "Unavailable"}</strong></span>
+            <span>Owner<strong>{properties.owner || "Unavailable"}</strong></span>
+            <span>Facility reference<strong>{properties.facilityRef || "Unavailable"}</strong></span>
+            <span>Category<strong>{properties.category === "data_centre" ? "Data centre" : "Water infrastructure"}</strong></span>
+          </div></section>
+          <section className="facility-detail-group"><h2>Location</h2><div className="facility-facts">
+            <span>Address<strong>{formatAddress(properties.address)}</strong></span>
+            <span>Precision<strong>{humanize(properties.locationPrecision)}</strong></span>
+            <span>Coordinates<strong>{asset.geometry.coordinates[1].toFixed(5)}, {asset.geometry.coordinates[0].toFixed(5)}</strong></span>
+            <span>Region<strong>{properties.geographyId}</strong></span>
+          </div></section>
+          <section className="facility-detail-group"><h2>Operations</h2><div className="facility-facts">
+            <span>Lifecycle<strong>{humanize(properties.lifecycle)}</strong></span>
+            <span>Start date<strong>{properties.startDate || "Unavailable"}</strong></span>
+            <span>Opening date<strong>{properties.openingDate || "Unavailable"}</strong></span>
+            <span>Last observed<strong>{formatObserved(properties.lastObservedAt)}</strong></span>
+          </div></section>
+          <section className="facility-detail-group"><h2>Energy</h2><div className="facility-facts">
+            <span>Reported power<strong>{properties.reportedPower || "Not publicly available"}</strong></span>
+            <span>Demand MW<strong>{properties.demandMw ? `${properties.demandMw.low}–${properties.demandMw.high} MW` : "Not publicly available"}</strong></span>
+          </div></section>
+          <section className="facility-detail-group"><h2>Sources</h2><div className="facility-facts">
+            <span>Source type<strong>{properties.sourceType === "official_verified" ? "Officially verified" : "Community mapped"}</strong></span>
+            <span>Public IDs<strong>{Object.entries(properties.externalIds).map(([key, value]) => `${key.toUpperCase()} ${value}`).join(" · ") || "Unavailable"}</strong></span>
+          </div>
+          <div className="facility-source-links">
+            {properties.sourceUrl && <a href={properties.sourceUrl} target="_blank" rel="noreferrer">Source record</a>}
+            {properties.website && <a href={properties.website} target="_blank" rel="noreferrer">Facility website</a>}
+            {properties.externalIds.wikidata && <a href={`https://www.wikidata.org/wiki/${properties.externalIds.wikidata}`} target="_blank" rel="noreferrer">Wikidata</a>}
+          </div></section>
         </div>
         <p className="facility-note">
           {properties.sourceType === "community_mapped"
