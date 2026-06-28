@@ -144,7 +144,7 @@ def _normalize_lifecycle(record: dict[str, Any]) -> tuple[str, str | None]:
     if canonical is None:
         raise ValueError(f"unsupported power-plant lifecycle: {record.get('lifecycle')}")
     if source_lifecycle in {"shelved", "retired", "decommissioned", "mothballed", "mothball"}:
-        raw_status = source_lifecycle
+        raw_status = raw_status or source_lifecycle
     return canonical, raw_status
 
 

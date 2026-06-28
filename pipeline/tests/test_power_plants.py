@@ -290,8 +290,22 @@ def test_inactive_capacity_is_excluded_and_planned_capacity_is_separate() -> Non
             capacityMw={"low": 20.0, "central": 25.0, "high": 30.0},
         ),
         power_record(id="paused", plantId="shared", unitId="paused", externalIds={"gemPlant": "G", "gemUnit": "U4"}, lifecycle="paused"),
-        power_record(id="shelved", plantId="shared", unitId="shelved", externalIds={"gemPlant": "G", "gemUnit": "U5"}, lifecycle="shelved"),
-        power_record(id="retired", plantId="shared", unitId="retired", externalIds={"gemPlant": "G", "gemUnit": "U6"}, lifecycle="retired"),
+        power_record(
+            id="shelved",
+            plantId="shared",
+            unitId="shelved",
+            externalIds={"gemPlant": "G", "gemUnit": "U5"},
+            lifecycle="shelved",
+            rawStatus="Shelved",
+        ),
+        power_record(
+            id="retired",
+            plantId="shared",
+            unitId="retired",
+            externalIds={"gemPlant": "G", "gemUnit": "U6"},
+            lifecycle="retired",
+            rawStatus="Retired",
+        ),
         power_record(id="cancelled", plantId="shared", unitId="cancelled", externalIds={"gemPlant": "G", "gemUnit": "U7"}, lifecycle="cancelled"),
     ]
 
@@ -304,9 +318,9 @@ def test_inactive_capacity_is_excluded_and_planned_capacity_is_separate() -> Non
     assert plant["plannedCapacityMwByTechnology"] == {"gas": 50.0, "solar": 25.0}
     by_id = {record["id"]: record for record in result["records"]}
     assert by_id["shelved"]["lifecycle"] == "paused"
-    assert by_id["shelved"]["rawStatus"] == "shelved"
+    assert by_id["shelved"]["rawStatus"] == "Shelved"
     assert by_id["retired"]["lifecycle"] == "cancelled"
-    assert by_id["retired"]["rawStatus"] == "retired"
+    assert by_id["retired"]["rawStatus"] == "Retired"
 
 
 def test_normalized_active_records_fit_the_asset_contract() -> None:
