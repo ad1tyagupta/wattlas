@@ -7,7 +7,12 @@ import re
 
 PRECISION_RANK = {"region_centroid": 0, "city_centroid": 1, "exact": 2}
 LEVEL_RANK = {"country": 0, "admin_1": 1, "admin_2": 2}
-SOURCE_RANK = {"community_mapped": 1, "official_verified": 2}
+SOURCE_RANK = {
+    "official_verified": 4,
+    "research_verified": 3,
+    "community_mapped": 2,
+    "modelled": 1,
+}
 
 
 def _normalized_text(value: str | None, aliases: dict[str, str]) -> str:
@@ -27,9 +32,13 @@ def _distance_km(first: list[float], second: list[float]) -> float:
 
 
 def _shared_external_id(first: dict, second: dict) -> bool:
-    first_ids = set((first.get("externalIds") or {}).values())
-    second_ids = set((second.get("externalIds") or {}).values())
-    return bool(first_ids & second_ids)
+    first_ids = first.get("externalIds") or {}
+    second_ids = second.get("externalIds") or {}
+    return any(
+        str(value).strip() and str(value).strip() == str(second_ids.get(namespace, "")).strip()
+        for namespace, value in first_ids.items()
+        if namespace in second_ids
+    )
 
 
 def _similar_asset(first: dict, second: dict, aliases: dict[str, str]) -> bool:
@@ -72,7 +81,11 @@ def _merge(first: dict, second: dict) -> dict:
         | {first.get("name", ""), second.get("name", "")}
         - {""}
     )
-    if first_rank == second_rank and PRECISION_RANK.get(second.get("locationPrecision"), -1) > PRECISION_RANK.get(first.get("locationPrecision"), -1):
+    if (
+        first_rank == second_rank
+        and PRECISION_RANK.get(second.get("locationPrecision"), -1)
+        > PRECISION_RANK.get(first.get("locationPrecision"), -1)
+    ):
         merged["locationPrecision"] = second["locationPrecision"]
         merged["coordinates"] = deepcopy(second.get("coordinates"))
         merged["geographyId"] = second.get("geographyId", merged.get("geographyId"))

@@ -156,6 +156,23 @@ def test_official_record_wins_when_merging_with_community_mapping() -> None:
     assert merged[0]["externalIds"] == {"osm": "way/202", "planning": "ABC-123"}
 
 
+def test_equal_values_from_different_external_id_namespaces_do_not_merge() -> None:
+    planning = asset(
+        id="planning-record",
+        externalIds={"planning": "12345"},
+        name="North River Campus",
+    )
+    osm = asset(
+        id="osm-record",
+        externalIds={"osm": "12345"},
+        name="South River Campus",
+        operator="Different Operator",
+        coordinates=[-80.0, 35.0],
+    )
+
+    assert len(canonicalize_assets([planning, osm])) == 2
+
+
 def test_canonical_assets_round_trip_through_store(tmp_path) -> None:
     store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
     records = canonicalize_assets([asset()])

@@ -108,6 +108,8 @@ class LocationPrecision(StrEnum):
 class SourceType(StrEnum):
     COMMUNITY_MAPPED = "community_mapped"
     OFFICIAL_VERIFIED = "official_verified"
+    RESEARCH_VERIFIED = "research_verified"
+    MODELLED = "modelled"
 
 
 Score = float | None
