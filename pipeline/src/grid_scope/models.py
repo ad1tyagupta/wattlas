@@ -49,6 +49,20 @@ class GeographyLevel(StrEnum):
 class AssetCategory(StrEnum):
     DATA_CENTRE = "data_centre"
     WATER_INFRASTRUCTURE = "water_infrastructure"
+    POWER_GENERATION = "power_generation"
+
+
+class GenerationTechnology(StrEnum):
+    SOLAR = "solar"
+    WIND = "wind"
+    HYDRO = "hydro"
+    NUCLEAR = "nuclear"
+    GAS = "gas"
+    COAL = "coal"
+    OIL = "oil"
+    BIOMASS = "biomass"
+    GEOTHERMAL = "geothermal"
+    OTHER = "other"
 
 
 class AssetSubtype(StrEnum):
@@ -88,6 +102,51 @@ class DemandRange(ContractModel):
         if not self.low <= self.central <= self.high:
             raise ValueError("demand range must satisfy low <= central <= high")
         return self
+
+
+class MetricRange(ContractModel):
+    low: float
+    central: float
+    high: float
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self) -> "MetricRange":
+        if not self.low <= self.central <= self.high:
+            raise ValueError("metric range must satisfy low <= central <= high")
+        return self
+
+
+class PowerBalanceMetrics(ContractModel):
+    demand_gwh: MetricRange
+    local_generation_gwh: MetricRange
+    local_generation_gap_gwh: MetricRange
+    net_balance_gwh: MetricRange | None = None
+    observed_unmet_demand_gwh: float | None = Field(default=None, ge=0)
+    installed_capacity_mw: float = Field(ge=0)
+    dependable_capacity_mw: MetricRange
+    peak_demand_mw: MetricRange
+
+    @model_validator(mode="after")
+    def physical_inputs_are_non_negative(self) -> "PowerBalanceMetrics":
+        non_negative_ranges = (
+            self.demand_gwh,
+            self.local_generation_gwh,
+            self.dependable_capacity_mw,
+            self.peak_demand_mw,
+        )
+        if any(metric.low < 0 for metric in non_negative_ranges):
+            raise ValueError("demand, generation, and capacity values cannot be negative")
+        return self
+
+
+class RegionalEnergyForecast(ContractModel):
+    year: int = Field(ge=2026, le=2031)
+    metrics: PowerBalanceMetrics
+    method_id: str
+    source_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=100)
+    coverage: float = Field(ge=0, le=100)
+    value_kind: ValueKind
 
 
 class SourceRef(ContractModel):
@@ -158,9 +217,18 @@ class AssetProperties(ContractModel):
     name: str
     geography_id: str
     category: AssetCategory
-    subtype: AssetSubtype
+    subtype: AssetSubtype | None = None
     lifecycle: LifecycleState
     demand_mw: DemandRange | None = None
+    technology: GenerationTechnology | None = None
+    secondary_fuel: str | None = None
+    capacity_mw: MetricRange | None = None
+    dependable_capacity_mw: MetricRange | None = None
+    annual_generation_gwh: MetricRange | None = None
+    commissioning_year: int | None = None
+    retirement_year: int | None = None
+    plant_id: str | None = None
+    unit_id: str | None = None
     target_year: int | None = Field(default=None, ge=2026, le=2031)
     location_precision: LocationPrecision
     value_kind: ValueKind
@@ -172,9 +240,26 @@ class AssetProperties(ContractModel):
     last_observed_at: AwareDatetime | None = None
 
     @model_validator(mode="after")
-    def demand_requires_evidence(self) -> "AssetProperties":
+    def generation_and_demand_are_valid(self) -> "AssetProperties":
         if self.demand_mw is not None and not self.source_ids:
             raise ValueError("demand-contributing assets require at least one source")
+        if self.category != AssetCategory.POWER_GENERATION and self.subtype is None:
+            raise ValueError("non-generation assets require a subtype")
+        if self.category == AssetCategory.POWER_GENERATION and self.technology is None:
+            raise ValueError("power-generation assets require a technology")
+        generation_ranges = (
+            self.capacity_mw,
+            self.dependable_capacity_mw,
+            self.annual_generation_gwh,
+        )
+        if any(metric is not None and metric.low < 0 for metric in generation_ranges):
+            raise ValueError("generation capacity and output cannot be negative")
+        if (
+            self.capacity_mw is not None
+            and self.value_kind in (ValueKind.REPORTED, ValueKind.ESTIMATED)
+            and not self.source_ids
+        ):
+            raise ValueError("reported or estimated generation capacity requires at least one source")
         return self
 
 
