@@ -167,6 +167,23 @@ def test_uncertainty_configuration_is_versioned_and_executable() -> None:
     assert methods["schemaVersion"] == "wattlas-regional-demand-methods-v1"
 
 
+def test_method_configuration_rejects_missing_official_grade_and_bad_source(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "data" / "curated" / "regional-demand-methods.json"
+    payload = json.loads(source.read_text())
+    payload["methods"].pop("official")
+    missing = tmp_path / "missing-official.json"
+    missing.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="official"):
+        load_regional_demand_methods(missing)
+
+    payload = json.loads(source.read_text())
+    payload["sources"][0]["url"] = "private-file.csv"
+    invalid = tmp_path / "invalid-source.json"
+    invalid.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="public source URL"):
+        load_regional_demand_methods(invalid)
+
+
 def test_lineage_is_complete_and_historical_control_is_not_asset_adjusted() -> None:
     result = allocate_country_demand(
         country_control=_control(100),
@@ -210,7 +227,7 @@ def test_input_order_does_not_change_allocation() -> None:
 
 def test_forward_increments_are_explicit_once_only_and_ordered() -> None:
     base = [{
-        "geographyId": "AA-1", "countryIso3": "AAA", "year": 2026,
+        "geographyId": "AA-1", "countryIso3": "AAA", "year": 2027,
         "demandGwh": {"low": 90, "central": 100, "high": 110},
         "sourceIds": ["forecast-base"],
     }]
@@ -234,6 +251,47 @@ def test_forward_increments_are_explicit_once_only_and_ordered() -> None:
         add_forward_demand_increments(base, [{**increment, "demandGwh": {"low": 20, "central": 10, "high": 5}}])
     with pytest.raises(ValueError, match="source"):
         add_forward_demand_increments(base, [{**increment, "sourceIds": []}])
+
+
+def test_forward_increment_is_lossless_and_updates_only_exact_target() -> None:
+    bases = [
+        {"geographyId": "AA-2", "countryIso3": "AAA", "year": 2026,
+         "demandGwh": {"low": 180, "central": 200, "high": 220}, "sourceIds": ["base"]},
+        {"geographyId": "AA-1", "countryIso3": "AAA", "year": 2027,
+         "demandGwh": {"low": 99, "central": 110, "high": 121}, "sourceIds": ["base"]},
+        {"geographyId": "AA-1", "countryIso3": "AAA", "year": 2026,
+         "demandGwh": {"low": 90, "central": 100, "high": 110}, "sourceIds": ["base"]},
+    ]
+    unchanged = add_forward_demand_increments(bases, [])
+    expected_unchanged = sorted(bases, key=lambda row: (row["geographyId"], row["year"]))
+    assert unchanged == expected_unchanged
+    assert json.dumps(unchanged, sort_keys=True) == json.dumps(expected_unchanged, sort_keys=True)
+
+    result = add_forward_demand_increments(bases, [{
+        "incrementId": "project-one-2027", "geographyId": "AA-1", "targetYear": 2027,
+        "demandGwh": {"low": 1, "central": 2, "high": 3}, "sourceIds": ["project-one"],
+    }])
+    assert [(row["geographyId"], row["year"]) for row in result] == [
+        ("AA-1", 2026), ("AA-1", 2027), ("AA-2", 2026)
+    ]
+    assert result[0]["demandGwh"] == bases[2]["demandGwh"]
+    assert result[1]["demandGwh"] == {"low": 100.0, "central": 112.0, "high": 124.0}
+    assert result[2]["demandGwh"] == bases[0]["demandGwh"]
+
+
+def test_forward_increment_validates_base_identity_year_and_exact_match() -> None:
+    base = {"geographyId": "AA-1", "countryIso3": "AAA", "year": 2026,
+            "demandGwh": {"low": 90, "central": 100, "high": 110}, "sourceIds": ["base"]}
+    increment = {"incrementId": "project-one", "geographyId": "AA-1", "targetYear": 2027,
+                 "demandGwh": {"low": 1, "central": 2, "high": 3}, "sourceIds": ["project"]}
+    with pytest.raises(ValueError, match="duplicate base"):
+        add_forward_demand_increments([base, base], [])
+    with pytest.raises(ValueError, match="base forecast year.*2026.*2031"):
+        add_forward_demand_increments([{**base, "year": 2025}], [])
+    with pytest.raises(ValueError, match="exact base forecast"):
+        add_forward_demand_increments([base], [increment])
+    with pytest.raises(ValueError, match="ordered"):
+        add_forward_demand_increments([{**base, "demandGwh": {"low": 110, "central": 100, "high": 90}}], [])
 
 
 def test_forward_increment_keeps_prior_once_only_lineage() -> None:
@@ -344,3 +402,30 @@ def test_weight_builder_cli_is_deterministic(tmp_path: Path) -> None:
     row = next(item for item in payload["records"] if item["geographyId"] == "AA-1" and item["year"] == 2026)
     assert row["activityShare"] == pytest.approx(0.3)
     assert payload["officialObservationLineage"][0]["sourceIds"] == ["official-aa"]
+
+
+def test_fallback_fingerprint_is_population_input_order_independent() -> None:
+    forward = _population_artifact()
+    reverse = _population_artifact()
+    forward.pop("buildFingerprint")
+    reverse.pop("buildFingerprint")
+    reverse["records"] = list(reversed(reverse["records"]))
+
+    first = build_regional_demand_weights(
+        population_artifact=forward,
+        active_geography_ids={"AA-1", "AA-2"},
+        activity_records=[
+            {"geographyId": "AA-1", "year": 2026, "value": 30, "sourceId": "lights"},
+            {"geographyId": "AA-2", "year": 2026, "value": 70, "sourceId": "lights"},
+        ],
+    )
+    second = build_regional_demand_weights(
+        population_artifact=reverse,
+        active_geography_ids={"AA-2", "AA-1"},
+        activity_records=[
+            {"geographyId": "AA-2", "year": 2026, "value": 70, "sourceId": "lights"},
+            {"geographyId": "AA-1", "year": 2026, "value": 30, "sourceId": "lights"},
+        ],
+    )
+    assert first == second
+    assert first["buildFingerprint"] == second["buildFingerprint"]

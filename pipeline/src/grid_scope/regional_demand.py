@@ -7,6 +7,9 @@ import math
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlparse
+
+from grid_scope.connectors.licensing import require_redistributable_licence
 
 
 SCHEMA_VERSION = "wattlas-regional-demand-weights-v1"
@@ -237,6 +240,23 @@ def load_regional_demand_methods(path: Path | str) -> dict[str, Any]:
     methods = payload.get("methods")
     if not isinstance(methods, Mapping):
         raise ValueError("regional demand methods require method definitions")
+    missing_grades = {"official", "multi_covariate", "population_only"} - set(methods)
+    if missing_grades:
+        raise ValueError(
+            "regional demand methods lack required grades: "
+            + ", ".join(sorted(missing_grades))
+        )
+    official = methods["official"]
+    if not isinstance(official, Mapping):
+        raise ValueError("regional demand official method must be an object")
+    official_kinds = official.get("valueKind")
+    if (
+        not str(official.get("methodId") or "").strip()
+        or not isinstance(official_kinds, list)
+        or not {"observed", "reported"}.issubset(set(official_kinds))
+        or not str(official.get("uncertainty") or "").strip()
+    ):
+        raise ValueError("regional demand official method lacks provenance or value-kind rules")
     for grade in ("multi_covariate", "population_only"):
         settings = methods.get(grade)
         if not isinstance(settings, Mapping):
@@ -251,6 +271,24 @@ def load_regional_demand_methods(path: Path | str) -> dict[str, Any]:
             raise ValueError(f"{grade} maximum uncertainty must be within 0-1")
         if float(settings["baseConfidence"]) > 100:
             raise ValueError(f"{grade} confidence must be within 0-100")
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("regional demand methods require public source provenance")
+    source_ids: set[str] = set()
+    for source in sources:
+        if not isinstance(source, Mapping):
+            raise ValueError("regional demand method source must be an object")
+        source_id = str(source.get("id") or "").strip()
+        if not source_id or source_id in source_ids:
+            raise ValueError("regional demand method sources require unique source IDs")
+        source_ids.add(source_id)
+        source_url = str(source.get("url") or "").strip()
+        parsed = urlparse(source_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"regional demand source {source_id} requires a public source URL")
+        require_redistributable_licence(
+            str(source.get("licence") or ""), label=f"regional demand source {source_id}"
+        )
     return payload
 
 
@@ -427,16 +465,29 @@ def add_forward_demand_increments(
     """Apply sourced forward increments once; historical allocation never calls this."""
 
     bases = [deepcopy(dict(row)) for row in base_forecasts]
-    by_geography: dict[str, list[dict[str, Any]]] = {}
+    by_key: dict[tuple[str, int], dict[str, Any]] = {}
+    base_ranges: dict[tuple[str, int], dict[str, float]] = {}
     already_applied: set[str] = set()
     for row in bases:
         geography_id = str(row.get("geographyId") or "").strip()
         if not geography_id:
             raise ValueError("base forecast requires a geography ID")
-        row["demandGwh"] = _range(row.get("demandGwh"), label="base forecast demand")
-        by_geography.setdefault(geography_id, []).append(row)
+        raw_base_year = row.get("year")
+        if isinstance(raw_base_year, bool) or not isinstance(raw_base_year, int):
+            raise ValueError("base forecast requires a year within 2026-2031")
+        base_year = raw_base_year
+        if base_year not in TARGET_YEARS:
+            raise ValueError("base forecast year must be within 2026-2031")
+        key = (geography_id, base_year)
+        if key in by_key:
+            raise ValueError(f"duplicate base forecast: {geography_id} {base_year}")
+        base_ranges[key] = _range(row.get("demandGwh"), label="base forecast demand")
+        by_key[key] = row
         for increment_id in row.get("appliedIncrementIds") or []:
-            already_applied.add(str(increment_id))
+            normalized_increment_id = str(increment_id).strip()
+            if not normalized_increment_id or normalized_increment_id in already_applied:
+                raise ValueError("base forecasts contain duplicate prior increment lineage")
+            already_applied.add(normalized_increment_id)
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in increments:
@@ -449,14 +500,17 @@ def add_forward_demand_increments(
             raise ValueError(f"increment already applied: {increment_id}")
         seen.add(increment_id)
         geography_id = str(raw.get("geographyId") or "").strip()
-        if geography_id not in by_geography:
-            raise ValueError(f"forward increment uses unknown geography ID: {geography_id}")
         try:
             target_year = int(raw.get("targetYear"))
         except (TypeError, ValueError) as error:
             raise ValueError("forward increment requires a target year") from error
         if target_year not in TARGET_YEARS:
             raise ValueError("forward increment target year must be within 2026-2031")
+        if (geography_id, target_year) not in by_key:
+            raise ValueError(
+                f"forward increment requires an exact base forecast for "
+                f"{geography_id} {target_year}"
+            )
         normalized.append({
             "incrementId": increment_id,
             "geographyId": geography_id,
@@ -467,18 +521,16 @@ def add_forward_demand_increments(
     grouped: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for row in normalized:
         grouped.setdefault((row["geographyId"], row["targetYear"]), []).append(row)
-    output: list[dict[str, Any]] = []
+    output = [by_key[key] for key in sorted(by_key)]
     for (geography_id, target_year), group in sorted(grouped.items()):
-        candidates = sorted(by_geography[geography_id], key=lambda row: int(row.get("year") or 0))
-        exact = next((row for row in candidates if int(row.get("year") or 0) == target_year), None)
-        base = deepcopy(exact or candidates[-1])
-        base["year"] = target_year
+        base = by_key[(geography_id, target_year)]
+        base_range = base_ranges[(geography_id, target_year)]
         additions = {
             key: math.fsum(row["demandGwh"][key] for row in group)
             for key in ("low", "central", "high")
         }
         base["demandGwh"] = {
-            key: base["demandGwh"][key] + additions[key]
+            key: base_range[key] + additions[key]
             for key in ("low", "central", "high")
         }
         base["appliedIncrementIds"] = sorted(
@@ -490,7 +542,6 @@ def add_forward_demand_increments(
             | {source_id for row in group for source_id in row["sourceIds"]}
         )
         base["methodId"] = FORECAST_INCREMENT_METHOD_ID
-        output.append(base)
     return output
 
 
@@ -650,9 +701,20 @@ def build_regional_demand_weights(
             "industrialShare": normalized_industrial.get((geography_id, year)),
             "sourceIds": sorted(sources),
         })
+    canonical_population_input = [
+        {
+            "geographyId": geography_id,
+            "country": geography_country[geography_id],
+            "year": year,
+            "population": population_values[(geography_id, year)]["value"],
+            "sourceIds": population_values[(geography_id, year)]["sourceIds"],
+        }
+        for geography_id, year in sorted(population_values)
+    ]
     build_inputs = {
         "activeGeographyIds": active,
-        "populationFingerprint": population_artifact.get("buildFingerprint") or _fingerprint(population_rows),
+        "populationFingerprint": population_artifact.get("buildFingerprint")
+        or _fingerprint(canonical_population_input),
         "activityFingerprint": _fingerprint(sorted(activity_values.items())),
         "industrialFingerprint": _fingerprint(sorted(industrial_values.items())),
         "officialObservationFingerprint": _fingerprint(official_lineage),
