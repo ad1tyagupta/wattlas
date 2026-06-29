@@ -1,0 +1,29 @@
+{
+  "apiVersion": "2.1.0",
+  "request": {"command": "/v2/electricity/electric-power-operational-data/data/"},
+  "response": {
+    "frequency": "annual",
+    "dateFormat": "YYYY",
+    "total": "18",
+    "data": [
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"ALL","generation":"100","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"FOS","generation":"70","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"COW","generation":"40","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"BIT","generation":"25","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"SUB","generation":"15","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"NG","generation":"20","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"DFO","generation":"10","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"REN","generation":"30","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"AOR","generation":"30","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"SUN","generation":"10","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"WND","generation":"10","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"HYC","generation":"5","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"BIO","generation":"5","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"WDL","generation":"3","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"WDS","generation":"2","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"IPP","fueltypeid":"FOS","generation":"55","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"IPP","fueltypeid":"NG","generation":"15","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"IPP","fueltypeid":"SUN","generation":"8","generation-units":"thousand megawatthours"}
+    ]
+  }
+}

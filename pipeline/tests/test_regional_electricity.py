@@ -151,6 +151,79 @@ def test_eia_generation_location_requires_an_explicit_active_mapping() -> None:
         )
 
 
+def test_eia_generation_mix_drops_overlapping_fuel_hierarchy_aggregates() -> None:
+    payload = json.loads(
+        (FIXTURES / "eia-generation-hierarchy-sample.json").read_text()
+    )
+    record = normalize_eia_state(
+        payload,
+        route_id="generation",
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+
+    assert record["localGenerationGwh"] == 100
+    assert record["generationMixGwh"] == {
+        "biomass": 5,
+        "coal": 40,
+        "gas": 20,
+        "hydro": 5,
+        "oil": 10,
+        "solar": 10,
+        "wind": 10,
+    }
+    coal_lineage = record["sourceSeries"]["generationMixGwh.coal"]["aggregatedFacets"]
+    assert {item["rawFuelCode"] for item in coal_lineage} == {"BIT", "SUB"}
+    biomass_lineage = record["sourceSeries"]["generationMixGwh.biomass"][
+        "aggregatedFacets"
+    ]
+    assert {item["rawFuelCode"] for item in biomass_lineage} == {"WDL", "WDS"}
+
+
+def test_eia_generation_mix_rejects_selected_components_above_all_fuel_total() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "ALL", "generation": "10",
+                 "generation-units": "thousand megawatthours"},
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "NG", "generation": "11",
+                 "generation-units": "thousand megawatthours"},
+            ],
+        },
+    }
+    with pytest.raises(ValueError, match="generation mix.*exceeds.*total"):
+        normalize_eia_state(
+            payload,
+            route_id="generation",
+            state_mapping={"TX": "US-TEXAS"},
+            active_geography_ids={"US-TEXAS"},
+        )
+
+
+def test_eia_generation_aggregate_is_kept_only_as_fallback_without_descendants() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [{
+                "period": "2024", "location": "TX", "sectorid": "ALL",
+                "fueltypeid": "FOS", "generation": "9",
+                "generation-units": "thousand megawatthours",
+            }],
+        },
+    }
+    record = normalize_eia_state(
+        payload,
+        route_id="generation",
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["generationMixGwh"] == {"other": 9}
+    assert record["sourceSeries"]["generationMixGwh.other"]["rawFuelCode"] == "FOS"
+
+
 def test_eia_capability_safely_sums_unique_leaf_cells_without_creating_zero() -> None:
     payload = {
         "response": {

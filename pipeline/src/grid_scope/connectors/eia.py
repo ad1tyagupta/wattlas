@@ -24,18 +24,59 @@ EIA_ROUTE_PATHS = {
     "interchange": "electricity/rto/region-data/data/",
 }
 
-_FUEL_ALIASES = {
+# EIA operational-data fuel IDs. Aggregate codes are deliberately mapped to
+# ``other`` only as a fallback; hierarchy selection below removes them whenever
+# a more specific component is present for the same geography/year/sector.
+_FUEL_TECHNOLOGY = {
+    "FOS": "other",  # aggregate: all fossil fuels
+    "REN": "other",  # aggregate: all renewables
+    "AOR": "other",  # aggregate: all other renewable components
+    "COW": "coal",   # aggregate: coal and coal grades
+    "ANT": "coal",
     "BIT": "coal",
     "COL": "coal",
-    "DFO": "oil",
-    "GEO": "geothermal",
-    "HYC": "hydro",
+    "LIG": "coal",
+    "SUB": "coal",
+    "WC": "coal",
+    "GAS": "gas",  # aggregate: gaseous fossil fuels
     "NG": "gas",
-    "NUC": "nuclear",
-    "OBG": "biomass",
+    "BFG": "gas",
+    "OG": "gas",
+    "OOG": "gas",
+    "DFO": "oil",
+    "JF": "oil",
+    "KER": "oil",
+    "PC": "oil",
+    "PEL": "oil",  # aggregate: petroleum liquids
     "PET": "oil",
+    "PG": "oil",
+    "RFO": "oil",
+    "WO": "oil",
     "SUN": "solar",
     "WND": "wind",
+    "HYC": "hydro",
+    "HPS": "hydro",
+    "GEO": "geothermal",
+    "NUC": "nuclear",
+    "BIO": "biomass",  # aggregate: biomass components
+    "AB": "biomass",
+    "BLQ": "biomass",
+    "MSW": "biomass",
+    "OBG": "biomass",
+    "SLW": "biomass",
+    "WDL": "biomass",
+    "WDS": "biomass",
+}
+
+_FUEL_CHILDREN = {
+    "FOS": frozenset({"COW", "GAS", "PET"}),
+    "COW": frozenset({"ANT", "BIT", "COL", "LIG", "SUB", "WC"}),
+    "GAS": frozenset({"NG", "BFG", "OG", "OOG"}),
+    "PET": frozenset({"PEL", "PC", "PG"}),
+    "PEL": frozenset({"DFO", "JF", "KER", "RFO", "WO"}),
+    "REN": frozenset({"AOR"}),
+    "AOR": frozenset({"SUN", "WND", "HYC", "HPS", "GEO", "BIO"}),
+    "BIO": frozenset({"AB", "BLQ", "MSW", "OBG", "SLW", "WDL", "WDS"}),
 }
 
 _SYNTHETIC_SERIES = {
@@ -129,7 +170,7 @@ def _source_meta(
 ) -> dict[str, Any]:
     response = payload.get("response") or {}
     request = payload.get("request") or {}
-    return {
+    metadata = {
         "routeId": route_id,
         "series": series,
         "seriesDescription": _get(row, "series-description", "seriesDescription"),
@@ -140,6 +181,10 @@ def _source_meta(
         "dateFormat": response.get("dateFormat"),
         "requestCommand": request.get("command"),
     }
+    raw_fuel_code = _get(row, "fueltypeid", "fuelTypeId")
+    if raw_fuel_code is not None and str(raw_fuel_code).strip():
+        metadata["rawFuelCode"] = str(raw_fuel_code).strip().upper()
+    return metadata
 
 
 def _country_iso3(geography_id: str) -> str:
@@ -223,6 +268,47 @@ def _is_all(value: Any) -> bool:
     return str(value or "").strip().upper() in {"", "ALL", "TOTAL", "TSN"}
 
 
+def _fuel_descendants(code: str) -> frozenset[str]:
+    descendants: set[str] = set()
+    pending = list(_FUEL_CHILDREN.get(code, ()))
+    while pending:
+        child = pending.pop()
+        if child in descendants:
+            continue
+        descendants.add(child)
+        pending.extend(_FUEL_CHILDREN.get(child, ()))
+    return frozenset(descendants)
+
+
+def _selected_generation_row_indexes(
+    rows: list[dict[str, Any]], *, states: Mapping[str, str]
+) -> set[int]:
+    """Select non-overlapping ALL-sector fuel leaves or aggregate fallbacks."""
+
+    grouped: dict[tuple[str, int, str], list[tuple[int, str]]] = {}
+    selected: set[int] = set()
+    for index, row in enumerate(rows, start=1):
+        code = _state_code(row, route_id="generation")
+        if not code:
+            continue
+        sector = str(_get(row, "sectorid", "sectorId") or "").strip().upper()
+        if not _is_all(sector):
+            continue
+        fuel = str(_get(row, "fueltypeid", "fuelTypeId") or "").strip().upper()
+        if _is_all(fuel):
+            selected.add(index)
+            continue
+        grouped.setdefault((states[code], _period(row), sector or "ALL"), []).append(
+            (index, fuel)
+        )
+    for group in grouped.values():
+        present_codes = {fuel for _, fuel in group}
+        for index, fuel in group:
+            if not (_fuel_descendants(fuel) & present_codes):
+                selected.add(index)
+    return selected
+
+
 def normalize_eia_state(
     payload: Mapping[str, Any],
     *,
@@ -278,6 +364,9 @@ def normalize_eia_state(
 
     capability_leaf_keys: set[tuple[str, int, str, str]] = set()
     generation_mix_keys: set[tuple[str, int, str]] = set()
+    selected_generation_indexes = (
+        _selected_generation_row_indexes(rows, states=states) if route == "generation" else set()
+    )
     for index, row in enumerate(rows, start=1):
         year = _period(row)
         synthetic_series = _series(row) if route == "synthetic" else ""
@@ -323,6 +412,8 @@ def normalize_eia_state(
         elif route == "generation":
             if not _is_all(_get(row, "sectorid", "sectorId")):
                 continue
+            if index not in selected_generation_indexes:
+                continue
             metric, dimension = "generation", "energy"
             raw_value = _get(row, metric)
             unit = str(_get(row, f"{metric}-units", f"{metric}_units") or "").strip()
@@ -332,7 +423,7 @@ def normalize_eia_state(
                 row, facet=facet, route_id=route, payload=payload, series=metric, unit=unit
             )
             if not _is_all(fuel):
-                technology = _FUEL_ALIASES.get(fuel, "other")
+                technology = _FUEL_TECHNOLOGY.get(fuel, "other")
                 mix_field = f"generationMixGwh.{technology}"
                 fuel_key = (geography_id, year, fuel)
                 if fuel_key in generation_mix_keys:
@@ -407,7 +498,7 @@ def normalize_eia_state(
             unit = str(_get(row, "unit", "units") or "").strip()
             fuel = str(_get(row, "fueltypeid", "fuelTypeId") or "").strip().upper()
             if field == "localGenerationGwh" and not _is_all(fuel):
-                technology = _FUEL_ALIASES.get(fuel, "other")
+                technology = _FUEL_TECHNOLOGY.get(fuel, "other")
                 value = normalize_metric_value(raw_value, unit=unit, dimension=dimension)
                 if value is not None and value < 0:
                     raise ValueError("EIA generation mix cannot be negative")
@@ -449,6 +540,26 @@ def normalize_eia_state(
 
     records = [grouped[key] for key in sorted(grouped) if grouped[key]["sourceSeries"]]
     for record in records:
+        total = record.get("localGenerationGwh")
+        if total is None:
+            continue
+        mix_total = sum(record["generationMixGwh"].values())
+        tolerance = max(1e-6, abs(float(total)) * 1e-6)
+        if mix_total > float(total) + tolerance:
+            raise ValueError(
+                f"EIA generation mix {mix_total} GWh exceeds all-fuel total "
+                f"{total} GWh for {record['geographyId']} {record['year']}"
+            )
+    for record in records:
+        for metadata in record["sourceSeries"].values():
+            facets = metadata.get("aggregatedFacets")
+            if facets:
+                facets.sort(
+                    key=lambda item: (
+                        str(item.get("rawFuelCode") or ""),
+                        json.dumps(item, sort_keys=True, default=str),
+                    )
+                )
         series_key = ",".join(sorted(record["sourceSeries"]))
         record["sourceRecordId"] = (
             f"{EIA_SOURCE_ID}:{route}:{record['geographyId']}:{record['year']}:{series_key}"
