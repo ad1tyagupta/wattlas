@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 import json
+import re
 from typing import Any, Iterable, Mapping
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, quote_plus, urljoin, urlparse
 
 import httpx
 
@@ -82,15 +83,31 @@ def _validate_eia_route_query(route_id: str, params: Mapping[str, Any]) -> None:
 _SECRET_KEYS = frozenset({"api_key", "apikey", "token", "authorization"})
 
 
-def _scrub_secrets(value: Any) -> Any:
+def _redact_text(value: str, secrets: Iterable[str]) -> str:
+    redacted = value
+    variants = {
+        variant
+        for secret in secrets
+        if secret
+        for variant in (secret, quote(secret, safe=""), quote_plus(secret))
+        if variant
+    }
+    for variant in sorted(variants, key=len, reverse=True):
+        redacted = redacted.replace(variant, "[redacted]")
+    return redacted
+
+
+def _scrub_secrets(value: Any, *, secrets: Iterable[str] = ()) -> Any:
     if isinstance(value, Mapping):
         return {
-            key: _scrub_secrets(item)
+            key: _scrub_secrets(item, secrets=secrets)
             for key, item in value.items()
             if str(key).strip().lower() not in _SECRET_KEYS
         }
     if isinstance(value, list):
-        return [_scrub_secrets(item) for item in value]
+        return [_scrub_secrets(item, secrets=secrets) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value, secrets)
     return value
 
 # EIA operational-data fuel IDs. Aggregate codes are deliberately mapped to
@@ -99,7 +116,7 @@ def _scrub_secrets(value: Any) -> Any:
 _FUEL_TECHNOLOGY = {
     "FOS": "other",  # aggregate: all fossil fuels
     "REN": "other",  # aggregate: all renewables
-    "AOR": "other",  # aggregate: all other renewable components
+    "AOR": "other",  # all other renewables; only explicit "all renewables" is aggregate
     "COW": "coal",   # aggregate: coal and coal grades
     "ANT": "coal",
     "BIT": "coal",
@@ -146,10 +163,14 @@ _FUEL_CHILDREN = {
     "GAS": frozenset({"NG", "BFG", "OG", "OOG"}),
     "PET": frozenset({"PEL", "PC", "PG"}),
     "PEL": frozenset({"DFO", "JF", "KER", "RFO", "WO"}),
-    "REN": frozenset({"AOR"}),
-    "AOR": frozenset({"SUN", "WND", "HYC", "HPS", "GEO", "BIO"}),
+    "REN": frozenset({"AOR", "SUN", "WND", "HYC", "HPS", "GEO", "BIO"}),
     "BIO": frozenset({"AB", "BLQ", "MSW", "OBG", "SLW", "WDL", "WDS"}),
 }
+
+_AOR_AGGREGATE_CHILDREN = frozenset({
+    "SUN", "WND", "HYC", "HPS", "GEO", "BIO",
+    "AB", "BLQ", "MSW", "OBG", "SLW", "WDL", "WDS",
+})
 
 # EIA publishes pumped-storage generation net of pumping load. Its annual HPS
 # value can therefore be negative; ordinary generation fuels and ALL totals may not.
@@ -367,8 +388,11 @@ def _is_capability_fuel_total(value: Any) -> bool:
 def _fuel_is_aggregate(row: Mapping[str, Any], fuel: str) -> bool:
     if fuel != "AOR":
         return fuel in _FUEL_CHILDREN
-    description = str(_get(row, "fuelTypeDescription", "fueltypedescription") or "").lower()
-    return description.startswith("all ") and "renewable" in description
+    description = re.sub(
+        r"[^a-z]+", " ",
+        str(_get(row, "fuelTypeDescription", "fueltypedescription") or "").lower(),
+    ).strip()
+    return description in {"all renewable", "all renewables", "all renewable energy sources"}
 
 
 def _fuel_descendants(code: str) -> frozenset[str]:
@@ -408,7 +432,13 @@ def _selected_generation_row_indexes(
         present_codes = {fuel for _, fuel in group}
         rows_by_index = {index: rows[index - 1] for index, _ in group}
         for index, fuel in group:
-            descendants = _fuel_descendants(fuel) if _fuel_is_aggregate(rows_by_index[index], fuel) else frozenset()
+            descendants = frozenset()
+            if _fuel_is_aggregate(rows_by_index[index], fuel):
+                descendants = (
+                    _AOR_AGGREGATE_CHILDREN
+                    if fuel == "AOR"
+                    else _fuel_descendants(fuel)
+                )
             if not (descendants & present_codes):
                 selected.add(index)
     return selected
@@ -716,7 +746,6 @@ class EiaV2Connector:
         page_size: int = 5000,
         now: datetime | None = None,
         client: httpx.Client | None = None,
-        externally_aggregated_annual: bool = False,
     ) -> ConnectorResult:
         checked_at = now or datetime.now(UTC)
         if route_id is not None and route_id not in EIA_ROUTE_PATHS:
@@ -737,17 +766,17 @@ class EiaV2Connector:
             )
         if page_size <= 0:
             raise ValueError("EIA page size must be positive")
+        if selected_route == "interchange":
+            raise ValueError(
+                "EIA connector never fetches direct RTO interchange; normalize only "
+                "an externally aggregated annual artifact"
+            )
         if not self.base_url:
             return ConnectorResult(
                 source_id=self.source_id,
                 state=ConnectorState.NOT_CONFIGURED,
                 payload=None,
                 message="configure a public EIA API v2 endpoint to enable state observations",
-            )
-        if selected_route == "interchange" and not externally_aggregated_annual:
-            raise ValueError(
-                "direct EIA RTO interchange fetch is unsafe; provide an explicit "
-                "externally aggregated annual contract"
             )
         if selected_route in _EIA_ROUTE_QUERIES:
             _validate_eia_route_query(selected_route, params)
@@ -793,12 +822,14 @@ class EiaV2Connector:
             combined["response"]["data"] = collected
             combined["response"]["total"] = str(total)
             body = json.dumps(
-                _scrub_secrets(combined), sort_keys=True, separators=(",", ":")
+                _scrub_secrets(combined, secrets=(self.api_key or "",)),
+                sort_keys=True,
+                separators=(",", ":"),
             ).encode()
         except (httpx.HTTPError, json.JSONDecodeError, ValueError) as error:
             message = str(error)
             if self.api_key:
-                message = message.replace(self.api_key, "[redacted]")
+                message = _redact_text(message, (self.api_key,))
             return ConnectorResult(
                 source_id=self.source_id,
                 state=ConnectorState.FAILED,

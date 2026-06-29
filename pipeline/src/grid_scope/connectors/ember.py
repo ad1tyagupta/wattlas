@@ -147,6 +147,8 @@ def normalize_ember_yearly_rows(
         unit = _first(row, "Unit", "unit")
         raw_value = row.get("Value", row.get("value"))
         value = normalize_metric_value(raw_value, unit=unit, dimension="energy")
+        if value is not None and value < 0:
+            raise ValueError(f"Ember row {index} energy value cannot be negative")
         source_url = _first(row, "Source URL", "source_url") or EMBER_SOURCE_URL
         licence = _first(row, "Licence", "License", "licence") or EMBER_LICENCE
         updated_at = _first(row, "Last Updated", "Updated At", "updated_at") or None
@@ -172,6 +174,7 @@ def normalize_ember_yearly_rows(
                 "demandGwh": None,
                 "localGenerationGwh": None,
                 "generationMixGwh": {},
+                "sourceSeries": {},
                 "sourceIds": [EMBER_SOURCE_ID],
                 "sourceId": EMBER_SOURCE_ID,
                 "sourceRecordId": f"{EMBER_SOURCE_ID}:{iso3}:{year}",
@@ -185,6 +188,7 @@ def normalize_ember_yearly_rows(
                 "unitMetadata": {},
                 "_lineage": (normalized_url, normalize_licence(licence), normalized_updated_at),
                 "_seenMetrics": set(),
+                "_seenFuelVariables": set(),
             },
         )
         lineage = (normalized_url, normalize_licence(licence), normalized_updated_at)
@@ -212,10 +216,27 @@ def normalize_ember_yearly_rows(
             record["unitMetadata"][field] = {"sourceUnit": unit, "canonicalUnit": "GWh"}
         else:
             assert kind == "fuel" and technology is not None
-            if technology in record["generationMixGwh"]:
-                raise ValueError(f"duplicate Ember {technology} generation for {iso3} {year}")
+            variable = _first(row, "Variable", "Metric", "metric")
+            normalized_variable = variable.lower()
+            if normalized_variable in record["_seenFuelVariables"]:
+                raise ValueError(
+                    f"duplicate Ember source variable {variable} for {iso3} {year}"
+                )
+            record["_seenFuelVariables"].add(normalized_variable)
             if value is not None:
-                record["generationMixGwh"][technology] = value
+                record["generationMixGwh"][technology] = (
+                    record["generationMixGwh"].get(technology, 0.0) + value
+                )
+            record["sourceSeries"].setdefault(
+                f"generationMixGwh.{technology}", {"aggregatedVariables": []}
+            )["aggregatedVariables"].append({
+                "variable": variable,
+                "sourceUnit": unit,
+                "valueGwh": value,
+                "sourceUrl": source_url,
+                "licence": licence,
+                "updatedAt": normalized_updated_at,
+            })
             record["unitMetadata"][f"generationMixGwh.{technology}"] = {
                 "sourceUnit": unit,
                 "canonicalUnit": "GWh",
@@ -223,8 +244,18 @@ def normalize_ember_yearly_rows(
     output: list[dict[str, Any]] = []
     for key in sorted(grouped):
         record = grouped[key]
+        total = record["localGenerationGwh"]
+        if "localGenerationGwh" in record["_seenMetrics"] and total is not None:
+            mix_total = sum(record["generationMixGwh"].values())
+            tolerance = max(1e-6, abs(float(total)) * 1e-6)
+            if mix_total > float(total) + tolerance:
+                raise ValueError(
+                    f"Ember generation mix {mix_total} GWh exceeds total "
+                    f"{total} GWh for {record['countryIso3']} {record['year']}"
+                )
         record.pop("_lineage")
         record.pop("_seenMetrics")
+        record.pop("_seenFuelVariables")
         output.append(record)
     return output
 

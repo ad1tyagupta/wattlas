@@ -92,6 +92,55 @@ def test_ember_accepted_rows_require_consistent_public_lineage(
         normalize_ember_yearly_rows([{**base, "Licence": "All rights reserved"}])
 
 
+def test_ember_sums_distinct_variables_that_share_other_bucket_with_lineage() -> None:
+    base = {"Area": "France", "ISO 3 code": "FRA", "Year": "2024",
+            "Category": "Electricity generation", "Subcategory": "Fuel", "Unit": "TWh",
+            "Source URL": "https://example.org/data", "Licence": "CC-BY-4.0",
+            "Last Updated": "2025-01-01"}
+    record = normalize_ember_yearly_rows([
+        {**base, "Variable": "Total generation", "Value": "10", "Subcategory": ""},
+        {**base, "Variable": "Other Fossil", "Value": "1"},
+        {**base, "Variable": "Other Renewables", "Value": "2"},
+    ])[0]
+    assert record["generationMixGwh"]["other"] == 3_000
+    variables = record["sourceSeries"]["generationMixGwh.other"]["aggregatedVariables"]
+    assert [item["variable"] for item in variables] == ["Other Fossil", "Other Renewables"]
+    with pytest.raises(ValueError, match="duplicate Ember source variable"):
+        normalize_ember_yearly_rows([
+            {**base, "Variable": "Other Fossil", "Value": "1"},
+            {**base, "Variable": "Other Fossil", "Value": "2"},
+        ])
+
+
+@pytest.mark.parametrize(
+    ("variable", "category"),
+    [("Demand", "Electricity demand"),
+     ("Total generation", "Electricity generation"),
+     ("Solar", "Electricity generation")],
+)
+def test_ember_rejects_negative_energy_controls(variable: str, category: str) -> None:
+    with pytest.raises(ValueError, match="cannot be negative"):
+        normalize_ember_yearly_rows([{
+            "Area": "France", "ISO 3 code": "FRA", "Year": "2024",
+            "Category": category, "Subcategory": "Fuel" if variable == "Solar" else "",
+            "Variable": variable, "Unit": "TWh", "Value": "-1",
+            "Source URL": "https://example.org/data", "Licence": "CC-BY-4.0",
+            "Last Updated": "2025-01-01",
+        }])
+
+
+def test_ember_rejects_generation_mix_above_explicit_total() -> None:
+    base = {"Area": "France", "ISO 3 code": "FRA", "Year": "2024",
+            "Category": "Electricity generation", "Unit": "TWh",
+            "Source URL": "https://example.org/data", "Licence": "CC-BY-4.0",
+            "Last Updated": "2025-01-01"}
+    with pytest.raises(ValueError, match="generation mix.*exceeds.*total"):
+        normalize_ember_yearly_rows([
+            {**base, "Variable": "Total generation", "Value": "1"},
+            {**base, "Subcategory": "Fuel", "Variable": "Solar", "Value": "1.1"},
+        ])
+
+
 def test_eia_state_balance_keeps_interchange_and_unknown_unmet_demand_separate() -> None:
     payloads = json.loads((FIXTURES / "eia-state-sample.json").read_text())
     normalized = []
@@ -214,11 +263,28 @@ def test_eia_aor_is_hierarchical_only_when_description_says_all_renewables() -> 
         state_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
     )[0]
     nonaggregate = normalize_eia_state(
-        payload("Other renewables"), route_id="generation",
+        payload("All Other Renewables"), route_id="generation",
         state_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
     )[0]
     assert aggregate["generationMixGwh"] == {"solar": 1}
     assert nonaggregate["generationMixGwh"] == {"other": 3, "solar": 1}
+
+
+def test_eia_ren_is_the_normal_route_renewables_aggregate() -> None:
+    payload = {"response": {"frequency": "annual", "data": [
+        {"period": "2024", "location": "TX", "sectorid": "99", "fueltypeid": "REN",
+         "generation": "4", "generation-units": "thousand megawatthours"},
+        {"period": "2024", "location": "TX", "sectorid": "99", "fueltypeid": "AOR",
+         "fuelTypeDescription": "All Other Renewables", "generation": "3",
+         "generation-units": "thousand megawatthours"},
+        {"period": "2024", "location": "TX", "sectorid": "99", "fueltypeid": "SUN",
+         "generation": "1", "generation-units": "thousand megawatthours"},
+    ]}}
+    record = normalize_eia_state(
+        payload, route_id="generation", state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["generationMixGwh"] == {"other": 3, "solar": 1}
 
 
 @pytest.mark.parametrize(
@@ -674,7 +740,7 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
         ]
         return httpx.Response(200, json={
             "apiVersion": "2.1.0",
-            "request": {"command": "/v2/electricity/retail-sales/data/",
+            "request": {"command": "/v2/electricity/retail-sales/data/?api_key=TOPSECRET",
                         "params": {"api_key": "test-key", "nested": {"token": "SECRET"},
                                    "ApiKey": "SECOND-SECRET",
                                    "Authorization": "Bearer THIRD-SECRET",
@@ -684,7 +750,7 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
             },
         })
 
-    connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key="test-key")
+    connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key="TOPSECRET")
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = connector.fetch(
             route_id="sales",
@@ -697,15 +763,17 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
     assert result.state == ConnectorState.CURRENT
     assert result.payload is not None
     assert requested[0].url.params["frequency"] == "annual"
-    assert requested[0].url.params["api_key"] == "test-key"
+    assert requested[0].url.params["api_key"] == "TOPSECRET"
     assert [request.url.params["offset"] for request in requested] == ["0", "2"]
     body = json.loads(result.payload.body)
     assert len(body["response"]["data"]) == 3
     assert body["response"]["data"][0]["_routeId"] == "sales"
     assert body["apiVersion"] == "2.1.0"
     assert body["response"]["frequency"] == "annual"
-    assert body["request"]["command"] == "/v2/electricity/retail-sales/data/"
-    assert b"test-key" not in result.payload.body
+    assert body["request"]["command"] == (
+        "/v2/electricity/retail-sales/data/?api_key=[redacted]"
+    )
+    assert b"TOPSECRET" not in result.payload.body
     assert b"SECRET" not in result.payload.body
     assert b"SECOND-SECRET" not in result.payload.body
     assert b"THIRD-SECRET" not in result.payload.body
@@ -729,5 +797,18 @@ def test_eia_route_queries_are_annual_explicit_and_fetch_rejects_unsafe_routes()
     connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key=None)
     with pytest.raises(ValueError, match="route query"):
         connector.fetch(route_id="sales", params={"frequency": "annual"})
-    with pytest.raises(ValueError, match="externally aggregated"):
+    with pytest.raises(ValueError, match="never fetches direct.*interchange"):
         connector.fetch(route_id="interchange", params={"frequency": "annual"})
+
+
+def test_eia_connector_never_directly_fetches_interchange_even_with_annual_claim() -> None:
+    connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key=None)
+    with pytest.raises(TypeError, match="externally_aggregated_annual"):
+        connector.fetch(
+            route_id="interchange", params={"frequency": "annual"},
+            externally_aggregated_annual=True,
+        )
+    with pytest.raises(ValueError, match="never fetches direct.*interchange"):
+        EiaV2Connector(base_url=None, api_key=None).fetch(
+            route_id="interchange", params={"frequency": "annual"}
+        )
