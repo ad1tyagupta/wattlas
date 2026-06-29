@@ -224,6 +224,82 @@ def test_eia_generation_aggregate_is_kept_only_as_fallback_without_descendants()
     assert record["sourceSeries"]["generationMixGwh.other"]["rawFuelCode"] == "FOS"
 
 
+def test_eia_generation_preserves_negative_pumped_storage_net_generation() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "ALL", "generation": "8",
+                 "generation-units": "thousand megawatthours"},
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "HYC", "generation": "10",
+                 "generation-units": "thousand megawatthours"},
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "HPS", "generation": "-2",
+                 "generation-units": "thousand megawatthours"},
+            ],
+        },
+    }
+    record = normalize_eia_state(
+        payload,
+        route_id="generation",
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["localGenerationGwh"] == 8
+    assert record["generationMixGwh"] == {"hydro": 8}
+    lineage = record["sourceSeries"]["generationMixGwh.hydro"]["aggregatedFacets"]
+    assert {item["rawFuelCode"] for item in lineage} == {"HYC", "HPS"}
+
+
+def test_eia_generation_preserves_negative_net_hydro_without_clamping() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "HYC", "generation": "1",
+                 "generation-units": "thousand megawatthours"},
+                {"period": "2024", "location": "TX", "sectorid": "ALL",
+                 "fueltypeid": "HPS", "generation": "-3",
+                 "generation-units": "thousand megawatthours"},
+            ],
+        },
+    }
+    record = normalize_eia_state(
+        payload,
+        route_id="generation",
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["localGenerationGwh"] is None
+    assert record["generationMixGwh"] == {"hydro": -2}
+    assert record["sourceSeries"]["generationMixGwh.hydro"]["aggregatedFacets"]
+    assert merge_regional_observations([record])[0]["generationMixGwh"] == {"hydro": -2}
+
+
+@pytest.mark.parametrize("fuel", ["NG", "BIT", "ALL"])
+def test_eia_generation_rejects_negative_ordinary_fuels(fuel: str) -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [{
+                "period": "2024", "location": "TX", "sectorid": "ALL",
+                "fueltypeid": fuel, "generation": "-1",
+                "generation-units": "thousand megawatthours",
+            }],
+        },
+    }
+    with pytest.raises(ValueError, match="cannot be negative|generation mix"):
+        normalize_eia_state(
+            payload,
+            route_id="generation",
+            state_mapping={"TX": "US-TEXAS"},
+            active_geography_ids={"US-TEXAS"},
+        )
+
+
 def test_eia_capability_safely_sums_unique_leaf_cells_without_creating_zero() -> None:
     payload = {
         "response": {

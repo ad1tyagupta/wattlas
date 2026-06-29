@@ -79,6 +79,10 @@ _FUEL_CHILDREN = {
     "BIO": frozenset({"AB", "BLQ", "MSW", "OBG", "SLW", "WDL", "WDS"}),
 }
 
+# EIA publishes pumped-storage generation net of pumping load. Its annual HPS
+# value can therefore be negative; ordinary generation fuels and ALL totals may not.
+_NET_STORAGE_FUEL_CODES = frozenset({"HPS"})
+
 _SYNTHETIC_SERIES = {
     "sales": ("demandGwh", "energy"),
     "demand": ("demandGwh", "energy"),
@@ -429,8 +433,8 @@ def normalize_eia_state(
                 if fuel_key in generation_mix_keys:
                     raise ValueError(f"duplicate EIA generation fuel row: {fuel_key}")
                 generation_mix_keys.add(fuel_key)
-                if value is not None and value < 0:
-                    raise ValueError("EIA generation mix cannot be negative")
+                if value is not None and value < 0 and fuel not in _NET_STORAGE_FUEL_CODES:
+                    raise ValueError(f"EIA generation mix cannot be negative for fuel {fuel}")
                 if value is not None:
                     record["generationMixGwh"][technology] = (
                         record["generationMixGwh"].get(technology, 0.0) + value
@@ -500,8 +504,8 @@ def normalize_eia_state(
             if field == "localGenerationGwh" and not _is_all(fuel):
                 technology = _FUEL_TECHNOLOGY.get(fuel, "other")
                 value = normalize_metric_value(raw_value, unit=unit, dimension=dimension)
-                if value is not None and value < 0:
-                    raise ValueError("EIA generation mix cannot be negative")
+                if value is not None and value < 0 and fuel not in _NET_STORAGE_FUEL_CODES:
+                    raise ValueError(f"EIA generation mix cannot be negative for fuel {fuel}")
                 fuel_key = (geography_id, year, fuel)
                 if fuel_key in generation_mix_keys:
                     raise ValueError(f"duplicate EIA generation fuel row: {fuel_key}")
