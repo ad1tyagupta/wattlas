@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 data/raw/**
 !data/raw/.gitkeep
+data/cache/worldpop/**
+!data/cache/worldpop/.gitkeep
 data/warehouse/**
 !data/warehouse/.gitkeep
 test-results/

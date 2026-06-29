@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+  "features": [
+    {
+      "type": "Feature",
+      "id": "AA-LEFT",
+      "properties": {"id": "AA-LEFT", "name": "Left", "country": "AA", "level": "admin_1"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "AA-RIGHT",
+      "properties": {"id": "AA-RIGHT", "name": "Right", "country": "AA", "level": "admin_1"},
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [
+            [[2, 0], [4, 0], [4, 2], [2, 2], [2, 0]],
+            [[3.1, 1.1], [3.1, 1.9], [3.9, 1.9], [3.9, 1.1], [3.1, 1.1]]
+          ],
+          [[[8, 8], [8.1, 8], [8.1, 8.1], [8, 8.1], [8, 8]]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "BB-OUTSIDE",
+      "properties": {"id": "BB-OUTSIDE", "name": "Outside", "country": "BB", "level": "admin_1"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[20, 20], [21, 20], [21, 21], [20, 21], [20, 20]]]
+      }
+    }
+  ]
+}
