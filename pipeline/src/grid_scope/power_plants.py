@@ -73,6 +73,20 @@ _LOCATION_FIELDS = {
     "locationPrecision",
 }
 _PRECISION_RANK = {"region_centroid": 0, "city_centroid": 1, "exact": 2}
+_RECORD_ANCHOR_PRIORITY = {
+    "gemunit": 0,
+    "gemplant": 1,
+    "wri": 2,
+    "osm": 3,
+    "wikidata": 4,
+    "officialunit": 5,
+    "official": 6,
+    "unit": 7,
+    "unitid": 7,
+    "wikipedia": 8,
+    "unitref": 20,
+    "plantref": 21,
+}
 
 
 def _clean_text(value: Any) -> str | None:
@@ -874,6 +888,70 @@ def _provenance(record: dict[str, Any], field: str) -> dict[str, Any]:
     }
 
 
+def _record_anchor_id(namespace: str, identifier: str) -> str | None:
+    slug = re.sub(r"[^a-z0-9]+", "-", identifier.casefold()).strip("-")[:64]
+    return f"wattlas-record-{namespace}-{slug}" if slug else None
+
+
+def _canonical_record_identity(
+    records: list[dict[str, Any]],
+) -> tuple[str, list[str], list[str]]:
+    source_record_ids = sorted(
+        {
+            identifier
+            for record in records
+            for value in [record.get("id"), *(record.get("sourceRecordIds") or [])]
+            if (identifier := canonical_identifier(value)) is not None
+        }
+    )
+    anchors: set[tuple[int, str, str, str]] = set()
+    for record in records:
+        for namespace, identifier in _external_identity_map(record, entity=True).items():
+            canonical_id = _record_anchor_id(namespace, identifier)
+            if canonical_id is not None:
+                anchors.add(
+                    (
+                        _RECORD_ANCHOR_PRIORITY.get(namespace, 15),
+                        namespace,
+                        identifier,
+                        canonical_id,
+                    )
+                )
+        relationship_field = "unitId" if _unit_record(record) else "plantId"
+        relationship_id = canonical_identifier(record.get(relationship_field))
+        if relationship_id is not None:
+            namespace = "unitref" if relationship_field == "unitId" else "plantref"
+            canonical_id = _record_anchor_id(namespace, relationship_id)
+            if canonical_id is not None:
+                anchors.add(
+                    (
+                        _RECORD_ANCHOR_PRIORITY[namespace],
+                        namespace,
+                        relationship_id,
+                        canonical_id,
+                    )
+                )
+    if anchors:
+        ordered_anchors = sorted(anchors)
+        primary_id = ordered_anchors[0][3]
+        alternate_anchors = {anchor[3] for anchor in ordered_anchors[1:]}
+    elif source_record_ids:
+        primary_id = source_record_ids[0]
+        alternate_anchors = set()
+    else:
+        raise ValueError("canonical power records require a durable anchor or source-row ID")
+    existing_aliases = {
+        normalized_alias
+        for record in records
+        for alias in record.get("idAliases", [])
+        if (normalized_alias := canonical_identifier(alias)) is not None
+    }
+    aliases = sorted(
+        (set(source_record_ids) | alternate_anchors | existing_aliases) - {primary_id}
+    )
+    return primary_id, aliases, source_record_ids
+
+
 def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
     excluded = {
         "aliases",
@@ -881,6 +959,9 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
         "externalIdAliases",
         "externalIds",
         "fieldProvenance",
+        "id",
+        "idAliases",
+        "sourceRecordIds",
         "sourceIds",
         *_FIELD_KIND_NAMES,
         *_COMPANION_KIND_FIELDS,
@@ -910,6 +991,12 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
         if _present(location_record.get(field)):
             merged[field] = deepcopy(location_record[field])
             provenance[field] = _provenance(location_record, field)
+
+    canonical_id, id_aliases, source_record_ids = _canonical_record_identity(records)
+    merged["id"] = canonical_id
+    merged["sourceRecordIds"] = source_record_ids
+    if id_aliases:
+        merged["idAliases"] = id_aliases
 
     merged["sourceIds"] = sorted(
         {source_id for record in records for source_id in record.get("sourceIds", [])}
@@ -956,19 +1043,12 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _durable_record_identity(record: dict[str, Any]) -> dict[str, Any]:
-    coordinates = record.get("coordinates")
     return {
         "externalIds": record.get("externalIds") or {},
         "plantId": record.get("plantId"),
         "unitId": record.get("unitId"),
         "canonicalCountryKey": record.get("canonicalCountryKey"),
-        "coordinates": (
-            [round(float(value), 5) for value in coordinates]
-            if coordinates
-            else None
-        ),
-        "name": _key(record.get("name")),
-        "plantName": _key(record.get("plantName")),
+        "sourceRecordIds": sorted(record.get("sourceRecordIds") or []),
     }
 
 
@@ -981,15 +1061,19 @@ def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for base_id, collisions in by_base.items():
         if len(collisions) < 2:
             continue
+        durable_identities = [_stable_json(_durable_record_identity(record)) for record in collisions]
+        if len(set(durable_identities)) != len(durable_identities):
+            raise ValueError(
+                f"ambiguous duplicate canonical record ID {base_id!r} lacks distinct durable identity"
+            )
         used: set[str] = set()
         ordered = sorted(
             collisions,
-            key=lambda record: (
-                sha256(_stable_json(_durable_record_identity(record)).encode()).hexdigest(),
-                _stable_json(_durable_record_identity(record)),
-            ),
+            key=lambda record: sha256(
+                _stable_json(_durable_record_identity(record)).encode()
+            ).hexdigest(),
         )
-        for record in ordered:
+        for position, record in enumerate(ordered):
             digest = sha256(
                 _stable_json(_durable_record_identity(record)).encode()
             ).hexdigest()[:10]
@@ -999,6 +1083,10 @@ def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 candidate = f"{base_id}-{digest}-{ordinal}"
                 ordinal += 1
             used.add(candidate)
+            if position == 0:
+                record["idAliases"] = sorted(
+                    set(record.get("idAliases", [])) | {base_id}
+                )
             record["id"] = candidate
     return sorted(records, key=lambda record: (record["id"], _stable_json(record)))
 
@@ -1023,23 +1111,47 @@ def _capacity_by_technology(records: Iterable[dict[str, Any]]) -> dict[str, floa
     return dict(sorted(totals.items()))
 
 
+def _capacity_field_lineage(record: dict[str, Any]) -> dict[str, Any]:
+    field_provenance = (record.get("fieldProvenance") or {}).get("capacityMw")
+    if isinstance(field_provenance, dict):
+        return {
+            "valueKind": field_provenance.get("valueKind")
+            or record.get("capacityValueKind")
+            or record.get("valueKind")
+            or "unavailable",
+            "sourceType": field_provenance.get("sourceType") or record.get("sourceType"),
+            "sourceIds": sorted(field_provenance.get("sourceIds") or []),
+        }
+    return {
+        "valueKind": record.get("capacityValueKind")
+        or record.get("valueKind")
+        or "unavailable",
+        "sourceType": record.get("sourceType"),
+        "sourceIds": sorted(record.get("sourceIds") or []),
+    }
+
+
 def _capacity_candidate_provenance(records: list[dict[str, Any]]) -> dict[str, Any]:
-    ranked_kinds = [
-        (record.get("capacityValueKind") or record.get("valueKind") or "unavailable")
-        for record in records
-    ]
+    lineages = [_capacity_field_lineage(record) for record in records]
+    ranked_kinds = [lineage["valueKind"] for lineage in lineages]
     weakest_kind = min(
         ranked_kinds,
         key=lambda kind: (_VALUE_KIND_RANK.get(str(kind), 0), str(kind)),
     )
+    selected_source_ids = {
+        source_id for lineage in lineages for source_id in lineage["sourceIds"]
+    }
     return {
         "valueKind": weakest_kind,
-        "sourceTypes": sorted({str(record.get("sourceType")) for record in records}),
-        "sourceIds": sorted(
-            {source_id for record in records for source_id in record.get("sourceIds", [])}
-        ),
+        "sourceTypes": sorted({str(lineage["sourceType"]) for lineage in lineages}),
+        "sourceIds": sorted(selected_source_ids),
         "recordIds": sorted(record["id"] for record in records),
-        "evidenceCount": sum(len(record.get("evidence", [])) for record in records),
+        "evidenceCount": sum(
+            1
+            for record in records
+            for claim in record.get("evidence", [])
+            if claim.get("sourceId") in selected_source_ids
+        ),
     }
 
 
@@ -1047,7 +1159,7 @@ def _capacity_candidate_preference(records: list[dict[str, Any]]) -> tuple[int, 
     provenance = _capacity_candidate_provenance(records)
     return (
         _VALUE_KIND_RANK.get(str(provenance["valueKind"]), 0),
-        min(SOURCE_RANK.get(record.get("sourceType"), 0) for record in records),
+        min(SOURCE_RANK.get(source_type, 0) for source_type in provenance["sourceTypes"]),
         int(provenance["evidenceCount"]),
     )
 

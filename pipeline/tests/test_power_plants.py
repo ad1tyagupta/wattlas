@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 
 import pytest
 
@@ -231,6 +232,36 @@ def test_combined_lineage_aliases_and_evidence_are_deterministic() -> None:
     assert [claim["id"] for claim in forward["evidence"]] == ["a", "z"]
 
 
+def test_canonical_record_id_uses_durable_anchor_and_preserves_source_id_aliases() -> None:
+    gem = power_record(
+        id="gem-source-row",
+        externalIds={"gemPlant": "G-STABLE", "wikidata": "Q-STABLE"},
+        owner="Original owner",
+    )
+    official = power_record(
+        id="official-source-row",
+        externalIds={"wikidata": "Q-STABLE", "official": "OFF-STABLE"},
+        sourceType="official_verified",
+        sourceIds=["official"],
+        name="Corrected official name",
+        coordinates=[-90.1, 35.1],
+    )
+
+    before = canonicalize_power_plants([gem])["records"][0]
+    merged = canonicalize_power_plants([gem, official])["records"][0]
+    gem["name"] = "Corrected GEM name"
+    gem["plantName"] = "Corrected GEM plant name"
+    gem["owner"] = "Corrected owner"
+    gem["coordinates"] = [-90.2, 35.2]
+    corrected = canonicalize_power_plants([official, gem])["records"][0]
+
+    assert before["id"] == merged["id"] == corrected["id"]
+    assert before["id"] == "wattlas-record-gemplant-g-stable"
+    assert {"gem-source-row", "official-source-row"} <= set(merged["idAliases"])
+    assert "wattlas-record-wikidata-q-stable" in merged["idAliases"]
+    assert merged["idAliases"] == corrected["idAliases"]
+
+
 def test_multi_fuel_and_most_specific_geography_survive_normalization() -> None:
     geographies = [
         {
@@ -317,11 +348,11 @@ def test_inactive_capacity_is_excluded_and_planned_capacity_is_separate() -> Non
     assert plant["operatingCapacityMw"]["central"] == 100.0
     assert plant["plannedCapacityMw"]["central"] == 75.0
     assert plant["plannedCapacityMwByTechnology"] == {"gas": 50.0, "solar": 25.0}
-    by_id = {record["id"]: record for record in result["records"]}
-    assert by_id["shelved"]["lifecycle"] == "paused"
-    assert by_id["shelved"]["rawStatus"] == "Shelved"
-    assert by_id["retired"]["lifecycle"] == "cancelled"
-    assert by_id["retired"]["rawStatus"] == "Retired"
+    by_unit_id = {record["unitId"]: record for record in result["records"]}
+    assert by_unit_id["shelved"]["lifecycle"] == "paused"
+    assert by_unit_id["shelved"]["rawStatus"] == "Shelved"
+    assert by_unit_id["retired"]["lifecycle"] == "cancelled"
+    assert by_unit_id["retired"]["rawStatus"] == "Retired"
 
 
 def test_normalized_active_records_fit_the_asset_contract() -> None:
@@ -595,7 +626,7 @@ def test_summary_ids_are_unique_permutation_stable_and_source_rank_independent()
         sourceIds=["official"],
     )
     duplicate_source_id_a = power_record(
-        id="duplicate",
+        id="source-plant-a",
         name="Plant A",
         plantName="Plant A",
         operator="A Operator",
@@ -604,7 +635,7 @@ def test_summary_ids_are_unique_permutation_stable_and_source_rank_independent()
         plantId=None,
     )
     duplicate_source_id_b = power_record(
-        id="duplicate",
+        id="source-plant-b",
         name="Plant B",
         plantName="Plant B",
         operator="B Operator",
@@ -626,6 +657,30 @@ def test_summary_ids_are_unique_permutation_stable_and_source_rank_independent()
     assert [record["id"] for record in forward["records"]] == [
         record["id"] for record in reverse["records"]
     ]
+
+
+def test_ambiguous_duplicate_source_ids_without_durable_identity_are_rejected() -> None:
+    first = power_record(
+        id="ambiguous-source-id",
+        externalIds={},
+        plantId=None,
+        unitId=None,
+        name="Ambiguous Alpha",
+        plantName="Ambiguous Alpha",
+        coordinates=[1, 1],
+    )
+    second = power_record(
+        id="ambiguous-source-id",
+        externalIds={},
+        plantId=None,
+        unitId=None,
+        name="Ambiguous Beta",
+        plantName="Ambiguous Beta",
+        coordinates=[20, 20],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous duplicate canonical record ID"):
+        canonicalize_power_plants([first, second])
 
 
 def test_summary_id_aliases_preserve_previous_gem_anchor_when_wikidata_arrives() -> None:
@@ -652,7 +707,7 @@ def test_summary_id_aliases_preserve_previous_gem_anchor_when_wikidata_arrives()
 
 
 def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
-    common_prefix = "Q" + "A" * 60
+    common_prefix = "Q" + "A" * 80
     first = power_record(
         id="duplicate-source-id",
         externalIds={"wikidata": f"{common_prefix}1"},
@@ -672,7 +727,8 @@ def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
         owner="Other owner",
     )
 
-    before = canonicalize_power_plants([first, second])["plants"]
+    before_result = canonicalize_power_plants([first, second])
+    before = before_result["plants"]
     first["owner"] = "Owner version two"
     first["updatedAt"] = "2030-01-01"
     after = canonicalize_power_plants([second, first])["plants"]
@@ -686,6 +742,16 @@ def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
     all_aliases = [alias for plant in before for alias in plant.get("idAliases", [])]
     assert len(all_aliases) == len(set(all_aliases))
     assert not set(all_aliases) & {plant["id"] for plant in before}
+    record_aliases = [
+        alias
+        for record in before_result["records"]
+        for alias in record.get("idAliases", [])
+    ]
+    unsuffixed_record_id = (
+        "wattlas-record-wikidata-"
+        + re.sub(r"[^a-z0-9]+", "-", f"{common_prefix}1".casefold()).strip("-")[:64]
+    )
+    assert record_aliases.count(unsuffixed_record_id) == 1
 
 
 def test_incomplete_units_use_compatible_aggregate_capacity_fallback() -> None:
@@ -805,6 +871,72 @@ def test_capacity_metric_kind_and_provenance_are_selected_atomically() -> None:
     assert record["capacityValueKind"] == "reported"
     assert record["fieldProvenance"]["capacityValueKind"] == record["fieldProvenance"]["capacityMw"]
     assert record["fieldProvenance"]["capacityMw"]["sourceIds"] == ["community"]
+
+
+def test_capacity_rollup_uses_selected_field_provenance_not_merged_row_lineage() -> None:
+    community_aggregate = power_record(
+        id="community-aggregate",
+        unitId=None,
+        externalIds={"gemPlant": "G-FIELD", "wikidata": "Q-FIELD"},
+        capacityMw={"low": 100, "central": 100, "high": 100},
+        capacityValueKind="reported",
+        valueKind="reported",
+        sourceType="community_mapped",
+        sourceIds=["community-capacity"],
+    )
+    official_aggregate = power_record(
+        id="official-aggregate-field",
+        unitId=None,
+        externalIds={"gemPlant": "G-FIELD", "wikidata": "Q-FIELD"},
+        capacityMw={"low": 110, "central": 110, "high": 110},
+        capacityValueKind="estimated",
+        valueKind="estimated",
+        sourceType="official_verified",
+        sourceIds=["official-registry"],
+        name="Official registry name",
+    )
+
+    aggregate_only = canonicalize_power_plants(
+        [official_aggregate, community_aggregate]
+    )
+    aggregate_record = aggregate_only["records"][0]
+    aggregate_provenance = aggregate_only["plants"][0]["operatingCapacityCoverage"][
+        "provenance"
+    ]
+
+    assert aggregate_record["sourceType"] == "official_verified"
+    assert aggregate_record["sourceIds"] == ["community-capacity", "official-registry"]
+    assert aggregate_record["fieldProvenance"]["capacityMw"] == {
+        "sourceType": "community_mapped",
+        "sourceIds": ["community-capacity"],
+        "valueKind": "reported",
+    }
+    assert aggregate_provenance["valueKind"] == "reported"
+    assert aggregate_provenance["sourceTypes"] == ["community_mapped"]
+    assert aggregate_provenance["sourceIds"] == ["community-capacity"]
+
+    units = [
+        power_record(
+            id=f"research-unit-{index}",
+            unitId=f"research-unit-{index}",
+            externalIds={"gemPlant": "G-FIELD", "gemUnit": f"FIELD-U-{index}"},
+            capacityMw={"low": 40, "central": 40, "high": 40},
+            capacityValueKind="reported",
+            valueKind="reported",
+            sourceType="research_verified",
+            sourceIds=["research-units"],
+        )
+        for index in range(2)
+    ]
+    with_units = canonicalize_power_plants(
+        [official_aggregate, community_aggregate, *units]
+    )["plants"][0]
+
+    assert with_units["operatingCapacityMw"]["central"] == 80
+    assert with_units["operatingCapacityCoverage"]["method"] == "complete_unit_sum"
+    assert with_units["operatingCapacityCoverage"]["provenance"]["sourceIds"] == [
+        "research-units"
+    ]
 
 
 def test_fuzzy_comparisons_are_blocked_below_quadratic_growth(monkeypatch: pytest.MonkeyPatch) -> None:
