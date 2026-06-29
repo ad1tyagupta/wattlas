@@ -9,6 +9,8 @@ import re
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
+from grid_scope.connectors.licensing import require_redistributable_licence
+
 
 ENERGY_FIELDS = (
     "demandGwh",
@@ -153,10 +155,9 @@ def _require_public_lineage(row: Mapping[str, Any], *, row_number: int) -> None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"regional electricity row {row_number} requires a public source URL")
     licence = str(row["licence"]).strip()
-    if not licence:
-        raise ValueError(f"regional electricity row {row_number} requires a licence")
-    if any(term in licence.lower() for term in ("private", "proprietary", "restricted", "no redistribution")):
-        raise ValueError(f"regional electricity row {row_number} licence is not redistributable")
+    require_redistributable_licence(
+        licence, label=f"regional electricity row {row_number}"
+    )
 
 
 def _iso_date(value: str, *, label: str) -> str:
@@ -202,6 +203,7 @@ def load_curated_regional_observations(
     *,
     region_mapping: Mapping[str, str],
     active_geography_ids: Iterable[str],
+    geography_country_iso3: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     with Path(path).open(newline="", encoding="utf-8-sig") as source:
         rows = list(csv.DictReader(source))
@@ -211,6 +213,16 @@ def load_curated_regional_observations(
         active_geography_ids=active_geography_ids,
         observed_source_codes=observed_codes,
     )
+    geography_countries = {
+        str(geography_id).strip(): str(country_iso3).strip().upper()
+        for geography_id, country_iso3 in geography_country_iso3.items()
+    }
+    missing_country_mappings = sorted(set(mapping.values()) - set(geography_countries))
+    if missing_country_mappings:
+        raise ValueError(
+            "regional electricity geography country mapping is missing: "
+            + ", ".join(missing_country_mappings)
+        )
     records: list[dict[str, Any]] = []
     for row_number, row in enumerate(rows, start=2):
         _require_public_lineage(row, row_number=row_number)
@@ -218,6 +230,12 @@ def load_curated_regional_observations(
         country_iso3 = str(row.get("country_iso3") or "").strip().upper()
         if re.fullmatch(r"[A-Z]{3}", country_iso3) is None:
             raise ValueError(f"regional electricity row {row_number} has invalid country ISO3")
+        geography_id = mapping[source_code]
+        if geography_countries[geography_id] != country_iso3:
+            raise ValueError(
+                f"regional electricity row {row_number} country mapping mismatch: "
+                f"{geography_id} is {geography_countries[geography_id]}, not {country_iso3}"
+            )
         try:
             year = int(str(row.get("year") or ""))
         except ValueError as error:
@@ -233,6 +251,13 @@ def load_curated_regional_observations(
         mix, mix_units = _mix(str(row.get("generation_mix_json") or ""), row_number=row_number)
         updated_at = _iso_date(str(row["updated_at"]).strip(), label="updated_at")
         observation_date = _iso_date(str(row["observation_date"]).strip(), label="observation_date")
+        freshness_days = (
+            date.fromisoformat(updated_at) - date.fromisoformat(observation_date)
+        ).days
+        if freshness_days < 0:
+            raise ValueError(
+                f"regional electricity row {row_number} has negative freshness"
+            )
         value_kind = str(row["value_kind"]).strip()
         if value_kind not in {"observed", "reported", "estimated", "inherited"}:
             raise ValueError(
@@ -247,7 +272,7 @@ def load_curated_regional_observations(
             **mix_units,
         }
         records.append({
-            "geographyId": mapping[source_code],
+            "geographyId": geography_id,
             "geographyLevel": "admin_1",
             "countryIso3": country_iso3,
             "year": year,
@@ -268,7 +293,7 @@ def load_curated_regional_observations(
             "licence": str(row["licence"]).strip(),
             "updatedAt": updated_at,
             "observationDate": observation_date,
-            "freshnessDays": (date.fromisoformat(updated_at) - date.fromisoformat(observation_date)).days,
+            "freshnessDays": freshness_days,
             "valueKind": value_kind,
             "methodId": str(row["method_id"]).strip(),
             "unitMetadata": unit_metadata,

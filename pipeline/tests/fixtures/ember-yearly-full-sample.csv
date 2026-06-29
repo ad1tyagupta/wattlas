@@ -1,0 +1,7 @@
+Area,ISO 3 code,Year,Category,Subcategory,Variable,Unit,Value,Source URL,Licence,Last Updated
+United States,USA,2024,Electricity demand,,Demand,TWh,4,https://ember-energy.org/data/yearly-electricity-data/,CC-BY-4.0,2025-05-01
+United States,USA,2024,Electricity generation,,Total Generation,TWh,5,https://ember-energy.org/data/yearly-electricity-data,CC BY 4.0,2025-05-01
+United States,USA,2024,Electricity generation,Fuel,Solar,TWh,1,https://ember-energy.org/data/yearly-electricity-data,CC-BY-4.0,2025-05-01
+Bad unsupported row,,not-a-year,Power sector emissions,,CO2 emissions,mtCO2,9,,,
+United States,USA,2024,Electricity generation,Aggregate fuel,Clean,%,40,,,
+United States,USA,2024,Electricity capacity,,Solar,GW,8,,,

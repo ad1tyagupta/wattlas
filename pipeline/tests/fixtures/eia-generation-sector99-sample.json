@@ -1,0 +1,16 @@
+{
+  "apiVersion": "2.1.0",
+  "request": {"command": "/v2/electricity/electric-power-operational-data/data/"},
+  "response": {
+    "frequency": "annual",
+    "dateFormat": "YYYY",
+    "total": "5",
+    "data": [
+      {"period":"2024","location":"TX","sectorid":"99","sectorDescription":"All Sectors","fueltypeid":"ALL","fuelTypeDescription":"All fuels","generation":"10","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"99","sectorDescription":"All Sectors","fueltypeid":"OIL","fuelTypeDescription":"All petroleum","generation":"2","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"99","sectorDescription":"All Sectors","fueltypeid":"WWW","fuelTypeDescription":"Wood and wood-derived fuels","generation":"1","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"99","sectorDescription":"All Sectors","fueltypeid":"DPV","fuelTypeDescription":"Distributed photovoltaic","generation":"1","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"99","sectorDescription":"All Sectors","fueltypeid":"XYZ","fuelTypeDescription":"Unknown future code","generation":"1","generation-units":"thousand megawatthours"}
+    ]
+  }
+}

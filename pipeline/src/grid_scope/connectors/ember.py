@@ -7,6 +7,10 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from grid_scope.connectors.licensing import (
+    normalize_licence,
+    require_redistributable_licence,
+)
 from grid_scope.connectors.regional_electricity import normalize_metric_value
 
 
@@ -64,10 +68,49 @@ def _technology(value: str) -> str | None:
     return _TECHNOLOGY_ALIASES.get(key)
 
 
+def _normalized_url(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("requires a public source URL")
+    path = parsed.path.rstrip("/")
+    return parsed._replace(
+        scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), path=path,
+        params="", fragment="",
+    ).geturl()
+
+
+def _metric_kind(row: dict[str, Any]) -> tuple[str, str | None] | None:
+    """Classify only country-control energy rows from Ember's full dataset."""
+
+    category = _first(row, "Category", "category").lower()
+    variable = _first(row, "Variable", "Metric", "metric").lower()
+    subcategory = _first(row, "Subcategory", "subcategory").lower()
+    unit = _first(row, "Unit", "unit")
+    # Use the unit converter only as a vocabulary check, never on the row value.
+    try:
+        normalize_metric_value(None, unit=unit, dimension="energy")
+    except ValueError:
+        return None
+    if category in {"electricity demand", "demand"} and variable in {
+        "demand", "total demand", "electricity demand", "electricity consumption",
+    }:
+        return ("demand", None)
+    if category in {"electricity generation", "generation"} and variable in {
+        "total generation", "electricity generation", "generation", "net generation",
+    }:
+        return ("generation", None)
+    if category in {"electricity generation", "generation"}:
+        technology = _technology(variable)
+        if technology is not None and (not subcategory or subcategory == "fuel"):
+            return ("fuel", technology)
+    return None
+
+
 def normalize_ember_yearly_rows(
     rows: list[dict[str, Any]],
     *,
     country_lookup: dict[str, str] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Normalize Ember Yearly Electricity Data into country control records.
 
@@ -79,6 +122,11 @@ def normalize_ember_yearly_rows(
     lookup = country_lookup or {}
     grouped: dict[tuple[str, int], dict[str, Any]] = {}
     for index, row in enumerate(rows, start=1):
+        metric_kind = _metric_kind(row)
+        if metric_kind is None:
+            if report is not None:
+                report["ignoredRows"] = int(report.get("ignoredRows", 0)) + 1
+            continue
         country_name = _first(row, "Area", "Country")
         iso3 = _first(row, "ISO 3 code", "Country code", "country_iso3").upper()
         iso3 = iso3 or lookup.get(country_name, "").upper()
@@ -96,11 +144,23 @@ def normalize_ember_yearly_rows(
         if not 1900 <= year <= 2100:
             raise ValueError(f"Ember row {index} has invalid year: {year}")
 
-        variable = _first(row, "Variable", "Metric", "metric")
-        category = _first(row, "Category", "category")
         unit = _first(row, "Unit", "unit")
         raw_value = row.get("Value", row.get("value"))
         value = normalize_metric_value(raw_value, unit=unit, dimension="energy")
+        source_url = _first(row, "Source URL", "source_url") or EMBER_SOURCE_URL
+        licence = _first(row, "Licence", "License", "licence") or EMBER_LICENCE
+        updated_at = _first(row, "Last Updated", "Updated At", "updated_at") or None
+        try:
+            normalized_url = _normalized_url(source_url)
+        except ValueError as error:
+            raise ValueError(f"Ember row {index} requires a public source URL") from error
+        require_redistributable_licence(licence, label=f"Ember row {index}")
+        normalized_updated_at: str | None = None
+        if updated_at:
+            try:
+                normalized_updated_at = date.fromisoformat(str(updated_at)[:10]).isoformat()
+            except ValueError as error:
+                raise ValueError(f"Ember row {index} has invalid update date") from error
         record = grouped.setdefault(
             (iso3, year),
             {
@@ -116,51 +176,42 @@ def normalize_ember_yearly_rows(
                 "sourceId": EMBER_SOURCE_ID,
                 "sourceRecordId": f"{EMBER_SOURCE_ID}:{iso3}:{year}",
                 "sourceType": "research_verified",
-                "sourceUrl": _first(row, "Source URL", "source_url") or EMBER_SOURCE_URL,
-                "licence": _first(row, "Licence", "License", "licence") or EMBER_LICENCE,
-                "updatedAt": _first(row, "Last Updated", "Updated At", "updated_at") or None,
+                "sourceUrl": source_url,
+                "licence": licence,
+                "updatedAt": normalized_updated_at,
                 "observationDate": f"{year}-12-31",
                 "valueKind": "reported",
                 "methodId": "ember-yearly-v1",
                 "unitMetadata": {},
+                "_lineage": (normalized_url, normalize_licence(licence), normalized_updated_at),
+                "_seenMetrics": set(),
             },
         )
-        source_url = str(record["sourceUrl"])
-        parsed_source_url = urlparse(source_url)
-        if parsed_source_url.scheme not in {"http", "https"} or not parsed_source_url.netloc:
-            raise ValueError(f"Ember row {index} requires a public source URL")
-        if any(
-            term in str(record["licence"]).lower()
-            for term in ("private", "proprietary", "restricted", "no redistribution")
-        ):
-            raise ValueError(f"Ember row {index} licence is not redistributable")
-        if record["updatedAt"]:
-            try:
-                updated_date = date.fromisoformat(str(record["updatedAt"])[:10])
-            except ValueError as error:
-                raise ValueError(f"Ember row {index} has invalid update date") from error
+        lineage = (normalized_url, normalize_licence(licence), normalized_updated_at)
+        if record["_lineage"] != lineage:
+            raise ValueError(f"conflicting Ember lineage for {iso3} {year}")
+        if normalized_updated_at:
+            updated_date = date.fromisoformat(normalized_updated_at)
             record["freshnessDays"] = (updated_date - date(year, 12, 31)).days
         else:
             record["freshnessDays"] = None
-        normalized_variable = variable.strip().lower()
-        normalized_category = category.strip().lower()
-        if normalized_variable in {"electricity demand", "demand", "electricity consumption"}:
+        kind, technology = metric_kind
+        if kind == "demand":
             field = "demandGwh"
-            if record[field] is not None:
+            if field in record["_seenMetrics"]:
                 raise ValueError(f"duplicate Ember {field} for {iso3} {year}")
+            record["_seenMetrics"].add(field)
             record[field] = value
             record["unitMetadata"][field] = {"sourceUnit": unit, "canonicalUnit": "GWh"}
-        elif normalized_variable in {"electricity generation", "generation", "net generation"}:
+        elif kind == "generation":
             field = "localGenerationGwh"
-            if record[field] is not None:
+            if field in record["_seenMetrics"]:
                 raise ValueError(f"duplicate Ember {field} for {iso3} {year}")
+            record["_seenMetrics"].add(field)
             record[field] = value
             record["unitMetadata"][field] = {"sourceUnit": unit, "canonicalUnit": "GWh"}
-        elif normalized_category in {"electricity generation", "generation"}:
-            technology = _technology(variable)
-            if technology is None:
-                # Aggregates such as "Clean" and "Fossil" are not technologies.
-                continue
+        else:
+            assert kind == "fuel" and technology is not None
             if technology in record["generationMixGwh"]:
                 raise ValueError(f"duplicate Ember {technology} generation for {iso3} {year}")
             if value is not None:
@@ -169,10 +220,13 @@ def normalize_ember_yearly_rows(
                 "sourceUnit": unit,
                 "canonicalUnit": "GWh",
             }
-        else:
-            raise ValueError(f"unsupported Ember yearly metric: {category} / {variable}")
-
-    return [grouped[key] for key in sorted(grouped)]
+    output: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        record = grouped[key]
+        record.pop("_lineage")
+        record.pop("_seenMetrics")
+        output.append(record)
+    return output
 
 
 def normalize_ember_yearly_csv(

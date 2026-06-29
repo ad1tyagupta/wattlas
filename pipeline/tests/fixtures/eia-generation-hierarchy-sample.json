@@ -14,7 +14,7 @@
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"NG","generation":"20","generation-units":"thousand megawatthours"},
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"DFO","generation":"10","generation-units":"thousand megawatthours"},
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"REN","generation":"30","generation-units":"thousand megawatthours"},
-      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"AOR","generation":"30","generation-units":"thousand megawatthours"},
+      {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"AOR","fuelTypeDescription":"All renewable energy sources","generation":"30","generation-units":"thousand megawatthours"},
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"SUN","generation":"10","generation-units":"thousand megawatthours"},
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"WND","generation":"10","generation-units":"thousand megawatthours"},
       {"period":"2024","location":"TX","sectorid":"ALL","fueltypeid":"HYC","generation":"5","generation-units":"thousand megawatthours"},

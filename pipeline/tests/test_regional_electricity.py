@@ -8,8 +8,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from grid_scope.connectors.eia import EiaV2Connector, normalize_eia_state
-from grid_scope.connectors.ember import normalize_ember_yearly_csv
+from grid_scope.connectors.eia import (
+    EiaV2Connector,
+    build_eia_route_query,
+    normalize_eia_state,
+)
+from grid_scope.connectors.ember import normalize_ember_yearly_csv, normalize_ember_yearly_rows
+from grid_scope.connectors.licensing import is_redistributable_licence
 from grid_scope.connectors.regional_electricity import (
     load_curated_regional_observations,
     merge_regional_observations,
@@ -53,6 +58,38 @@ def test_country_controls_cannot_be_merged_as_adm1_observations() -> None:
     country = normalize_ember_yearly_csv(FIXTURES / "ember-yearly-sample.csv")[0]
     with pytest.raises(ValueError, match="ADM1"):
         merge_regional_observations([country])
+
+
+def test_ember_full_dataset_ignores_non_energy_metrics_before_grouping() -> None:
+    report: dict = {}
+    with (FIXTURES / "ember-yearly-full-sample.csv").open(newline="") as source:
+        records = normalize_ember_yearly_rows(list(csv.DictReader(source)), report=report)
+    assert len(records) == 1
+    assert records[0]["demandGwh"] == 4_000
+    assert records[0]["localGenerationGwh"] == 5_000
+    assert records[0]["generationMixGwh"] == {"solar": 1_000}
+    assert report["ignoredRows"] == 3
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [("Source URL", "https://example.org/other"),
+     ("Licence", "ODbL-1.0"),
+     ("Last Updated", "2025-02-01")],
+)
+def test_ember_accepted_rows_require_consistent_public_lineage(
+    field: str, conflicting_value: str,
+) -> None:
+    base = {"Area": "France", "ISO 3 code": "FRA", "Year": "2024",
+            "Category": "Electricity demand", "Variable": "Demand", "Unit": "TWh",
+            "Value": "1", "Source URL": "https://example.org/data", "Licence": "CC0-1.0",
+            "Last Updated": "2025-01-01"}
+    conflict = {**base, "Category": "Electricity generation", "Variable": "Total generation",
+                field: conflicting_value}
+    with pytest.raises(ValueError, match="conflicting Ember lineage"):
+        normalize_ember_yearly_rows([base, conflict])
+    with pytest.raises(ValueError, match="licence is not redistributable"):
+        normalize_ember_yearly_rows([{**base, "Licence": "All rights reserved"}])
 
 
 def test_eia_state_balance_keeps_interchange_and_unknown_unmet_demand_separate() -> None:
@@ -149,6 +186,63 @@ def test_eia_generation_location_requires_an_explicit_active_mapping() -> None:
             state_mapping={"CA": "US-CALIFORNIA"},
             active_geography_ids={"US-CALIFORNIA"},
         )
+
+
+def test_eia_generation_accepts_real_all_sector_99_and_reports_unknown_fuels() -> None:
+    payload = json.loads((FIXTURES / "eia-generation-sector99-sample.json").read_text())
+    report: dict = {}
+    record = normalize_eia_state(
+        payload, route_id="generation", state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"}, report=report,
+    )[0]
+    assert record["localGenerationGwh"] == 10
+    assert record["generationMixGwh"] == {"biomass": 1, "oil": 2, "other": 1, "solar": 1}
+    assert report["unknownFuelCodes"] == ["XYZ"]
+
+
+def test_eia_aor_is_hierarchical_only_when_description_says_all_renewables() -> None:
+    def payload(description: str) -> dict:
+        return {"response": {"frequency": "annual", "data": [
+            {"period": "2024", "location": "TX", "sectorid": "99", "fueltypeid": "AOR",
+             "fuelTypeDescription": description, "generation": "3",
+             "generation-units": "thousand megawatthours"},
+            {"period": "2024", "location": "TX", "sectorid": "99", "fueltypeid": "SUN",
+             "generation": "1", "generation-units": "thousand megawatthours"},
+        ]}}
+    aggregate = normalize_eia_state(
+        payload("All renewable energy sources"), route_id="generation",
+        state_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
+    )[0]
+    nonaggregate = normalize_eia_state(
+        payload("Other renewables"), route_id="generation",
+        state_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert aggregate["generationMixGwh"] == {"solar": 1}
+    assert nonaggregate["generationMixGwh"] == {"other": 3, "solar": 1}
+
+
+@pytest.mark.parametrize(
+    "licence",
+    ["CC-BY-4.0", "CC0-1.0", "ODbL-1.0", "US-PUBLIC-DOMAIN", "public domain",
+     "OGL-3.0", "Open Government Licence v3.0"],
+)
+def test_public_data_licence_allowlist(licence: str) -> None:
+    assert is_redistributable_licence(licence)
+
+
+def test_public_data_licence_allowlist_rejects_all_rights_reserved() -> None:
+    assert not is_redistributable_licence("All rights reserved")
+
+
+def test_eia_generation_does_not_treat_missing_sector_as_total() -> None:
+    payload = {"response": {"frequency": "annual", "data": [{
+        "period": "2024", "location": "TX", "fueltypeid": "ALL", "generation": "10",
+        "generation-units": "thousand megawatthours",
+    }]}}
+    assert normalize_eia_state(
+        payload, route_id="generation", state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    ) == []
 
 
 def test_eia_generation_mix_drops_overlapping_fuel_hierarchy_aggregates() -> None:
@@ -322,6 +416,20 @@ def test_eia_capability_safely_sums_unique_leaf_cells_without_creating_zero() ->
     assert len(record["sourceSeries"]["dependableCapacityMw"]["aggregatedFacets"]) == 2
 
 
+def test_eia_capability_uses_route_specific_total_codes_and_not_empty_facets() -> None:
+    payload = {"response": {"frequency": "annual", "data": [
+        {"period": "2024", "stateId": "TX", "producerTypeId": "00",
+         "fuelTypeId": "TSN", "capability": "100", "capability-units": "megawatts"},
+        {"period": "2024", "stateId": "TX", "producerTypeId": "",
+         "fuelTypeId": "", "capability": "999", "capability-units": "megawatts"},
+    ]}}
+    record = normalize_eia_state(
+        payload, route_id="capability", state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["dependableCapacityMw"] == 100
+
+
 def test_synthetic_eia_series_remain_a_backward_compatible_fallback() -> None:
     payload = {
         "response": {
@@ -415,6 +523,7 @@ def test_curated_loader_preserves_missing_values_and_public_lineage(tmp_path: Pa
         path,
         region_mapping={"TX": "US-TEXAS"},
         active_geography_ids={"US-TEXAS"},
+        geography_country_iso3={"US-TEXAS": "USA"},
     )[0]
     assert record["geographyId"] == "US-TEXAS"
     assert record["netInterchangeGwh"] is None
@@ -436,6 +545,7 @@ def test_curated_loader_rejects_non_public_or_incomplete_lineage(tmp_path: Path)
             path,
             region_mapping={"TX": "US-TEXAS"},
             active_geography_ids={"US-TEXAS"},
+            geography_country_iso3={"US-TEXAS": "USA"},
         )
 
 
@@ -450,6 +560,32 @@ def test_curated_loader_rejects_a_restricted_licence(tmp_path: Path) -> None:
             path,
             region_mapping={"TX": "US-TEXAS"},
             active_geography_ids={"US-TEXAS"},
+            geography_country_iso3={"US-TEXAS": "USA"},
+        )
+
+
+def test_curated_loader_requires_matching_geography_country_and_nonnegative_freshness(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "observations.csv"
+    path.write_text(
+        "source_region_code,country_iso3,year,demand_value,demand_unit,source_id,source_record_id,source_url,licence,updated_at,observation_date,value_kind,method_id\n"
+        "TX,USA,2024,2,TWh,x,x-1,https://example.org/data,OGL-3.0,2024-01-01,2024-12-31,reported,x-v1\n"
+    )
+    with pytest.raises(ValueError, match="country mapping is missing"):
+        load_curated_regional_observations(
+            path, region_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
+            geography_country_iso3={},
+        )
+    with pytest.raises(ValueError, match="country mapping mismatch"):
+        load_curated_regional_observations(
+            path, region_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
+            geography_country_iso3={"US-TEXAS": "CAN"},
+        )
+    with pytest.raises(ValueError, match="freshness"):
+        load_curated_regional_observations(
+            path, region_mapping={"TX": "US-TEXAS"}, active_geography_ids={"US-TEXAS"},
+            geography_country_iso3={"US-TEXAS": "USA"},
         )
 
 
@@ -538,7 +674,11 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
         ]
         return httpx.Response(200, json={
             "apiVersion": "2.1.0",
-            "request": {"command": "/v2/electricity/retail-sales/data/"},
+            "request": {"command": "/v2/electricity/retail-sales/data/",
+                        "params": {"api_key": "test-key", "nested": {"token": "SECRET"},
+                                   "ApiKey": "SECOND-SECRET",
+                                   "Authorization": "Bearer THIRD-SECRET",
+                                   "frequency": "annual"}},
             "response": {
                 "frequency": "annual", "dateFormat": "YYYY", "total": "3", "data": rows,
             },
@@ -548,7 +688,7 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = connector.fetch(
             route_id="sales",
-            params={"frequency": "annual"},
+            params=build_eia_route_query("sales"),
             page_size=2,
             now=datetime(2026, 6, 28, tzinfo=UTC),
             client=client,
@@ -566,3 +706,28 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
     assert body["response"]["frequency"] == "annual"
     assert body["request"]["command"] == "/v2/electricity/retail-sales/data/"
     assert b"test-key" not in result.payload.body
+    assert b"SECRET" not in result.payload.body
+    assert b"SECOND-SECRET" not in result.payload.body
+    assert b"THIRD-SECRET" not in result.payload.body
+    assert body["request"]["params"]["frequency"] == "annual"
+
+
+def test_eia_route_queries_are_annual_explicit_and_fetch_rejects_unsafe_routes() -> None:
+    sales = build_eia_route_query("sales", state_codes=["TX"])
+    generation = build_eia_route_query("generation", state_codes=["TX"])
+    capability = build_eia_route_query("capability", state_codes=["TX"])
+    assert sales["frequency"] == generation["frequency"] == capability["frequency"] == "annual"
+    assert sales["data[0]"] == "sales"
+    assert generation["data[0]"] == "generation"
+    assert generation["facets[sectorid][]"] == "99"
+    assert capability["data[0]"] == "capability"
+    assert all(query["sort[0][column]"] == "period" for query in (sales, generation, capability))
+    assert sales["facets[stateid][]"] == "TX"
+    assert generation["facets[location][]"] == "TX"
+    assert capability["facets[stateId][]"] == "TX"
+
+    connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key=None)
+    with pytest.raises(ValueError, match="route query"):
+        connector.fetch(route_id="sales", params={"frequency": "annual"})
+    with pytest.raises(ValueError, match="externally aggregated"):
+        connector.fetch(route_id="interchange", params={"frequency": "annual"})

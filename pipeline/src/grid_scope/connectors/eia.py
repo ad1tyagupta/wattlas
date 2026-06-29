@@ -24,6 +24,75 @@ EIA_ROUTE_PATHS = {
     "interchange": "electricity/rto/region-data/data/",
 }
 
+_EIA_ROUTE_QUERIES: dict[str, dict[str, str]] = {
+    "sales": {
+        "frequency": "annual",
+        "data[0]": "sales",
+        "facets[sectorid][]": "ALL",
+        "sort[0][column]": "period",
+        "sort[0][direction]": "desc",
+    },
+    "generation": {
+        "frequency": "annual",
+        "data[0]": "generation",
+        "facets[sectorid][]": "99",
+        "sort[0][column]": "period",
+        "sort[0][direction]": "desc",
+    },
+    "capability": {
+        "frequency": "annual",
+        "data[0]": "capability",
+        "facets[producerTypeId][]": "ALL",
+        "facets[fuelTypeId][]": "ALL",
+        "sort[0][column]": "period",
+        "sort[0][direction]": "desc",
+    },
+}
+
+
+def build_eia_route_query(
+    route_id: str, *, state_codes: Iterable[str] = ()
+) -> dict[str, Any]:
+    """Build a reproducible annual EIA query for a supported state route."""
+
+    if route_id not in _EIA_ROUTE_QUERIES:
+        raise ValueError(f"EIA route query is unsupported: {route_id}")
+    query: dict[str, Any] = dict(_EIA_ROUTE_QUERIES[route_id])
+    states = sorted({str(code).strip().upper() for code in state_codes if str(code).strip()})
+    if states:
+        facet = {
+            "sales": "facets[stateid][]",
+            "generation": "facets[location][]",
+            "capability": "facets[stateId][]",
+        }[route_id]
+        query[facet] = states[0] if len(states) == 1 else states
+    return query
+
+
+def _validate_eia_route_query(route_id: str, params: Mapping[str, Any]) -> None:
+    expected = build_eia_route_query(route_id)
+    mismatches = [key for key, value in expected.items() if params.get(key) != value]
+    if mismatches:
+        raise ValueError(
+            f"EIA {route_id} fetch requires a validated annual route query; "
+            f"invalid or missing: {', '.join(sorted(mismatches))}"
+        )
+
+
+_SECRET_KEYS = frozenset({"api_key", "apikey", "token", "authorization"})
+
+
+def _scrub_secrets(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _scrub_secrets(item)
+            for key, item in value.items()
+            if str(key).strip().lower() not in _SECRET_KEYS
+        }
+    if isinstance(value, list):
+        return [_scrub_secrets(item) for item in value]
+    return value
+
 # EIA operational-data fuel IDs. Aggregate codes are deliberately mapped to
 # ``other`` only as a fallback; hierarchy selection below removes them whenever
 # a more specific component is present for the same geography/year/sector.
@@ -44,6 +113,7 @@ _FUEL_TECHNOLOGY = {
     "OG": "gas",
     "OOG": "gas",
     "DFO": "oil",
+    "OIL": "oil",
     "JF": "oil",
     "KER": "oil",
     "PC": "oil",
@@ -53,6 +123,7 @@ _FUEL_TECHNOLOGY = {
     "RFO": "oil",
     "WO": "oil",
     "SUN": "solar",
+    "DPV": "solar",
     "WND": "wind",
     "HYC": "hydro",
     "HPS": "hydro",
@@ -66,6 +137,7 @@ _FUEL_TECHNOLOGY = {
     "SLW": "biomass",
     "WDL": "biomass",
     "WDS": "biomass",
+    "WWW": "biomass",
 }
 
 _FUEL_CHILDREN = {
@@ -269,7 +341,34 @@ def _state_code(row: Mapping[str, Any], *, route_id: str) -> str:
 
 
 def _is_all(value: Any) -> bool:
-    return str(value or "").strip().upper() in {"", "ALL", "TOTAL", "TSN"}
+    return str(value or "").strip().upper() in {"ALL", "TOTAL", "TSN"}
+
+
+def _is_generation_sector_total(value: Any) -> bool:
+    return str(value or "").strip().upper() in {"99", "ALL"}
+
+
+def _is_generation_fuel_total(value: Any) -> bool:
+    return str(value or "").strip().upper() in {"ALL", "TOTAL"}
+
+
+def _is_sales_sector_total(value: Any) -> bool:
+    return str(value or "").strip().upper() in {"ALL", "TOTAL"}
+
+
+def _is_capability_producer_total(value: Any) -> bool:
+    return str(value or "").strip().upper() in {"ALL", "TOTAL", "00"}
+
+
+def _is_capability_fuel_total(value: Any) -> bool:
+    return str(value or "").strip().upper() in {"ALL", "TOTAL", "TSN"}
+
+
+def _fuel_is_aggregate(row: Mapping[str, Any], fuel: str) -> bool:
+    if fuel != "AOR":
+        return fuel in _FUEL_CHILDREN
+    description = str(_get(row, "fuelTypeDescription", "fueltypedescription") or "").lower()
+    return description.startswith("all ") and "renewable" in description
 
 
 def _fuel_descendants(code: str) -> frozenset[str]:
@@ -296,10 +395,10 @@ def _selected_generation_row_indexes(
         if not code:
             continue
         sector = str(_get(row, "sectorid", "sectorId") or "").strip().upper()
-        if not _is_all(sector):
+        if not _is_generation_sector_total(sector):
             continue
         fuel = str(_get(row, "fueltypeid", "fuelTypeId") or "").strip().upper()
-        if _is_all(fuel):
+        if _is_generation_fuel_total(fuel):
             selected.add(index)
             continue
         grouped.setdefault((states[code], _period(row), sector or "ALL"), []).append(
@@ -307,8 +406,10 @@ def _selected_generation_row_indexes(
         )
     for group in grouped.values():
         present_codes = {fuel for _, fuel in group}
+        rows_by_index = {index: rows[index - 1] for index, _ in group}
         for index, fuel in group:
-            if not (_fuel_descendants(fuel) & present_codes):
+            descendants = _fuel_descendants(fuel) if _fuel_is_aggregate(rows_by_index[index], fuel) else frozenset()
+            if not (descendants & present_codes):
                 selected.add(index)
     return selected
 
@@ -354,6 +455,7 @@ def normalize_eia_state(
 
     grouped: dict[tuple[str, int], dict[str, Any]] = {}
     unmapped_authorities: set[str] = set()
+    unknown_fuel_codes: set[str] = set()
 
     # An explicit capability total outranks component rows. Components are only
     # summed below when every row is a unique, non-total producer/fuel cell.
@@ -361,7 +463,9 @@ def normalize_eia_state(
     if route == "capability":
         for row in rows:
             code = _state_code(row, route_id=route)
-            if code and _is_all(_get(row, "producerTypeId", "producertypeid")) and _is_all(
+            if code and _is_capability_producer_total(
+                _get(row, "producerTypeId", "producertypeid")
+            ) and _is_capability_fuel_total(
                 _get(row, "fuelTypeId", "fueltypeid")
             ):
                 capability_totals.add((states[code], _period(row)))
@@ -408,13 +512,13 @@ def normalize_eia_state(
         )
 
         if route == "sales":
-            if not _is_all(_get(row, "sectorid", "sectorId")):
+            if not _is_sales_sector_total(_get(row, "sectorid", "sectorId")):
                 continue
             field, dimension, metric = "demandGwh", "energy", "sales"
             raw_value = _get(row, metric)
             unit = str(_get(row, f"{metric}-units", f"{metric}_units") or "").strip()
         elif route == "generation":
-            if not _is_all(_get(row, "sectorid", "sectorId")):
+            if not _is_generation_sector_total(_get(row, "sectorid", "sectorId")):
                 continue
             if index not in selected_generation_indexes:
                 continue
@@ -426,8 +530,10 @@ def normalize_eia_state(
             metadata = _source_meta(
                 row, facet=facet, route_id=route, payload=payload, series=metric, unit=unit
             )
-            if not _is_all(fuel):
+            if not _is_generation_fuel_total(fuel):
                 technology = _FUEL_TECHNOLOGY.get(fuel, "other")
+                if fuel not in _FUEL_TECHNOLOGY:
+                    unknown_fuel_codes.add(fuel)
                 mix_field = f"generationMixGwh.{technology}"
                 fuel_key = (geography_id, year, fuel)
                 if fuel_key in generation_mix_keys:
@@ -461,11 +567,15 @@ def normalize_eia_state(
             producer = str(_get(row, "producerTypeId", "producertypeid") or "").strip().upper()
             fuel = str(_get(row, "fuelTypeId", "fueltypeid") or "").strip().upper()
             key = (geography_id, year)
-            is_total = _is_all(producer) and _is_all(fuel)
+            is_total = _is_capability_producer_total(
+                producer
+            ) and _is_capability_fuel_total(fuel)
             if key in capability_totals and not is_total:
                 continue
             if not is_total:
-                if _is_all(producer) or _is_all(fuel):
+                if not producer or not fuel:
+                    continue
+                if _is_capability_producer_total(producer) or _is_capability_fuel_total(fuel):
                     # Partial subtotals overlap leaf cells and cannot be safely summed.
                     continue
                 leaf_key = (geography_id, year, producer, fuel)
@@ -578,6 +688,7 @@ def normalize_eia_state(
         }
     if report is not None:
         report["unmappedBalancingAuthorities"] = sorted(unmapped_authorities)
+        report["unknownFuelCodes"] = sorted(unknown_fuel_codes)
     return records
 
 
@@ -605,6 +716,7 @@ class EiaV2Connector:
         page_size: int = 5000,
         now: datetime | None = None,
         client: httpx.Client | None = None,
+        externally_aggregated_annual: bool = False,
     ) -> ConnectorResult:
         checked_at = now or datetime.now(UTC)
         if route_id is not None and route_id not in EIA_ROUTE_PATHS:
@@ -632,6 +744,13 @@ class EiaV2Connector:
                 payload=None,
                 message="configure a public EIA API v2 endpoint to enable state observations",
             )
+        if selected_route == "interchange" and not externally_aggregated_annual:
+            raise ValueError(
+                "direct EIA RTO interchange fetch is unsafe; provide an explicit "
+                "externally aggregated annual contract"
+            )
+        if selected_route in _EIA_ROUTE_QUERIES:
+            _validate_eia_route_query(selected_route, params)
 
         base_query = dict(params)
         if self.api_key:
@@ -673,7 +792,9 @@ class EiaV2Connector:
             assert combined is not None
             combined["response"]["data"] = collected
             combined["response"]["total"] = str(total)
-            body = json.dumps(combined, sort_keys=True, separators=(",", ":")).encode()
+            body = json.dumps(
+                _scrub_secrets(combined), sort_keys=True, separators=(",", ":")
+            ).encode()
         except (httpx.HTTPError, json.JSONDecodeError, ValueError) as error:
             message = str(error)
             if self.api_key:
