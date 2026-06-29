@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "wattlas-regional-demand-methods-v1",
+  "publicDataOnly": true,
+  "defaultComponentWeights": {
+    "activity": 0.55,
+    "population": 0.3,
+    "industrial": 0.15
+  },
+  "sources": [
+    {
+      "id": "ember-yearly-electricity-data",
+      "role": "country electricity control where available",
+      "url": "https://ember-energy.org/data/yearly-electricity-data/",
+      "licence": "CC-BY-4.0"
+    },
+    {
+      "id": "worldpop-global2",
+      "role": "population covariate and population-only fallback",
+      "url": "https://hub.worldpop.org/Global2",
+      "licence": "CC-BY-4.0"
+    }
+  ],
+  "additionalSourceRule": "Official regional observations and optional activity or industrial covariates must carry their own public source IDs in the generated weights artifact.",
+  "methods": {
+    "official": {
+      "methodId": "official-direct-v1",
+      "valueKind": ["observed", "reported"],
+      "uncertainty": "Preserve the published range; use a point range only when the source reports a point value."
+    },
+    "multi_covariate": {
+      "methodId": "adm1-demand-allocation-v1",
+      "valueKind": "estimated",
+      "baseUncertaintyFraction": 0.12,
+      "ageFractionPerYear": 0.01,
+      "maximumUncertaintyFraction": 0.3,
+      "baseConfidence": 82,
+      "confidencePointsLostPerYear": 1.5,
+      "note": "Allocate the residual country control from normalized electricity-activity/night-light, population, and industrial-facility shares. Missing components are renormalized and disclosed."
+    },
+    "population_only": {
+      "methodId": "adm1-demand-allocation-v1",
+      "valueKind": "estimated",
+      "baseUncertaintyFraction": 0.25,
+      "ageFractionPerYear": 0.02,
+      "maximumUncertaintyFraction": 0.5,
+      "baseConfidence": 68,
+      "confidencePointsLostPerYear": 2.5,
+      "note": "Fallback allocation from population share only; uncertainty is deliberately wider and confidence lower."
+    }
+  },
+  "historicalControlRule": "Country controls already include operating data-centre and water loads. Never add them during historical allocation.",
+  "forwardIncrementRule": "Only explicit, sourced, once-only project increments may be added for target years 2026-2031."
+}

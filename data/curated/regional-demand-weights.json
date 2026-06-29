@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "wattlas-regional-demand-weights-v1",
+  "publicDataOnly": true,
+  "defaultComponentWeights": {
+    "activity": 0.55,
+    "population": 0.3,
+    "industrial": 0.15
+  },
+  "sources": [],
+  "records": [],
+  "officialObservationLineage": [],
+  "buildInputs": {
+    "activeGeographyIds": [],
+    "methodVersions": {
+      "schema": "wattlas-regional-demand-weights-v1",
+      "normalization": "country-component-share-v1",
+      "allocation": "adm1-demand-allocation-v1"
+    }
+  },
+  "effectiveInputFingerprint": "sha256:unbuilt",
+  "buildFingerprint": "sha256:unbuilt"
+}
