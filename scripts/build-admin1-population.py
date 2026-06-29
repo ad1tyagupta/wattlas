@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import sys
 
+import rasterio
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "pipeline" / "src"))
@@ -29,6 +31,20 @@ def _filename_source_year(source: Path) -> int | None:
     return next(iter(matches)) if len(matches) == 1 else None
 
 
+def _tagged_source_year(source: Path) -> int | None:
+    with rasterio.open(source) as dataset:
+        tags = {**dataset.tags(), **dataset.tags(1)}
+    candidates: set[int] = set()
+    for key, value in tags.items():
+        if key.lower() not in {"source_year", "sourceyear", "year"}:
+            continue
+        if re.fullmatch(r"(?:19|20|21)\d{2}", str(value).strip()):
+            candidates.add(int(value))
+    if len(candidates) > 1:
+        raise ValueError("WorldPop raster has ambiguous source-year tags")
+    return next(iter(candidates)) if candidates else None
+
+
 def _raster_configuration(
     source: Path,
     years: tuple[int, ...],
@@ -38,12 +54,23 @@ def _raster_configuration(
         if explicit_source_year is not None:
             source_year = explicit_source_year
             method = "explicit_cli"
-        elif inferred_year := _filename_source_year(source):
-            source_year = inferred_year
-            method = "inferred_from_filename"
         else:
-            source_year = min(years)
-            method = "defaulted_to_earliest_target_year"
+            filename_year = _filename_source_year(source)
+            tagged_year = _tagged_source_year(source)
+            candidates = {year for year in (filename_year, tagged_year) if year is not None}
+            if len(candidates) > 1:
+                raise ValueError("WorldPop filename and raster tags disagree on source year")
+            if not candidates:
+                raise ValueError(
+                    "single WorldPop raster has no defensible source year; pass --source-year "
+                    "or add a source_year raster tag"
+                )
+            source_year = next(iter(candidates))
+            method = (
+                "inferred_from_filename"
+                if filename_year is not None
+                else "inferred_from_raster_tags"
+            )
         return (
             {year: source for year in years},
             {year: source_year for year in years},
@@ -59,6 +86,9 @@ def _raster_configuration(
         if len(matches) != 1:
             raise ValueError(f"expected exactly one WorldPop raster for {year}, found {len(matches)}")
         result[year] = matches[0]
+    resolved_paths = [path.resolve() for path in result.values()]
+    if len(set(resolved_paths)) != len(resolved_paths):
+        raise ValueError("one WorldPop raster ambiguously matches multiple source years")
     return (
         result,
         {year: year for year in years},

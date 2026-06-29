@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -13,6 +14,10 @@ from grid_scope.models import ConnectorState
 WORLDPOP_SOURCE_ID = "worldpop-global2"
 WORLDPOP_LICENCE = "CC-BY-4.0"
 WORLDPOP_RELEASE_URL = "https://hub.worldpop.org/Global2"
+
+
+def _is_sha256(value: str | None) -> bool:
+    return value is not None and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
 
 
 def checksum_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -63,7 +68,9 @@ class WorldPopConnector:
         self.url = url
         self.release_id = release_id
         self.source_year = source_year
-        self.expected_checksum_sha256 = expected_checksum_sha256
+        self.expected_checksum_sha256 = (
+            expected_checksum_sha256.lower() if expected_checksum_sha256 else None
+        )
 
     def resolve(self) -> WorldPopResolution:
         if self.path is None and not self.url:
@@ -71,6 +78,12 @@ class WorldPopConnector:
                 ConnectorState.NOT_CONFIGURED,
                 None,
                 "configure a local WorldPop release path or public release URL",
+            )
+        if self.url and not _is_sha256(self.expected_checksum_sha256):
+            return WorldPopResolution(
+                ConnectorState.FAILED,
+                None,
+                "remote WorldPop releases require a pinned SHA-256 checksum",
             )
         if self.path is not None:
             if not self.path.is_file():
@@ -119,6 +132,12 @@ class WorldPopConnector:
 
         if not self.url:
             return WorldPopResolution(ConnectorState.NOT_CONFIGURED, None, "no public URL configured")
+        if not _is_sha256(self.expected_checksum_sha256):
+            return WorldPopResolution(
+                ConnectorState.FAILED,
+                None,
+                "remote WorldPop downloads require a pinned SHA-256 checksum",
+            )
         parsed = urlparse(self.url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return WorldPopResolution(ConnectorState.FAILED, None, "invalid WorldPop release URL")
@@ -134,7 +153,7 @@ class WorldPopConnector:
                             output.write(chunk)
                             digest.update(chunk)
             checksum = digest.hexdigest()
-            if self.expected_checksum_sha256 and checksum != self.expected_checksum_sha256:
+            if checksum != self.expected_checksum_sha256:
                 temporary.unlink(missing_ok=True)
                 return WorldPopResolution(ConnectorState.FAILED, None, "downloaded checksum mismatch")
             temporary.replace(destination)
