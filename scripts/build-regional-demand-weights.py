@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -16,6 +17,7 @@ from grid_scope.regional_demand import (  # noqa: E402
     build_regional_demand_weights,
     write_regional_demand_weights,
 )
+from grid_scope.population import load_population_artifact  # noqa: E402
 
 
 def _rows(path: Path | None) -> list[dict[str, Any]]:
@@ -23,7 +25,16 @@ def _rows(path: Path | None) -> list[dict[str, Any]]:
         return []
     if path.suffix.lower() == ".csv":
         with path.open(newline="", encoding="utf-8-sig") as source:
-            return list(csv.DictReader(source))
+            rows = list(csv.DictReader(source))
+        for row in rows:
+            raw_source_ids = row.get("source_ids")
+            if raw_source_ids is not None:
+                row["source_ids"] = [
+                    value.strip()
+                    for value in re.split(r"[,;|]", raw_source_ids)
+                    if value.strip()
+                ]
+        return rows
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
         payload = payload.get("records")
@@ -59,7 +70,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    population = json.loads(args.population.read_text(encoding="utf-8"))
+    population = load_population_artifact(args.population)
     artifact = build_regional_demand_weights(
         population_artifact=population,
         active_geography_ids=_active_ids(args.boundaries),

@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from grid_scope.population import build_population_artifact, write_population_artifact
 from grid_scope.regional_demand import (
     add_forward_demand_increments,
     allocate_country_demand,
@@ -64,6 +65,32 @@ def test_modelled_regions_reconcile_exactly_to_country_control() -> None:
     assert [item["geographyId"] for item in result] == ["AA-1", "AA-2"]
     assert all(item["valueKind"] == "estimated" for item in result)
     assert all(item["methodGrade"] == "multi_covariate" for item in result)
+
+
+def test_rounding_residual_is_applied_to_highest_positive_weight() -> None:
+    control = 1.8803064618764023e-143
+    shares = [0.5756639685240963, 0.4243360314759036]
+    raw = [control * share / math.fsum(shares) for share in shares]
+    correction = control - math.fsum(raw)
+    assert correction < 0
+    result = allocate_country_demand(
+        country_gwh=control,
+        regions=[
+            {"id": "AA-1", "populationShare": shares[0]},
+            {"id": "AA-2", "populationShare": shares[1]},
+        ],
+    )
+    assert result[0]["demandGwh"]["central"] == raw[0] + correction
+    assert result[1]["demandGwh"]["central"] == raw[1]
+    assert all(item["demandGwh"]["central"] >= 0 for item in result)
+
+
+def test_calculated_uncertainty_range_rejects_float_overflow() -> None:
+    with pytest.raises(ValueError, match="finite nonnegative"):
+        allocate_country_demand(
+            country_gwh=1.7e308,
+            regions=[{"id": "AA-1", "populationShare": 1}],
+        )
 
 
 def test_documented_country_gwh_convenience_api_is_transparent() -> None:
@@ -292,6 +319,12 @@ def test_forward_increment_validates_base_identity_year_and_exact_match() -> Non
         add_forward_demand_increments([base], [increment])
     with pytest.raises(ValueError, match="ordered"):
         add_forward_demand_increments([{**base, "demandGwh": {"low": 110, "central": 100, "high": 90}}], [])
+    with pytest.raises(ValueError, match="source IDs.*list"):
+        add_forward_demand_increments([{**base, "sourceIds": "base-source"}], [])
+    with pytest.raises(ValueError, match="prior increment IDs.*list"):
+        add_forward_demand_increments([{**base, "appliedIncrementIds": "increment-one"}], [])
+    with pytest.raises(ValueError, match="duplicate.*source IDs"):
+        add_forward_demand_increments([{**base, "sourceIds": ["base", "base"]}], [])
 
 
 def test_forward_increment_keeps_prior_once_only_lineage() -> None:
@@ -307,6 +340,24 @@ def test_forward_increment_keeps_prior_once_only_lineage() -> None:
         "sourceIds": ["project-one-source"],
     }])
     assert result[0]["appliedIncrementIds"] == ["project-one-2027", "project-zero-2027"]
+
+
+@pytest.mark.parametrize("bad_source_ids", [[None], [42], [{}], [""], ["source-a", "source-a"]])
+def test_source_ids_require_unique_nonempty_strings(bad_source_ids: list[object]) -> None:
+    with pytest.raises(ValueError, match="source IDs"):
+        allocate_country_demand(
+            country_control={**_control(), "sourceIds": bad_source_ids},
+            regions=[_region("AA-1", population=1)],
+        )
+
+
+def test_country_gwh_convenience_rejects_string_source_ids() -> None:
+    with pytest.raises(ValueError, match="source IDs.*list"):
+        allocate_country_demand(
+            country_gwh=100,
+            source_ids="abc",  # type: ignore[arg-type]
+            regions=[{"id": "AA-1", "populationShare": 1}],
+        )
 
 
 def _population_artifact() -> dict:
@@ -368,22 +419,33 @@ def test_weight_artifact_contains_only_normalized_compact_inputs_and_fingerprint
 
 def test_weight_builder_cli_is_deterministic(tmp_path: Path) -> None:
     population = tmp_path / "population.json"
-    population.write_text(json.dumps(_population_artifact()))
-    boundaries = tmp_path / "boundaries.geojson"
-    boundaries.write_text(json.dumps({"type": "FeatureCollection", "features": [
-        {"type": "Feature", "id": "AA-2", "properties": {"id": "AA-2"}, "geometry": None},
-        {"type": "Feature", "id": "AA-1", "properties": {"id": "AA-1"}, "geometry": None},
-    ]}))
+    fixtures = Path(__file__).parent / "fixtures"
+    source_boundaries = fixtures / "admin1-small.geojson"
+    population_artifact = build_population_artifact(
+        boundaries_path=source_boundaries,
+        raster_paths={2026: fixtures / "worldpop-tiny.tif"},
+        release_id="worldpop-cli-test-v1",
+        source_years_by_target={2026: 2026},
+    )
+    write_population_artifact(population_artifact, population)
+    boundary_payload = json.loads(source_boundaries.read_text())
+    active_ids = {row["geographyId"] for row in population_artifact["records"]}
+    boundary_payload["features"] = [
+        feature for feature in boundary_payload["features"]
+        if feature["properties"]["id"] in active_ids
+    ]
+    boundaries = tmp_path / "active-boundaries.geojson"
+    boundaries.write_text(json.dumps(boundary_payload))
     activity = tmp_path / "activity.csv"
     activity.write_text(
         "geographyId,year,activityShare,sourceId\n"
-        "AA-2,2026,0.7,public-lights\n"
-        "AA-1,2026,0.3,public-lights\n"
+        "AA-RIGHT,2026,0.7,public-lights\n"
+        "AA-LEFT,2026,0.3,public-lights\n"
     )
     official = tmp_path / "official.csv"
     official.write_text(
         "geographyId,country,year,source_ids,method_id,value_kind\n"
-        "AA-1,AA,2026,official-aa,official-direct-v1,reported\n"
+        "AA-LEFT,AA,2026,official-aa,official-direct-v1,reported\n"
     )
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
@@ -398,10 +460,23 @@ def test_weight_builder_cli_is_deterministic(tmp_path: Path) -> None:
         assert completed.returncode == 0, completed.stderr
     assert first.read_bytes() == second.read_bytes()
     payload = json.loads(first.read_text())
-    assert payload["buildInputs"]["populationFingerprint"] == "sha256:population"
-    row = next(item for item in payload["records"] if item["geographyId"] == "AA-1" and item["year"] == 2026)
+    assert payload["buildInputs"]["populationFingerprint"] == population_artifact["buildFingerprint"]
+    row = next(item for item in payload["records"] if item["geographyId"] == "AA-LEFT" and item["year"] == 2026)
     assert row["activityShare"] == pytest.approx(0.3)
     assert payload["officialObservationLineage"][0]["sourceIds"] == ["official-aa"]
+
+    tampered_payload = json.loads(population.read_text())
+    tampered_payload["records"][0]["population"] += 1
+    tampered = tmp_path / "tampered-population.json"
+    tampered.write_text(json.dumps(tampered_payload))
+    rejected = subprocess.run(
+        [sys.executable, "scripts/build-regional-demand-weights.py",
+         "--population", str(tampered), "--boundaries", str(boundaries),
+         "--output", str(tmp_path / "rejected.json")],
+        cwd=root, capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0
+    assert "fingerprint mismatch" in rejected.stderr
 
 
 def test_fallback_fingerprint_is_population_input_order_independent() -> None:

@@ -6,7 +6,7 @@ import json
 import math
 from pathlib import Path
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
 from grid_scope.connectors.licensing import require_redistributable_licence
@@ -104,15 +104,26 @@ def _range(value: object, *, label: str) -> dict[str, float]:
     return {"low": low, "central": central, "high": high}
 
 
+def _id_list(value: object, *, label: str, allow_empty: bool = False) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of unique non-empty strings")
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{label} must contain only non-empty strings")
+        normalized = item.strip()
+        if normalized in seen:
+            raise ValueError(f"duplicate {label}: {normalized}")
+        seen.add(normalized)
+        result.append(normalized)
+    if not result and not allow_empty:
+        raise ValueError(f"{label} requires at least one value")
+    return sorted(result)
+
+
 def _source_ids(value: object, *, label: str) -> list[str]:
-    if isinstance(value, str):
-        value = re.split(r"[,;|]", value)
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise ValueError(f"{label} requires source IDs")
-    result = sorted({str(item).strip() for item in value if str(item).strip()})
-    if not result:
-        raise ValueError(f"{label} requires source IDs")
-    return result
+    return _id_list(value, label=f"{label} source IDs")
 
 
 def _country_control(control: Mapping[str, Any]) -> dict[str, Any]:
@@ -326,7 +337,7 @@ def allocate_country_demand(
     country_gwh: float | None = None,
     country_iso3: str = "ZZZ",
     year: int = 2024,
-    source_ids: Sequence[str] = ("country-control-unspecified",),
+    source_ids: list[str] | None = None,
     official_observations: Iterable[Mapping[str, Any]] = (),
     as_of_year: int | None = None,
     covariate_year: int | None = None,
@@ -345,7 +356,7 @@ def allocate_country_demand(
             "demandGwh": country_gwh,
             "countryIso3": country_iso3,
             "year": year,
-            "sourceIds": list(source_ids),
+            "sourceIds": source_ids if source_ids is not None else ["country-control-unspecified"],
             "valueKind": "reported",
             "methodId": "country-control-unspecified",
             "confidence": 50,
@@ -389,9 +400,27 @@ def allocate_country_demand(
     total_score = math.fsum(scores)
     if residual > tolerance and total_score <= 0:
         raise ValueError("modelled regional weights cannot allocate a nonzero country residual")
-    central_values = [residual * score / total_score if total_score else 0.0 for score in scores]
+    central_values = [residual * (score / total_score) if total_score else 0.0 for score in scores]
     if central_values:
-        central_values[-1] = residual - math.fsum(central_values[:-1])
+        correction = residual - math.fsum(central_values)
+        tolerance = max(
+            math.ulp(residual) * max(2, len(central_values)),
+            abs(residual) * 1e-12,
+        )
+        if not math.isfinite(correction) or abs(correction) > tolerance:
+            raise RuntimeError("ADM1 demand rounding residual exceeds bounded float tolerance")
+        if correction:
+            positive_indices = [index for index, score in enumerate(scores) if score > 0]
+            if not positive_indices:
+                raise RuntimeError("ADM1 demand rounding residual has no positive allocation weight")
+            correction_index = max(
+                positive_indices,
+                key=lambda index: (scores[index], -index),
+            )
+            corrected = central_values[correction_index] + correction
+            if not math.isfinite(corrected) or corrected < 0:
+                raise RuntimeError("ADM1 demand rounding correction would create an invalid allocation")
+            central_values[correction_index] = corrected
 
     output: list[dict[str, Any]] = []
     for geography_id, observation in official.items():
@@ -422,16 +451,17 @@ def allocate_country_demand(
             method_config=method_config,
         )
         coverage = min(control["coverage"], region["coverage"])
+        calculated_range = _range({
+            "low": max(0.0, central * (1 - fraction)),
+            "central": central,
+            "high": central * (1 + fraction),
+        }, label=f"calculated regional demand for {region['geographyId']}")
         output.append({
             "geographyId": region["geographyId"],
             "geographyLevel": "admin_1",
             "countryIso3": control["countryIso3"],
             "year": control["year"],
-            "demandGwh": {
-                "low": max(0.0, central * (1 - fraction)),
-                "central": central,
-                "high": central * (1 + fraction),
-            },
+            "demandGwh": calculated_range,
             "valueKind": "estimated",
             "methodGrade": item["grade"],
             "methodId": ALLOCATION_METHOD_ID,
@@ -482,10 +512,15 @@ def add_forward_demand_increments(
         if key in by_key:
             raise ValueError(f"duplicate base forecast: {geography_id} {base_year}")
         base_ranges[key] = _range(row.get("demandGwh"), label="base forecast demand")
+        _source_ids(row.get("sourceIds"), label="base forecast")
         by_key[key] = row
-        for increment_id in row.get("appliedIncrementIds") or []:
-            normalized_increment_id = str(increment_id).strip()
-            if not normalized_increment_id or normalized_increment_id in already_applied:
+        prior_increment_ids = _id_list(
+            row.get("appliedIncrementIds", []),
+            label="base prior increment IDs",
+            allow_empty=True,
+        )
+        for normalized_increment_id in prior_increment_ids:
+            if normalized_increment_id in already_applied:
                 raise ValueError("base forecasts contain duplicate prior increment lineage")
             already_applied.add(normalized_increment_id)
     normalized: list[dict[str, Any]] = []
@@ -567,9 +602,10 @@ def _component_records(
             "value",
             raw.get("share", raw.get(f"{component}Share", raw.get(f"{component}_share"))),
         )
-        source_id = str(raw.get("sourceId") or raw.get("source_id") or "").strip()
-        if not source_id:
+        raw_source_id = raw.get("sourceId", raw.get("source_id"))
+        if not isinstance(raw_source_id, str) or not raw_source_id.strip():
             raise ValueError(f"{component} record requires a source ID")
+        source_id = raw_source_id.strip()
         result[key] = {
             "value": _finite_nonnegative(value, label=f"{component} value for {geography_id}"),
             "sourceId": source_id,
