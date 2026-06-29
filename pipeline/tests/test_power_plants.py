@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import re
 
 import pytest
 
@@ -724,6 +723,77 @@ def test_summary_id_aliases_preserve_previous_gem_anchor_when_wikidata_arrives()
     assert len(upgraded["idAliases"]) == len(set(upgraded["idAliases"]))
 
 
+def test_long_anchor_ids_are_intrinsically_stable_when_peers_disappear_or_gem_arrives() -> None:
+    common_prefix = "Q" + "Z" * 90
+    first = power_record(
+        id="long-source-a",
+        externalIds={"wikidata": f"{common_prefix}1"},
+        plantId="long-plant-a",
+        name="Long Anchor Alpha",
+        plantName="Long Anchor Alpha",
+        coordinates=[1, 1],
+    )
+    second = power_record(
+        id="long-source-b",
+        externalIds={"wikidata": f"{common_prefix}2"},
+        plantId="long-plant-b",
+        name="Long Anchor Beta",
+        plantName="Long Anchor Beta",
+        coordinates=[20, 20],
+    )
+
+    together = canonicalize_power_plants([first, second])
+    reversed_result = canonicalize_power_plants([second, first])
+    first_alone = canonicalize_power_plants([first])
+    second_alone = canonicalize_power_plants([second])
+    assert together == reversed_result
+    record_ids = {record["canonicalRecordAnchor"]: record["id"] for record in together["records"]}
+    plant_ids = {plant["canonicalAnchor"]: plant["id"] for plant in together["plants"]}
+    second_record_anchor = f"wikidata:{common_prefix}2"
+    second_plant_anchor = f"wikidata:{common_prefix}2"
+    assert first_alone["records"][0]["id"] == record_ids[f"wikidata:{common_prefix}1"]
+    assert first_alone["plants"][0]["id"] == plant_ids[f"wikidata:{common_prefix}1"]
+    assert second_alone["records"][0]["id"] == record_ids[second_record_anchor]
+    assert second_alone["plants"][0]["id"] == plant_ids[second_plant_anchor]
+    assert record_ids[f"wikidata:{common_prefix}1"] != record_ids[second_record_anchor]
+    assert plant_ids[f"wikidata:{common_prefix}1"] != plant_ids[second_plant_anchor]
+
+    gem_enrichment = power_record(
+        id="gem-enrichment",
+        externalIds={"wikidata": f"{common_prefix}1", "gemPlant": "G-LONG-1"},
+        plantId="long-plant-a",
+        sourceIds=["gem-gipt"],
+    )
+    enriched = canonicalize_power_plants([gem_enrichment, first, second])
+    enriched_record = next(
+        record
+        for record in enriched["records"]
+        if record["canonicalRecordAnchor"] == "gemplant:G-LONG-1"
+    )
+    enriched_plant = next(
+        plant
+        for plant in enriched["plants"]
+        if plant["externalIds"].get("gemPlant") == "G-LONG-1"
+    )
+
+    assert record_ids[f"wikidata:{common_prefix}1"] in enriched_record["idAliases"]
+    assert enriched_plant["id"] == plant_ids[f"wikidata:{common_prefix}1"]
+    assert "wattlas-plant-gemplant-g-long-1" in enriched_plant["idAliases"]
+    remaining_record = next(
+        record
+        for record in enriched["records"]
+        if record["canonicalRecordAnchor"] == second_record_anchor
+    )
+    remaining_plant = next(
+        plant for plant in enriched["plants"] if plant["canonicalAnchor"] == second_plant_anchor
+    )
+    assert remaining_record["id"] == record_ids[second_record_anchor]
+    assert remaining_plant["id"] == plant_ids[second_plant_anchor]
+    aliases = [alias for record in enriched["records"] for alias in record.get("idAliases", [])]
+    assert len(aliases) == len(set(aliases))
+    assert not set(aliases) & {record["id"] for record in enriched["records"]}
+
+
 def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
     common_prefix = "Q" + "A" * 80
     first = power_record(
@@ -784,11 +854,7 @@ def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
         for record in before_result["records"]
         for alias in record.get("idAliases", [])
     ]
-    unsuffixed_record_id = (
-        "wattlas-record-wikidata-"
-        + re.sub(r"[^a-z0-9]+", "-", f"{common_prefix}1".casefold()).strip("-")[:64]
-    )
-    assert record_aliases.count(unsuffixed_record_id) == 1
+    assert len(record_aliases) == len(set(record_aliases))
     before_record_ids = sorted(record["id"] for record in before_result["records"])
     after_record_ids = sorted(record["id"] for record in stronger_result["records"])
     assert before_record_ids == after_record_ids

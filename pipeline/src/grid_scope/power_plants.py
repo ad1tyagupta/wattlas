@@ -888,8 +888,22 @@ def _provenance(record: dict[str, Any], field: str) -> dict[str, Any]:
     }
 
 
+def _intrinsic_anchor_slug(
+    namespace: str,
+    identifier: str,
+    *,
+    visible_limit: int,
+) -> str:
+    full_slug = re.sub(r"[^a-z0-9]+", "-", identifier.casefold()).strip("-")
+    if len(full_slug) <= visible_limit:
+        return full_slug
+    digest = sha256(f"{namespace}:{identifier}".encode()).hexdigest()[:10]
+    visible = full_slug[:visible_limit].rstrip("-")
+    return f"{visible}-{digest}" if visible else digest
+
+
 def _record_anchor_id(namespace: str, identifier: str) -> str | None:
-    slug = re.sub(r"[^a-z0-9]+", "-", identifier.casefold()).strip("-")[:64]
+    slug = _intrinsic_anchor_slug(namespace, identifier, visible_limit=64)
     return f"wattlas-record-{namespace}-{slug}" if slug else None
 
 
@@ -1299,7 +1313,7 @@ def _capacity_account(
 
 
 def _anchor_id(namespace: str, identifier: str) -> str | None:
-    slug = re.sub(r"[^a-z0-9]+", "-", identifier.casefold()).strip("-")[:48]
+    slug = _intrinsic_anchor_slug(namespace, identifier, visible_limit=48)
     return f"wattlas-plant-{namespace}-{slug}" if slug else None
 
 
