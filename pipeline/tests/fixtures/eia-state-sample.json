@@ -1,57 +1,133 @@
 {
-  "response": {
-    "frequency": "annual",
-    "data": [
-      {
-        "period": "2024",
-        "stateid": "TX",
-        "series": "sales",
-        "value": "82400000",
-        "unit": "MWh",
-        "series-description": "Total retail sales"
-      },
-      {
-        "period": "2024",
-        "stateid": "TX",
-        "series": "generation",
-        "value": "75000000",
-        "unit": "MWh",
-        "fueltypeid": "ALL",
-        "series-description": "Net generation"
-      },
-      {
-        "period": "2024",
-        "stateid": "TX",
-        "series": "generation",
-        "value": "20000000",
-        "unit": "MWh",
-        "fueltypeid": "NG",
-        "series-description": "Net generation from natural gas"
-      },
-      {
-        "period": "2024",
-        "stateid": "TX",
-        "series": "capability",
-        "value": "152000",
-        "unit": "MW",
-        "series-description": "Net summer capability"
-      },
-      {
-        "period": "2024",
-        "stateid": "TX",
-        "series": "peak-demand",
-        "value": "86100",
-        "unit": "MW",
-        "series-description": "Annual peak demand"
-      },
-      {
-        "period": "2024",
-        "balancingAuthority": "ERCO",
-        "series": "net-interchange",
-        "value": "7700000",
-        "unit": "MWh",
-        "series-description": "Balancing authority net interchange"
-      }
-    ]
+  "sales": {
+    "apiVersion": "2.1.0",
+    "request": {"command": "/v2/electricity/retail-sales/data/"},
+    "response": {
+      "frequency": "annual",
+      "dateFormat": "YYYY",
+      "total": "2",
+      "data": [
+        {
+          "period": "2024",
+          "stateid": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "ALL",
+          "sectorName": "all sectors",
+          "sales": "82400",
+          "sales-units": "million kilowatt hours"
+        },
+        {
+          "period": "2024",
+          "stateid": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "RES",
+          "sectorName": "residential",
+          "sales": "30000",
+          "sales-units": "million kilowatt hours"
+        }
+      ]
+    }
+  },
+  "generation": {
+    "apiVersion": "2.1.0",
+    "request": {"command": "/v2/electricity/electric-power-operational-data/data/"},
+    "response": {
+      "frequency": "annual",
+      "dateFormat": "YYYY",
+      "total": "4",
+      "data": [
+        {
+          "period": "2024",
+          "location": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "ALL",
+          "sectorDescription": "All Sectors",
+          "fueltypeid": "ALL",
+          "fuelTypeDescription": "All fuels",
+          "generation": "75000",
+          "generation-units": "thousand megawatthours"
+        },
+        {
+          "period": "2024",
+          "location": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "ALL",
+          "sectorDescription": "All Sectors",
+          "fueltypeid": "NG",
+          "fuelTypeDescription": "Natural Gas",
+          "generation": "20000",
+          "generation-units": "thousand megawatthours"
+        },
+        {
+          "period": "2024",
+          "location": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "ALL",
+          "sectorDescription": "All Sectors",
+          "fueltypeid": "SUN",
+          "fuelTypeDescription": "Solar",
+          "generation": "15000",
+          "generation-units": "thousand megawatthours"
+        },
+        {
+          "period": "2024",
+          "location": "TX",
+          "stateDescription": "Texas",
+          "sectorid": "IPP",
+          "sectorDescription": "Independent power producers",
+          "fueltypeid": "NG",
+          "fuelTypeDescription": "Natural Gas",
+          "generation": "12000",
+          "generation-units": "thousand megawatthours"
+        }
+      ]
+    }
+  },
+  "capability": {
+    "apiVersion": "2.1.0",
+    "request": {"command": "/v2/electricity/state-electricity-profiles/capability/data/"},
+    "response": {
+      "frequency": "annual",
+      "dateFormat": "YYYY",
+      "total": "2",
+      "data": [
+        {
+          "period": "2024",
+          "stateId": "TX",
+          "producerTypeId": "ALL",
+          "fuelTypeId": "ALL",
+          "capability": "152000",
+          "capability-units": "megawatts"
+        },
+        {
+          "period": "2024",
+          "stateId": "TX",
+          "producerTypeId": "ALL",
+          "fuelTypeId": "NG",
+          "capability": "85000",
+          "capability-units": "megawatts"
+        }
+      ]
+    }
+  },
+  "interchange": {
+    "apiVersion": "2.1.0",
+    "request": {"command": "/v2/electricity/rto/region-data/data/"},
+    "response": {
+      "frequency": "annual",
+      "dateFormat": "YYYY",
+      "total": "1",
+      "data": [
+        {
+          "period": "2024",
+          "respondent": "ERCO",
+          "respondent-name": "Electric Reliability Council of Texas",
+          "type": "TI",
+          "value": "7700000",
+          "value-units": "megawatthours",
+          "preAggregatedAnnual": true
+        }
+      ]
+    }
   }
 }

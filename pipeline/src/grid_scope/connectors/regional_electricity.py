@@ -16,7 +16,7 @@ ENERGY_FIELDS = (
     "netInterchangeGwh",
     "observedUnmetDemandGwh",
 )
-POWER_FIELDS = ("peakDemandMw", "installedCapacityMw")
+POWER_FIELDS = ("peakDemandMw", "installedCapacityMw", "dependableCapacityMw")
 SCALAR_FIELDS = ENERGY_FIELDS + POWER_FIELDS
 
 SOURCE_RANK = {
@@ -27,8 +27,32 @@ SOURCE_RANK = {
     "modelled": 1,
 }
 
-_ENERGY_FACTORS_TO_GWH = {"MWh": 0.001, "GWh": 1.0, "TWh": 1000.0}
-_POWER_FACTORS_TO_MW = {"MW": 1.0}
+_ENERGY_FACTORS_TO_GWH = {
+    "mwh": 0.001,
+    "megawatt hour": 0.001,
+    "megawatt hours": 0.001,
+    "megawatthour": 0.001,
+    "megawatthours": 0.001,
+    "gwh": 1.0,
+    "gigawatt hour": 1.0,
+    "gigawatt hours": 1.0,
+    "twh": 1000.0,
+    "terawatt hour": 1000.0,
+    "terawatt hours": 1000.0,
+    "million kilowatt hour": 1.0,
+    "million kilowatt hours": 1.0,
+    "million kilowatthour": 1.0,
+    "million kilowatthours": 1.0,
+    "thousand megawatt hour": 1.0,
+    "thousand megawatt hours": 1.0,
+    "thousand megawatthour": 1.0,
+    "thousand megawatthours": 1.0,
+}
+_POWER_FACTORS_TO_MW = {
+    "mw": 1.0,
+    "megawatt": 1.0,
+    "megawatts": 1.0,
+}
 _GENERATION_TECHNOLOGIES = {
     "solar", "wind", "hydro", "nuclear", "gas", "coal", "oil",
     "biomass", "geothermal", "other",
@@ -38,7 +62,8 @@ _GENERATION_TECHNOLOGIES = {
 def normalize_metric_value(value: Any, *, unit: str, dimension: str) -> float | None:
     """Convert supported public-source units to GWh or MW without inference."""
 
-    normalized_unit = str(unit).strip()
+    source_unit = str(unit).strip()
+    normalized_unit = re.sub(r"[^a-z0-9]+", " ", source_unit.lower()).strip()
     if dimension == "energy":
         factors = _ENERGY_FACTORS_TO_GWH
         incompatible = _POWER_FACTORS_TO_MW
@@ -48,11 +73,11 @@ def normalize_metric_value(value: Any, *, unit: str, dimension: str) -> float | 
     else:
         raise ValueError(f"unsupported metric dimension: {dimension}")
     if normalized_unit in incompatible:
-        raise ValueError(f"{dimension} metric is incompatible with unit {normalized_unit}")
+        raise ValueError(f"{dimension} metric is incompatible with unit {source_unit}")
     if (value is None or str(value).strip() == "") and not normalized_unit:
         return None
     if normalized_unit not in factors:
-        raise ValueError(f"unsupported {dimension} unit: {normalized_unit or '<missing>'}")
+        raise ValueError(f"unsupported {dimension} unit: {source_unit or '<missing>'}")
     if value is None or str(value).strip() == "":
         return None
     try:
@@ -233,6 +258,7 @@ def load_curated_regional_observations(
             "netInterchangeGwh": interchange,
             "observedUnmetDemandGwh": _nonnegative(unmet, field="observed unmet demand", row_number=row_number),
             "installedCapacityMw": None,
+            "dependableCapacityMw": None,
             "generationMixGwh": mix,
             "sourceIds": [str(row["source_id"]).strip()],
             "sourceId": str(row["source_id"]).strip(),

@@ -56,15 +56,19 @@ def test_country_controls_cannot_be_merged_as_adm1_observations() -> None:
 
 
 def test_eia_state_balance_keeps_interchange_and_unknown_unmet_demand_separate() -> None:
-    payload = json.loads((FIXTURES / "eia-state-sample.json").read_text())
-    records = normalize_eia_state(
-        payload,
-        state_mapping={"TX": "US-TEXAS"},
-        active_geography_ids={"US-TEXAS"},
-        balancing_authority_mapping={"ERCO": "US-TEXAS"},
-        source_url="https://api.eia.gov/v2/electricity/",
-        retrieved_at="2026-06-28",
-    )
+    payloads = json.loads((FIXTURES / "eia-state-sample.json").read_text())
+    normalized = []
+    for route_id, payload in payloads.items():
+        normalized.extend(normalize_eia_state(
+            payload,
+            route_id=route_id,
+            state_mapping={"TX": "US-TEXAS"},
+            active_geography_ids={"US-TEXAS"},
+            balancing_authority_mapping={"ERCO": "US-TEXAS"},
+            source_url="https://api.eia.gov/v2/electricity/",
+            retrieved_at="2026-06-28",
+        ))
+    records = merge_regional_observations(normalized)
 
     assert len(records) == 1
     record = records[0]
@@ -74,25 +78,123 @@ def test_eia_state_balance_keeps_interchange_and_unknown_unmet_demand_separate()
     assert record["localGenerationGwh"] == 75_000
     assert record["netInterchangeGwh"] == 7_700
     assert record["observedUnmetDemandGwh"] is None
-    assert record["installedCapacityMw"] == 152_000
-    assert record["peakDemandMw"] == 86_100
-    assert record["generationMixGwh"] == {"gas": 20_000}
-    assert record["sourceSeries"]["netInterchangeGwh"]["facet"] == "ERCO"
+    assert record["installedCapacityMw"] is None
+    assert record["dependableCapacityMw"] == 152_000
+    assert record["peakDemandMw"] is None
+    assert record["generationMixGwh"] == {"gas": 20_000, "solar": 15_000}
+    assert record["fieldProvenance"]["netInterchangeGwh"]["sourceSeries"]["facet"] == "ERCO"
+    assert record["fieldProvenance"]["demandGwh"]["sourceSeries"]["routeId"] == "sales"
+    assert record["fieldProvenance"]["localGenerationGwh"]["sourceSeries"]["facet"] == "TX"
+    assert record["fieldProvenance"]["localGenerationGwh"]["sourceSeries"]["apiVersion"] == "2.1.0"
+    assert record["fieldProvenance"]["dependableCapacityMw"]["sourceSeries"]["routeId"] == "capability"
     assert record["sourceIds"] == ["eia-api-v2"]
     assert record["licence"] == "US-PUBLIC-DOMAIN"
     assert record["freshnessDays"] == 544
 
 
 def test_eia_balancing_authority_interchange_is_not_guessed_from_state() -> None:
-    payload = json.loads((FIXTURES / "eia-state-sample.json").read_text())
+    payload = json.loads((FIXTURES / "eia-state-sample.json").read_text())["interchange"]
+    report: dict = {}
     records = normalize_eia_state(
         payload,
+        route_id="interchange",
         state_mapping={"TX": "US-TEXAS"},
         active_geography_ids={"US-TEXAS"},
         source_url="https://api.eia.gov/v2/electricity/",
+        report=report,
     )
-    assert records[0]["netInterchangeGwh"] is None
-    assert records[0]["unmappedBalancingAuthorities"] == ["ERCO"]
+    assert records == []
+    assert report["unmappedBalancingAuthorities"] == ["ERCO"]
+
+
+def test_eia_real_units_are_exact_and_incompatible_hourly_power_is_rejected() -> None:
+    assert normalize_metric_value(
+        "82", unit="Million kilowatt-hours", dimension="energy"
+    ) == 82
+    assert normalize_metric_value(
+        "82", unit="million kilowatthours", dimension="energy"
+    ) == 82
+    assert normalize_metric_value(
+        "75", unit="thousand megawatt hours", dimension="energy"
+    ) == 75
+    assert normalize_metric_value("152", unit="megawatts", dimension="power") == 152
+
+    hourly = {
+        "apiVersion": "2.1.0",
+        "response": {
+            "frequency": "hourly",
+            "dateFormat": "YYYY-MM-DDTHH24",
+            "data": [{
+                "period": "2024-01-01T00", "respondent": "ERCO", "type": "TI",
+                "value": "100", "value-units": "megawatts",
+            }],
+        },
+    }
+    with pytest.raises(ValueError, match="annual.*energy|hourly"):
+        normalize_eia_state(
+            hourly,
+            route_id="interchange",
+            state_mapping={"TX": "US-TEXAS"},
+            active_geography_ids={"US-TEXAS"},
+            balancing_authority_mapping={"ERCO": "US-TEXAS"},
+        )
+
+
+def test_eia_generation_location_requires_an_explicit_active_mapping() -> None:
+    generation = json.loads((FIXTURES / "eia-state-sample.json").read_text())["generation"]
+    with pytest.raises(ValueError, match="unmapped source region codes.*TX"):
+        normalize_eia_state(
+            generation,
+            route_id="generation",
+            state_mapping={"CA": "US-CALIFORNIA"},
+            active_geography_ids={"US-CALIFORNIA"},
+        )
+
+
+def test_eia_capability_safely_sums_unique_leaf_cells_without_creating_zero() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [
+                {"period": "2024", "stateId": "TX", "producerTypeId": "IPP",
+                 "fuelTypeId": "NG", "capability": "100", "capability-units": "megawatts"},
+                {"period": "2024", "stateId": "TX", "producerTypeId": "IPP",
+                 "fuelTypeId": "SUN", "capability": "", "capability-units": "megawatts"},
+            ],
+        },
+    }
+    record = normalize_eia_state(
+        payload,
+        route_id="capability",
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["dependableCapacityMw"] == 100
+    assert len(record["sourceSeries"]["dependableCapacityMw"]["aggregatedFacets"]) == 2
+
+
+def test_synthetic_eia_series_remain_a_backward_compatible_fallback() -> None:
+    payload = {
+        "response": {
+            "frequency": "annual",
+            "data": [
+                {"period": "2024", "stateid": "TX", "series": "sales",
+                 "value": "1000", "unit": "MWh"},
+                {"period": "2024", "stateid": "TX", "series": "generation",
+                 "fueltypeid": "ALL", "value": "900", "unit": "MWh"},
+                {"period": "2024", "stateid": "TX", "series": "generation",
+                 "fueltypeid": "NG", "value": "600", "unit": "MWh"},
+            ],
+        },
+    }
+    record = normalize_eia_state(
+        payload,
+        state_mapping={"TX": "US-TEXAS"},
+        active_geography_ids={"US-TEXAS"},
+    )[0]
+    assert record["demandGwh"] == 1
+    assert record["localGenerationGwh"] == 0.9
+    assert record["generationMixGwh"] == {"gas": 0.6}
 
 
 @pytest.mark.parametrize(
@@ -233,21 +335,12 @@ def test_merge_is_field_by_field_official_first_and_order_independent() -> None:
 
 
 def test_separate_eia_series_merge_without_erasing_other_official_fields() -> None:
-    payload = json.loads((FIXTURES / "eia-state-sample.json").read_text())
-    rows = payload["response"]["data"]
+    payloads = json.loads((FIXTURES / "eia-state-sample.json").read_text())
     normalized = []
     for series in ("sales", "generation"):
-        series_payload = {
-            "response": {
-                "frequency": "annual",
-                "data": [
-                    row for row in rows
-                    if row["series"] == series and row.get("fueltypeid", "ALL") == "ALL"
-                ],
-            }
-        }
         normalized.extend(normalize_eia_state(
-            series_payload,
+            payloads[series],
+            route_id=series,
             state_mapping={"TX": "US-TEXAS"},
             active_geography_ids={"US-TEXAS"},
         ))
@@ -288,13 +381,26 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requested.append(request)
-        return httpx.Response(200, json={"response": {"frequency": "annual", "data": []}})
+        offset = int(request.url.params["offset"])
+        rows = [
+            {"period": "2024", "stateid": code, "sectorid": "ALL", "sales": "1",
+             "sales-units": "million kilowatt hours"}
+            for code in (["TX", "CA"] if offset == 0 else ["NY"])
+        ]
+        return httpx.Response(200, json={
+            "apiVersion": "2.1.0",
+            "request": {"command": "/v2/electricity/retail-sales/data/"},
+            "response": {
+                "frequency": "annual", "dateFormat": "YYYY", "total": "3", "data": rows,
+            },
+        })
 
     connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key="test-key")
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = connector.fetch(
-            path="electricity/retail-sales/data/",
+            route_id="sales",
             params={"frequency": "annual"},
+            page_size=2,
             now=datetime(2026, 6, 28, tzinfo=UTC),
             client=client,
         )
@@ -303,4 +409,11 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
     assert result.payload is not None
     assert requested[0].url.params["frequency"] == "annual"
     assert requested[0].url.params["api_key"] == "test-key"
+    assert [request.url.params["offset"] for request in requested] == ["0", "2"]
+    body = json.loads(result.payload.body)
+    assert len(body["response"]["data"]) == 3
+    assert body["response"]["data"][0]["_routeId"] == "sales"
+    assert body["apiVersion"] == "2.1.0"
+    assert body["response"]["frequency"] == "annual"
+    assert body["request"]["command"] == "/v2/electricity/retail-sales/data/"
     assert b"test-key" not in result.payload.body
