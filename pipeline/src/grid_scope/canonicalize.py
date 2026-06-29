@@ -139,12 +139,101 @@ def _similar_asset(first: dict, second: dict, aliases: dict[str, str]) -> bool:
     second_mw = (second.get("demandMw") or {}).get("central")
     if first_mw and second_mw and not 0.8 <= first_mw / second_mw <= 1.25:
         return False
-    first_tokens = set(_normalized_text(first.get("name", ""), aliases).split())
-    second_tokens = set(_normalized_text(second.get("name", ""), aliases).split())
-    if not first_tokens or not second_tokens:
+    first_signature = _asset_name_signature(first, aliases)
+    second_signature = _asset_name_signature(second, aliases)
+    if not first_signature or first_signature != second_signature:
         return False
-    similarity = len(first_tokens & second_tokens) / len(first_tokens | second_tokens)
-    return similarity >= 0.6
+    return True
+
+
+def _asset_name_signature(record: dict[str, Any], aliases: dict[str, str]) -> tuple[str, ...]:
+    return tuple(sorted(_normalized_text(record.get("name", ""), aliases).split()))
+
+
+def _asset_capacity_band(record: dict[str, Any]) -> int | None:
+    central = (record.get("demandMw") or {}).get("central")
+    if central is None:
+        return None
+    capacity = float(central)
+    if not math.isfinite(capacity) or capacity < 0:
+        return None
+    if capacity == 0:
+        return 0
+    return int(math.floor(math.log(capacity) / math.log(1.25)))
+
+
+def _asset_spatial_cell(record: dict[str, Any]) -> tuple[int, int] | None:
+    coordinates = record.get("coordinates")
+    if not coordinates:
+        return None
+    return math.floor(float(coordinates[0])), math.floor(float(coordinates[1]))
+
+
+def _asset_fuzzy_key(
+    record: dict[str, Any], aliases: dict[str, str]
+) -> tuple[str, str, str, tuple[str, ...], tuple[int, int], int, int] | None:
+    country = str(record.get("country") or "")
+    category = str(record.get("category") or "")
+    operator = _normalized_text(record.get("operator", ""), aliases)
+    signature = _asset_name_signature(record, aliases)
+    cell = _asset_spatial_cell(record)
+    target_year = record.get("targetYear")
+    capacity_band = _asset_capacity_band(record)
+    if (
+        not country
+        or not category
+        or not operator
+        or not signature
+        or cell is None
+        or not isinstance(target_year, int)
+        or capacity_band is None
+    ):
+        return None
+    return country, category, operator, signature, cell, target_year, capacity_band
+
+
+def _asset_candidate_keys(
+    record: dict[str, Any], aliases: dict[str, str]
+) -> list[tuple[Any, ...]]:
+    base = _asset_fuzzy_key(record, aliases)
+    if base is None:
+        return []
+    country, category, operator, signature, cell, target_year, capacity_band = base
+    return [
+        (
+            country,
+            category,
+            operator,
+            signature,
+            cell[0] + longitude_offset,
+            cell[1] + latitude_offset,
+            target_year + year_offset,
+            capacity_band + capacity_offset,
+        )
+        for longitude_offset in (-1, 0, 1)
+        for latitude_offset in (-1, 0, 1)
+        for year_offset in (-1, 0, 1)
+        for capacity_offset in (-1, 0, 1)
+    ]
+
+
+def _asset_insertion_key(
+    record: dict[str, Any], aliases: dict[str, str]
+) -> tuple[Any, ...] | None:
+    base = _asset_fuzzy_key(record, aliases)
+    if base is None:
+        return None
+    country, category, operator, signature, cell, target_year, capacity_band = base
+    return (
+        country,
+        category,
+        operator,
+        signature,
+        cell[0],
+        cell[1],
+        target_year,
+        capacity_band,
+    )
 
 
 @dataclass
@@ -236,11 +325,45 @@ def canonicalize_assets(records: list[dict], *, aliases: dict[str, str] | None =
     normalized = [_normalize_asset_lineage(record) for record in records]
     normalized.sort(key=_stable_json)
     groups = _DisjointSet.create(len(normalized))
-    for first_index, first in enumerate(normalized):
-        for second_index in range(first_index + 1, len(normalized)):
-            second = normalized[second_index]
-            if _shared_external_id(first, second) or _similar_asset(first, second, alias_map):
-                groups.union(first_index, second_index)
+    exact_index: dict[tuple[str, str], set[int]] = {}
+    fuzzy_index: dict[tuple[Any, ...], dict[int, int]] = {}
+
+    for index, record in enumerate(normalized):
+        exact_candidates: set[int] = set()
+        for token in record.get("externalIds", {}).items():
+            roots = {groups.find(candidate) for candidate in exact_index.get(token, set())}
+            exact_index[token] = roots
+            exact_candidates.update(roots)
+        for candidate in sorted(exact_candidates):
+            groups.union(index, candidate)
+
+        fuzzy_candidates: dict[int, int] = {}
+        candidate_keys = _asset_candidate_keys(record, alias_map)
+        for key in candidate_keys:
+            representatives = {
+                groups.find(candidate): candidate
+                for candidate in fuzzy_index.get(key, {}).values()
+            }
+            fuzzy_index[key] = representatives
+            fuzzy_candidates.update(representatives)
+        for candidate in sorted(fuzzy_candidates.values()):
+            if groups.find(index) != groups.find(candidate) and _similar_asset(
+                record, normalized[candidate], alias_map
+            ):
+                groups.union(index, candidate)
+
+        for token in record.get("externalIds", {}).items():
+            roots = {groups.find(candidate) for candidate in exact_index.get(token, set())}
+            roots.add(groups.find(index))
+            exact_index[token] = roots
+        insertion_key = _asset_insertion_key(record, alias_map)
+        if insertion_key is not None:
+            representatives = {
+                groups.find(candidate): candidate
+                for candidate in fuzzy_index.get(insertion_key, {}).values()
+            }
+            representatives.setdefault(groups.find(index), index)
+            fuzzy_index[insertion_key] = representatives
     clusters: dict[int, list[dict[str, Any]]] = {}
     for index, record in enumerate(normalized):
         clusters.setdefault(groups.find(index), []).append(record)
@@ -326,9 +449,20 @@ def assign_asset_geography(
     asset: dict,
     geographies: list[dict] | GeographyIndex,
 ) -> str:
+    matches = matching_asset_geographies(asset, geographies)
+    if not matches:
+        return asset["geographyId"]
+    best = matches[0]
+    return best.get("properties", {}).get("id") or best.get("id") or asset["geographyId"]
+
+
+def matching_asset_geographies(
+    asset: dict,
+    geographies: list[dict] | GeographyIndex,
+) -> list[dict]:
     coordinates = asset.get("coordinates")
     if asset.get("locationPrecision") != "exact" or not coordinates:
-        return asset["geographyId"]
+        return []
     if isinstance(geographies, GeographyIndex):
         matches = geographies.matching_features(coordinates)
     else:
@@ -337,10 +471,7 @@ def assign_asset_geography(
             for feature in geographies
             if _contains(feature.get("geometry") or {}, coordinates)
         ]
-    if not matches:
-        return asset["geographyId"]
-    best = sorted(matches, key=_geography_sort_key)[0]
-    return best.get("properties", {}).get("id") or best.get("id") or asset["geographyId"]
+    return sorted(matches, key=_geography_sort_key)
 
 
 def assign_asset_country(asset: dict, countries: list[dict]) -> str | None:

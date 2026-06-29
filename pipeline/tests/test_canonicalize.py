@@ -1,3 +1,4 @@
+import grid_scope.canonicalize as canonicalize
 from grid_scope.canonicalize import assign_asset_country, assign_asset_geography, canonicalize_assets
 from grid_scope.storage import RawCaptureStore
 
@@ -210,6 +211,35 @@ def test_equal_rank_asset_merge_is_input_order_independent_and_preserves_id_conf
 
     assert forward == reverse
     assert forward["externalIdAliases"]["operator"] == ["OP-A", "OP-B"]
+
+
+def test_dense_generic_asset_block_avoids_all_pairs(
+    monkeypatch,
+) -> None:
+    comparison_count = 0
+    original = canonicalize._similar_asset
+
+    def counted(first: dict, second: dict, aliases: dict[str, str]) -> bool:
+        nonlocal comparison_count
+        comparison_count += 1
+        return original(first, second, aliases)
+
+    monkeypatch.setattr(canonicalize, "_similar_asset", counted)
+    records = [
+        asset(
+            id=f"solar-campus-{index}",
+            name=f"Solar Compute Campus {index}",
+            operator="Dense Operator",
+            coordinates=[10.001 + (index % 10) * 0.0001, 20.001],
+            externalIds={},
+        )
+        for index in range(2_000)
+    ]
+
+    result = canonicalize_assets(records)
+
+    assert len(result) == 2_000
+    assert comparison_count < 20_000
 
 
 def test_geography_assignment_respects_polygon_holes() -> None:
