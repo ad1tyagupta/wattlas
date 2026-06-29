@@ -173,6 +173,84 @@ def test_equal_values_from_different_external_id_namespaces_do_not_merge() -> No
     assert len(canonicalize_assets([planning, osm])) == 2
 
 
+def test_null_and_nonfinite_lineage_ids_are_filtered_not_stringified() -> None:
+    record = asset(
+        externalIds={
+            "planning": None,
+            "nan": float("nan"),
+            "infinity": float("inf"),
+            "osm": "way/42",
+        },
+        sourceIds=[None, float("nan"), float("inf"), "source-a"],
+    )
+
+    canonical = canonicalize_assets([record])[0]
+
+    assert canonical["externalIds"] == {"osm": "way/42"}
+    assert canonical["sourceIds"] == ["source-a"]
+    assert "None" not in canonical["sourceIds"]
+
+
+def test_equal_rank_asset_merge_is_input_order_independent_and_preserves_id_conflicts() -> None:
+    first = asset(
+        id="z-record",
+        name="Zulu name",
+        externalIds={"planning": "PLAN-1", "operator": "OP-A"},
+        sourceIds=["z-source"],
+    )
+    second = asset(
+        id="a-record",
+        name="Alpha name",
+        externalIds={"planning": "PLAN-1", "operator": "OP-B"},
+        sourceIds=["a-source"],
+    )
+
+    forward = canonicalize_assets([first, second])[0]
+    reverse = canonicalize_assets([second, first])[0]
+
+    assert forward == reverse
+    assert forward["externalIdAliases"]["operator"] == ["OP-A", "OP-B"]
+
+
+def test_geography_assignment_respects_polygon_holes() -> None:
+    geographies = [
+        {
+            "type": "Feature",
+            "id": "DONUT",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                    [[4, 4], [6, 4], [6, 6], [4, 6], [4, 4]],
+                ],
+            },
+            "properties": {"id": "DONUT", "level": "admin_1"},
+        }
+    ]
+
+    assert assign_asset_geography(asset(geographyId="BASE", coordinates=[5, 5], locationPrecision="exact"), geographies) == "BASE"
+    assert assign_asset_geography(asset(geographyId="BASE", coordinates=[2, 2], locationPrecision="exact"), geographies) == "DONUT"
+
+
+def test_equal_depth_geography_overlap_uses_stable_parent_and_id_tie_break() -> None:
+    first = {
+        "type": "Feature",
+        "id": "B",
+        "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]},
+        "properties": {"id": "B", "parentId": "P", "level": "admin_1"},
+    }
+    second = {
+        "type": "Feature",
+        "id": "A",
+        "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]},
+        "properties": {"id": "A", "parentId": "P", "level": "admin_1"},
+    }
+    record = asset(geographyId="BASE", coordinates=[1, 1], locationPrecision="exact")
+
+    assert assign_asset_geography(record, [first, second]) == "A"
+    assert assign_asset_geography(record, [second, first]) == "A"
+
+
 def test_canonical_assets_round_trip_through_store(tmp_path) -> None:
     store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
     records = canonicalize_assets([asset()])

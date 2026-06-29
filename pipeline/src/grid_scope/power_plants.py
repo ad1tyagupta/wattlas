@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 import math
 import re
 from typing import Any, Iterable
 
-from grid_scope.canonicalize import _distance_km, assign_asset_geography
+from grid_scope.canonicalize import (
+    GeographyIndex,
+    _distance_km,
+    assign_asset_geography,
+    build_geography_index,
+    canonical_identifier,
+    normalize_external_ids,
+    normalize_source_ids,
+)
 
 
 SOURCE_RANK = {
@@ -55,28 +64,7 @@ _FIELD_KIND_NAMES = {
     "dependableCapacityMw": "dependableCapacityValueKind",
     "annualGenerationGwh": "generationValueKind",
 }
-
-
-@dataclass
-class _DisjointSet:
-    parents: list[int]
-
-    @classmethod
-    def create(cls, size: int) -> "_DisjointSet":
-        return cls(list(range(size)))
-
-    def find(self, index: int) -> int:
-        parent = self.parents[index]
-        if parent != index:
-            self.parents[index] = self.find(parent)
-        return self.parents[index]
-
-    def union(self, first: int, second: int) -> None:
-        first_root = self.find(first)
-        second_root = self.find(second)
-        if first_root != second_root:
-            lower, higher = sorted((first_root, second_root))
-            self.parents[higher] = lower
+_COMPANION_KIND_FIELDS = set(_FIELD_KIND_NAMES.values())
 
 
 def _clean_text(value: Any) -> str | None:
@@ -88,6 +76,10 @@ def _clean_text(value: Any) -> str | None:
 
 def _key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _namespace_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
 
 def _normalized_text(value: Any, aliases: dict[str, str]) -> str:
@@ -122,13 +114,11 @@ def _normalize_lifecycle(record: dict[str, Any]) -> tuple[str, str | None]:
         "operational": "operational",
         "construction": "under_construction",
         "under construction": "under_construction",
-        "under_construction": "under_construction",
         "planned": "announced",
         "proposed": "announced",
         "pre construction": "announced",
         "announced": "announced",
         "planning filed": "planning_filed",
-        "planning_filed": "planning_filed",
         "permitted": "permitted",
         "mothballed": "paused",
         "mothball": "paused",
@@ -172,19 +162,129 @@ def _normalize_range(value: Any, *, field: str) -> dict[str, float] | None:
     return values
 
 
-def _normalize_external_ids(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    normalized = {
-        str(namespace).strip(): str(external_id).strip()
-        for namespace, external_id in value.items()
-        if str(namespace).strip() and str(external_id).strip()
-    }
-    return dict(sorted(normalized.items()))
+def _country_values(record: dict[str, Any]) -> list[str]:
+    return [
+        value
+        for field in ("countryIso3", "countryIso2", "country")
+        if (value := canonical_identifier(record.get(field))) is not None
+    ]
 
 
-def _normalize_record(record: dict[str, Any], geographies: list[dict] | None) -> dict[str, Any]:
+def _country_component_key(
+    values: set[str],
+    *,
+    iso3_values: set[str] | None = None,
+    iso2_values: set[str] | None = None,
+) -> str:
+    iso3 = sorted(value.upper() for value in (iso3_values or set()) if value in values)
+    if iso3:
+        return iso3[0]
+    iso2 = sorted(value.upper() for value in (iso2_values or set()) if value in values)
+    if iso2:
+        return iso2[0]
+    return sorted(_key(value) for value in values if _key(value))[0]
+
+
+def _build_country_aliases(
+    records: list[dict[str, Any]],
+    geographies: list[dict] | None,
+    overrides: dict[str, str] | None,
+) -> dict[str, str]:
+    links: dict[str, set[str]] = {}
+    explicit_iso3: set[str] = set()
+    explicit_iso2: set[str] = set()
+
+    def link(values: Iterable[str]) -> None:
+        normalized = {_key(value) for value in values if _key(value)}
+        for value in normalized:
+            links.setdefault(value, set()).update(normalized)
+
+    for record in records:
+        link(_country_values(record))
+        for field, target, length in (
+            ("countryIso3", explicit_iso3, 3),
+            ("countryIso2", explicit_iso2, 2),
+        ):
+            value = canonical_identifier(record.get(field))
+            if value is not None and len(value) == length and value.isalpha():
+                target.add(_key(value))
+        country = canonical_identifier(record.get("country"))
+        if country is not None and country.isalpha():
+            if len(country) == 2:
+                explicit_iso2.add(_key(country))
+            elif len(country) == 3 and country == country.upper():
+                explicit_iso3.add(_key(country))
+    for feature in geographies or []:
+        properties = feature.get("properties") or {}
+        level = _key(properties.get("level"))
+        fields = ["iso3", "ISO3", "countryIso3", "iso2", "ISO2", "countryIso2", "country"]
+        if level == "country":
+            fields.extend(["id", "name"])
+        values = [
+            value
+            for field in fields
+            if (value := canonical_identifier(properties.get(field))) is not None
+        ]
+        link(values)
+        for field in ("iso3", "ISO3", "countryIso3"):
+            value = canonical_identifier(properties.get(field))
+            if value is not None and len(value) == 3 and value.isalpha():
+                explicit_iso3.add(_key(value))
+        for field in ("iso2", "ISO2", "countryIso2"):
+            value = canonical_identifier(properties.get(field))
+            if value is not None and len(value) == 2 and value.isalpha():
+                explicit_iso2.add(_key(value))
+        country = canonical_identifier(properties.get("country"))
+        if country is not None and country.isalpha():
+            if len(country) == 3:
+                explicit_iso3.add(_key(country))
+            elif len(country) == 2:
+                explicit_iso2.add(_key(country))
+    for alias, target in (overrides or {}).items():
+        link([alias, target])
+        clean_target = canonical_identifier(target)
+        if clean_target is not None and clean_target.isalpha():
+            if len(clean_target) == 3:
+                explicit_iso3.add(_key(clean_target))
+            elif len(clean_target) == 2:
+                explicit_iso2.add(_key(clean_target))
+
+    resolved: dict[str, str] = {}
+    unseen = set(links)
+    while unseen:
+        seed = min(unseen)
+        component: set[str] = set()
+        frontier = [seed]
+        while frontier:
+            current = frontier.pop()
+            if current in component:
+                continue
+            component.add(current)
+            frontier.extend(links.get(current, set()) - component)
+        unseen -= component
+        canonical = _country_component_key(
+            component,
+            iso3_values=explicit_iso3,
+            iso2_values=explicit_iso2,
+        )
+        for value in component:
+            resolved[value] = canonical
+    return resolved
+
+
+def _normalize_record(
+    record: dict[str, Any],
+    country_aliases: dict[str, str],
+    geographies: GeographyIndex | None,
+) -> dict[str, Any]:
     normalized = deepcopy(record)
+    record_id = canonical_identifier(normalized.get("id"))
+    if record_id is None:
+        raise ValueError("power-plant records require a finite nonblank ID")
+    normalized["id"] = record_id
+    for relationship_id in ("plantId", "unitId"):
+        normalized[relationship_id] = canonical_identifier(normalized.get(relationship_id))
+
     normalized["category"] = "power_generation"
     technology = _key(normalized.get("technology")).replace(" ", "_") or "other"
     normalized["technology"] = technology if technology in _TECHNOLOGIES else "other"
@@ -206,14 +306,8 @@ def _normalize_record(record: dict[str, Any], geographies: list[dict] | None) ->
     if raw_status is not None:
         normalized["rawStatus"] = raw_status
 
-    normalized["externalIds"] = _normalize_external_ids(normalized.get("externalIds"))
-    normalized["sourceIds"] = sorted(
-        {
-            str(value).strip()
-            for value in normalized.get("sourceIds", [])
-            if str(value).strip()
-        }
-    )
+    normalized["externalIds"] = normalize_external_ids(normalized.get("externalIds"))
+    normalized["sourceIds"] = normalize_source_ids(normalized.get("sourceIds"))
     normalized["sourceType"] = normalized.get("sourceType") or "modelled"
     if normalized["sourceType"] not in SOURCE_RANK:
         raise ValueError(f"unsupported power-plant source type: {normalized['sourceType']}")
@@ -226,7 +320,9 @@ def _normalize_record(record: dict[str, Any], geographies: list[dict] | None) ->
         normalized["valueKind"] if normalized.get("capacityMw") is not None else "unavailable"
     )
     if normalized.get("annualGenerationGwh") is not None:
-        normalized["generationValueKind"] = normalized.get("generationValueKind") or normalized["valueKind"]
+        normalized["generationValueKind"] = (
+            normalized.get("generationValueKind") or normalized["valueKind"]
+        )
 
     fuels = {
         str(value).strip()
@@ -261,20 +357,50 @@ def _normalize_record(record: dict[str, Any], geographies: list[dict] | None) ->
         normalized["locationPrecision"] = normalized.get("locationPrecision") or "exact"
     else:
         normalized["locationPrecision"] = normalized.get("locationPrecision") or "region_centroid"
-    normalized["geographyId"] = normalized.get("geographyId") or normalized.get("country") or "UNASSIGNED"
-    if geographies:
+
+    country_values = _country_values(normalized)
+    country_alias = _key(country_values[0]) if country_values else ""
+    record_iso3 = canonical_identifier(normalized.get("countryIso3"))
+    record_iso2 = canonical_identifier(normalized.get("countryIso2"))
+    normalized["canonicalCountryKey"] = country_aliases.get(
+        country_alias,
+        (
+            _country_component_key(
+                {_key(value) for value in country_values},
+                iso3_values=(
+                    {_key(record_iso3)}
+                    if record_iso3 and len(record_iso3) == 3 and record_iso3.isalpha()
+                    else set()
+                ),
+                iso2_values=(
+                    {_key(record_iso2)}
+                    if record_iso2 and len(record_iso2) == 2 and record_iso2.isalpha()
+                    else set()
+                ),
+            )
+            if country_values
+            else ""
+        ),
+    )
+    normalized["geographyId"] = (
+        normalized.get("geographyId")
+        or normalized.get("canonicalCountryKey")
+        or "UNASSIGNED"
+    )
+    if geographies is not None:
         normalized["geographyId"] = assign_asset_geography(normalized, geographies)
 
-    aliases = {
-        str(value).strip()
-        for value in [
-            *(normalized.get("aliases") or []),
-            normalized.get("name"),
-            normalized.get("plantName"),
-        ]
-        if value is not None and str(value).strip()
-    }
-    normalized["aliases"] = sorted(aliases)
+    normalized["aliases"] = sorted(
+        {
+            str(value).strip()
+            for value in [
+                *(normalized.get("aliases") or []),
+                normalized.get("name"),
+                normalized.get("plantName"),
+            ]
+            if value is not None and str(value).strip()
+        }
+    )
     normalized["evidence"] = sorted(
         [deepcopy(item) for item in normalized.get("evidence", []) if isinstance(item, dict)],
         key=_stable_json,
@@ -283,46 +409,49 @@ def _normalize_record(record: dict[str, Any], geographies: list[dict] | None) ->
     return normalized
 
 
-def _shared_namespace_id(
-    first: dict[str, Any],
-    second: dict[str, Any],
-    *,
-    namespaces: set[str] | None = None,
-    exclude_namespaces: set[str] | None = None,
-) -> bool:
-    first_ids = first.get("externalIds") or {}
-    second_ids = second.get("externalIds") or {}
-    for namespace, value in first_ids.items():
-        normalized_namespace = _key(namespace).replace(" ", "")
-        if namespaces is not None and normalized_namespace not in namespaces:
-            continue
-        if exclude_namespaces is not None and normalized_namespace in exclude_namespaces:
-            continue
-        if namespace in second_ids and str(value).strip() == str(second_ids[namespace]).strip():
-            return True
-    return False
-
-
 def _unit_record(record: dict[str, Any]) -> bool:
     return _present(record.get("unitId"))
 
 
-def _shared_record_identity(first: dict[str, Any], second: dict[str, Any]) -> bool:
-    first_unit = _unit_record(first)
-    second_unit = _unit_record(second)
-    if first_unit != second_unit:
-        return False
-    if first_unit:
-        return _shared_namespace_id(
-            first,
-            second,
-            namespaces=_UNIT_ID_NAMESPACES,
-        )
-    return _shared_namespace_id(first, second)
-
-
 def _country_key(record: dict[str, Any]) -> str:
-    return _key(record.get("countryIso3") or record.get("country"))
+    return str(record.get("canonicalCountryKey") or "")
+
+
+def _external_identity_map(
+    record: dict[str, Any],
+    *,
+    entity: bool,
+) -> dict[str, str]:
+    identities: dict[str, str] = {}
+    for namespace, identifier in (record.get("externalIds") or {}).items():
+        namespace_key = _namespace_key(namespace)
+        if entity and _unit_record(record) and namespace_key not in _UNIT_ID_NAMESPACES:
+            continue
+        if not entity and namespace_key in _UNIT_ID_NAMESPACES:
+            continue
+        identities[namespace_key] = identifier
+    return identities
+
+
+def _plant_reference_namespace(record: dict[str, Any]) -> str:
+    plant_id = str(record.get("plantId") or "").casefold()
+    if plant_id.startswith("gem-"):
+        return "plantref_gem"
+    if plant_id.startswith("wri-"):
+        return "plantref_wri"
+    if plant_id.startswith("osm-"):
+        return "plantref_osm"
+    source_ids = record.get("sourceIds") or []
+    source = _namespace_key(source_ids[0]) if source_ids else _namespace_key(record.get("sourceType"))
+    return f"plantref_{source or 'unknown'}"
+
+
+def _plant_identity_map(record: dict[str, Any]) -> dict[str, str]:
+    identities = _external_identity_map(record, entity=False)
+    plant_id = canonical_identifier(record.get("plantId"))
+    if plant_id is not None:
+        identities[_plant_reference_namespace(record)] = plant_id
+    return identities
 
 
 def _central_capacity(record: dict[str, Any]) -> float | None:
@@ -330,27 +459,33 @@ def _central_capacity(record: dict[str, Any]) -> float | None:
     return float(capacity["central"]) if isinstance(capacity, dict) else None
 
 
-def _strong_fuzzy_duplicate(first: dict[str, Any], second: dict[str, Any], aliases: dict[str, str]) -> bool:
+def _shared_identity(first: dict[str, str], second: dict[str, str]) -> bool:
+    return any(
+        identifier == second.get(namespace)
+        for namespace, identifier in first.items()
+        if namespace in second
+    )
+
+
+def _strong_fuzzy_duplicate(
+    first: dict[str, Any],
+    second: dict[str, Any],
+    aliases: dict[str, str],
+) -> bool:
     if _unit_record(first) != _unit_record(second):
         return False
     if _unit_record(first):
-        first_ids = {
-            _key(namespace).replace(" ", ""): str(value)
-            for namespace, value in (first.get("externalIds") or {}).items()
-            if _key(namespace).replace(" ", "") in _UNIT_ID_NAMESPACES
-        }
-        second_ids = {
-            _key(namespace).replace(" ", ""): str(value)
-            for namespace, value in (second.get("externalIds") or {}).items()
-            if _key(namespace).replace(" ", "") in _UNIT_ID_NAMESPACES
-        }
-        if any(
-            first_ids[namespace] != second_ids[namespace]
-            for namespace in first_ids.keys() & second_ids.keys()
-        ):
+        if not _shared_identity(_plant_identity_map(first), _plant_identity_map(second)):
             return False
-    country = _country_key(first)
-    if not country or country != _country_key(second):
+        first_unit_name = _normalized_text(first.get("name"), aliases)
+        second_unit_name = _normalized_text(second.get("name"), aliases)
+        if not first_unit_name or first_unit_name != second_unit_name:
+            return False
+        first_year = first.get("commissioningYear")
+        second_year = second.get("commissioningYear")
+        if first_year and second_year and first_year != second_year:
+            return False
+    if not _country_key(first) or _country_key(first) != _country_key(second):
         return False
     first_operator = _normalized_text(first.get("operator"), aliases)
     second_operator = _normalized_text(second.get("operator"), aliases)
@@ -358,7 +493,11 @@ def _strong_fuzzy_duplicate(first: dict[str, Any], second: dict[str, Any], alias
         return False
     first_coordinates = first.get("coordinates")
     second_coordinates = second.get("coordinates")
-    if not first_coordinates or not second_coordinates or _distance_km(first_coordinates, second_coordinates) > 5:
+    if (
+        not first_coordinates
+        or not second_coordinates
+        or _distance_km(first_coordinates, second_coordinates) > 5
+    ):
         return False
     first_capacity = _central_capacity(first)
     second_capacity = _central_capacity(second)
@@ -369,14 +508,233 @@ def _strong_fuzzy_duplicate(first: dict[str, Any], second: dict[str, Any], alias
             return False
     elif not 0.9 <= first_capacity / second_capacity <= 1.1:
         return False
-    first_name = first.get("plantName") or first.get("name")
-    second_name = second.get("plantName") or second.get("name")
+    first_name = first.get("name") if _unit_record(first) else first.get("plantName") or first.get("name")
+    second_name = second.get("name") if _unit_record(second) else second.get("plantName") or second.get("name")
     first_tokens = _name_tokens(first_name, aliases)
     second_tokens = _name_tokens(second_name, aliases)
     if not first_tokens or not second_tokens:
         return False
     similarity = len(first_tokens & second_tokens) / len(first_tokens | second_tokens)
     return similarity >= 0.8
+
+
+def _same_plant(first: dict[str, Any], second: dict[str, Any], aliases: dict[str, str]) -> bool:
+    if _shared_identity(_plant_identity_map(first), _plant_identity_map(second)):
+        return True
+    if not _country_key(first) or _country_key(first) != _country_key(second):
+        return False
+    first_name = _normalized_text(first.get("plantName") or first.get("name"), aliases)
+    second_name = _normalized_text(second.get("plantName") or second.get("name"), aliases)
+    if not first_name or first_name != second_name:
+        return False
+    first_operator = _normalized_text(first.get("operator"), aliases)
+    second_operator = _normalized_text(second.get("operator"), aliases)
+    if not first_operator or first_operator != second_operator:
+        return False
+    first_coordinates = first.get("coordinates")
+    second_coordinates = second.get("coordinates")
+    return bool(
+        first_coordinates
+        and second_coordinates
+        and _distance_km(first_coordinates, second_coordinates) <= 5
+    )
+
+
+@dataclass
+class _ClusterSet:
+    parents: list[int]
+    identities: list[dict[str, set[str]]]
+    countries: list[set[str]]
+    kinds: list[set[str]]
+
+    @classmethod
+    def create(
+        cls,
+        records: list[dict[str, Any]],
+        identity_getter: Any,
+        *,
+        track_kind: bool,
+    ) -> "_ClusterSet":
+        return cls(
+            parents=list(range(len(records))),
+            identities=[
+                {namespace: {identifier} for namespace, identifier in identity_getter(record).items()}
+                for record in records
+            ],
+            countries=[{_country_key(record)} if _country_key(record) else set() for record in records],
+            kinds=[{"unit" if _unit_record(record) else "plant"} if track_kind else set() for record in records],
+        )
+
+    def find(self, index: int) -> int:
+        if self.parents[index] != index:
+            self.parents[index] = self.find(self.parents[index])
+        return self.parents[index]
+
+    def union_if_compatible(self, first: int, second: int) -> bool:
+        first_root, second_root = self.find(first), self.find(second)
+        if first_root == second_root:
+            return True
+        if self.kinds[first_root] and self.kinds[second_root] and self.kinds[first_root] != self.kinds[second_root]:
+            return False
+        if (
+            self.countries[first_root]
+            and self.countries[second_root]
+            and self.countries[first_root] != self.countries[second_root]
+        ):
+            return False
+        shared_namespaces = self.identities[first_root].keys() & self.identities[second_root].keys()
+        if any(
+            self.identities[first_root][namespace]
+            != self.identities[second_root][namespace]
+            for namespace in shared_namespaces
+        ):
+            return False
+        lower, higher = sorted((first_root, second_root))
+        self.parents[higher] = lower
+        for namespace, identifiers in self.identities[higher].items():
+            self.identities[lower].setdefault(namespace, set()).update(identifiers)
+        self.countries[lower].update(self.countries[higher])
+        self.kinds[lower].update(self.kinds[higher])
+        return True
+
+
+def _capacity_band(record: dict[str, Any]) -> int | None:
+    capacity = _central_capacity(record)
+    if capacity is None:
+        return None
+    if capacity == 0:
+        return 0
+    return int(math.floor(math.log(capacity) / math.log(1.1)))
+
+
+def _spatial_cell(record: dict[str, Any]) -> tuple[int, int] | None:
+    coordinates = record.get("coordinates")
+    if not coordinates:
+        return None
+    return math.floor(float(coordinates[0])), math.floor(float(coordinates[1]))
+
+
+def _fuzzy_base(
+    record: dict[str, Any], aliases: dict[str, str], *, plant_group: bool
+) -> tuple[str, str, set[str], tuple[int, int] | None, int | None]:
+    country = _country_key(record)
+    operator = _normalized_text(record.get("operator"), aliases)
+    name = (
+        record.get("plantName") or record.get("name")
+        if plant_group
+        else record.get("name") if _unit_record(record) else record.get("plantName") or record.get("name")
+    )
+    if not plant_group and _unit_record(record):
+        normalized_unit_name = _normalized_text(name, aliases)
+        name_tokens = {f"unit-name:{normalized_unit_name}"} if normalized_unit_name else set()
+    else:
+        name_tokens = _name_tokens(name, aliases)
+    return country, operator, name_tokens, _spatial_cell(record), _capacity_band(record)
+
+
+def _candidate_keys(
+    record: dict[str, Any], aliases: dict[str, str], *, plant_group: bool
+) -> list[tuple[Any, ...]]:
+    country, operator, name_tokens, cell, capacity_band = _fuzzy_base(
+        record, aliases, plant_group=plant_group
+    )
+    if not country or not operator or not name_tokens or cell is None:
+        return []
+    kind = "plant-group" if plant_group else "unit" if _unit_record(record) else "plant"
+    bands: list[int | None]
+    if plant_group:
+        bands = [None]
+    elif capacity_band is None:
+        return []
+    else:
+        bands = list(range(capacity_band - 2, capacity_band + 3))
+    return [
+        (country, kind, operator, token, cell[0] + dx, cell[1] + dy, band)
+        for token in sorted(name_tokens)
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        for band in bands
+    ]
+
+
+def _insertion_keys(
+    record: dict[str, Any], aliases: dict[str, str], *, plant_group: bool
+) -> list[tuple[Any, ...]]:
+    country, operator, name_tokens, cell, capacity_band = _fuzzy_base(
+        record, aliases, plant_group=plant_group
+    )
+    if not country or not operator or not name_tokens or cell is None:
+        return []
+    if not plant_group and capacity_band is None:
+        return []
+    kind = "plant-group" if plant_group else "unit" if _unit_record(record) else "plant"
+    band = None if plant_group else capacity_band
+    return [
+        (country, kind, operator, token, cell[0], cell[1], band)
+        for token in sorted(name_tokens)
+    ]
+
+
+def _indexed_clusters(
+    records: list[dict[str, Any]],
+    aliases: dict[str, str],
+    *,
+    plant_group: bool,
+) -> list[list[dict[str, Any]]]:
+    identity_getter = _plant_identity_map if plant_group else lambda record: _external_identity_map(record, entity=True)
+    groups = _ClusterSet.create(records, identity_getter, track_kind=not plant_group)
+    exact_index: dict[tuple[str, str], set[int]] = {}
+    fuzzy_index: dict[tuple[Any, ...], dict[int, int]] = {}
+
+    def exact_roots(token: tuple[str, str]) -> set[int]:
+        roots = {groups.find(candidate) for candidate in exact_index.get(token, set())}
+        exact_index[token] = roots
+        return roots
+
+    def fuzzy_representatives(key: tuple[Any, ...]) -> dict[int, int]:
+        representatives: dict[int, int] = {}
+        for candidate in fuzzy_index.get(key, {}).values():
+            representatives.setdefault(groups.find(candidate), candidate)
+        fuzzy_index[key] = representatives
+        return representatives
+
+    for index, record in enumerate(records):
+        identities = identity_getter(record)
+        exact_candidates = {
+            candidate
+            for token in identities.items()
+            for candidate in exact_roots(token)
+        }
+        for candidate in sorted(exact_candidates):
+            groups.union_if_compatible(index, candidate)
+
+        fuzzy_candidates = {
+            candidate
+            for key in _candidate_keys(record, aliases, plant_group=plant_group)
+            for candidate in fuzzy_representatives(key).values()
+        }
+        for candidate in sorted(fuzzy_candidates):
+            if groups.find(index) == groups.find(candidate):
+                continue
+            matches = (
+                _same_plant(record, records[candidate], aliases)
+                if plant_group
+                else _strong_fuzzy_duplicate(record, records[candidate], aliases)
+            )
+            if matches:
+                groups.union_if_compatible(index, candidate)
+
+        for token in identities.items():
+            roots = exact_roots(token)
+            roots.add(groups.find(index))
+        for key in _insertion_keys(record, aliases, plant_group=plant_group):
+            representatives = fuzzy_representatives(key)
+            representatives.setdefault(groups.find(index), index)
+
+    clustered: dict[int, list[dict[str, Any]]] = {}
+    for index, record in enumerate(records):
+        clustered.setdefault(groups.find(index), []).append(record)
+    return [clustered[root] for root in sorted(clustered)]
 
 
 def _field_value_kind(record: dict[str, Any], field: str) -> str | None:
@@ -393,7 +751,7 @@ def _field_preference(record: dict[str, Any], field: str) -> tuple[int, int, int
     precision_rank = {"region_centroid": 0, "city_centroid": 1, "exact": 2}.get(
         record.get("locationPrecision"), -1
     )
-    return (value_rank, source_rank, precision_rank, _stable_json(record))
+    return value_rank, source_rank, precision_rank, _stable_json(record)
 
 
 def _selected_record(records: list[dict[str, Any]], field: str) -> dict[str, Any] | None:
@@ -405,61 +763,70 @@ def _combine_external_ids(records: list[dict[str, Any]]) -> tuple[dict[str, str]
     values: dict[str, set[str]] = {}
     for record in records:
         for namespace, external_id in (record.get("externalIds") or {}).items():
-            values.setdefault(namespace, set()).add(str(external_id))
+            values.setdefault(namespace, set()).add(external_id)
     selected: dict[str, str] = {}
     aliases: dict[str, list[str]] = {}
     for namespace, external_ids in sorted(values.items()):
-        if len(external_ids) == 1:
-            selected[namespace] = next(iter(external_ids))
-            continue
         candidates = [
             record
             for record in records
-            if str((record.get("externalIds") or {}).get(namespace, "")) in external_ids
+            if (record.get("externalIds") or {}).get(namespace) in external_ids
         ]
         preferred = max(candidates, key=lambda record: _field_preference(record, "externalIds"))
-        selected[namespace] = str(preferred["externalIds"][namespace])
-        aliases[namespace] = sorted(external_ids)
+        selected[namespace] = preferred["externalIds"][namespace]
+        if len(external_ids) > 1:
+            aliases[namespace] = sorted(external_ids)
     return selected, aliases
 
 
+def _provenance(record: dict[str, Any], field: str) -> dict[str, Any]:
+    return {
+        "sourceType": record.get("sourceType"),
+        "sourceIds": sorted(record.get("sourceIds") or []),
+        "valueKind": _field_value_kind(record, field),
+    }
+
+
 def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
-    fields = sorted(
-        {field for record in records for field in record}
-        - {
-            "aliases",
-            "evidence",
-            "externalIdAliases",
-            "externalIds",
-            "fieldProvenance",
-            "sourceIds",
-        }
-    )
+    excluded = {
+        "aliases",
+        "evidence",
+        "externalIdAliases",
+        "externalIds",
+        "fieldProvenance",
+        "sourceIds",
+        *_FIELD_KIND_NAMES,
+        *_COMPANION_KIND_FIELDS,
+    }
+    fields = sorted({field for record in records for field in record} - excluded)
     merged: dict[str, Any] = {}
     provenance: dict[str, Any] = {}
     for field in fields:
         selected = _selected_record(records, field)
+        if selected is not None:
+            merged[field] = deepcopy(selected[field])
+            provenance[field] = _provenance(selected, field)
+
+    for metric_field, kind_field in _FIELD_KIND_NAMES.items():
+        selected = _selected_record(records, metric_field)
         if selected is None:
             continue
-        merged[field] = deepcopy(selected[field])
-        provenance[field] = {
-            "sourceType": selected.get("sourceType"),
-            "sourceIds": sorted(selected.get("sourceIds") or []),
-            "valueKind": _field_value_kind(selected, field),
-        }
+        merged[metric_field] = deepcopy(selected[metric_field])
+        merged[kind_field] = selected.get(kind_field) or selected.get("valueKind")
+        metric_provenance = _provenance(selected, metric_field)
+        provenance[metric_field] = metric_provenance
+        provenance[kind_field] = deepcopy(metric_provenance)
 
     merged["sourceIds"] = sorted(
-        {
-            source_id
-            for record in records
-            for source_id in record.get("sourceIds", [])
-        }
+        {source_id for record in records for source_id in record.get("sourceIds", [])}
     )
     external_ids, external_id_aliases = _combine_external_ids(records)
     merged["externalIds"] = external_ids
     if external_id_aliases:
         merged["externalIdAliases"] = external_id_aliases
-    merged["aliases"] = sorted({alias for record in records for alias in record.get("aliases", [])})
+    merged["aliases"] = sorted(
+        {alias for record in records for alias in record.get("aliases", [])}
+    )
     evidence_by_json = {
         _stable_json(claim): deepcopy(claim)
         for record in records
@@ -474,12 +841,6 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
     )
     merged["fieldProvenance"] = dict(sorted(provenance.items()))
-
-    # The value-kind companion must describe the source selected for its metric.
-    for metric_field, kind_field in _FIELD_KIND_NAMES.items():
-        selected = _selected_record(records, metric_field)
-        if selected is not None:
-            merged[kind_field] = selected.get(kind_field) or selected.get("valueKind")
 
     all_secondary_fuels = {
         fuel
@@ -500,63 +861,43 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _clusters(records: list[dict[str, Any]], aliases: dict[str, str]) -> list[list[dict[str, Any]]]:
-    groups = _DisjointSet.create(len(records))
-    for first_index, first in enumerate(records):
-        for second_index in range(first_index + 1, len(records)):
-            second = records[second_index]
-            if _shared_record_identity(first, second) or _strong_fuzzy_duplicate(first, second, aliases):
-                groups.union(first_index, second_index)
-    clustered: dict[int, list[dict[str, Any]]] = {}
-    for index, record in enumerate(records):
-        clustered.setdefault(groups.find(index), []).append(record)
-    return [clustered[index] for index in sorted(clustered)]
+def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Disambiguate only genuine canonical-record ID collisions deterministically."""
 
-
-def _same_plant(first: dict[str, Any], second: dict[str, Any], aliases: dict[str, str]) -> bool:
-    if _shared_namespace_id(first, second, exclude_namespaces=_UNIT_ID_NAMESPACES):
-        return True
-    if first.get("plantId") and first.get("plantId") == second.get("plantId"):
-        return True
-    if _country_key(first) != _country_key(second):
-        return False
-    first_name = _normalized_text(first.get("plantName") or first.get("name"), aliases)
-    second_name = _normalized_text(second.get("plantName") or second.get("name"), aliases)
-    if not first_name or first_name != second_name:
-        return False
-    first_operator = _normalized_text(first.get("operator"), aliases)
-    second_operator = _normalized_text(second.get("operator"), aliases)
-    if not first_operator or first_operator != second_operator:
-        return False
-    first_coordinates = first.get("coordinates")
-    second_coordinates = second.get("coordinates")
-    return bool(
-        first_coordinates
-        and second_coordinates
-        and _distance_km(first_coordinates, second_coordinates) <= 5
-    )
-
-
-def _plant_clusters(records: list[dict[str, Any]], aliases: dict[str, str]) -> list[list[dict[str, Any]]]:
-    groups = _DisjointSet.create(len(records))
-    for first_index, first in enumerate(records):
-        for second_index in range(first_index + 1, len(records)):
-            if _same_plant(first, records[second_index], aliases):
-                groups.union(first_index, second_index)
-    clustered: dict[int, list[dict[str, Any]]] = {}
-    for index, record in enumerate(records):
-        clustered.setdefault(groups.find(index), []).append(record)
-    return [clustered[index] for index in sorted(clustered)]
-
-
-def _sum_ranges(records: Iterable[dict[str, Any]]) -> dict[str, float]:
-    total = {"low": 0.0, "central": 0.0, "high": 0.0}
+    by_base: dict[str, list[dict[str, Any]]] = {}
     for record in records:
-        capacity = record.get("capacityMw")
-        if capacity:
-            for part in total:
-                total[part] += float(capacity[part])
-    return total
+        by_base.setdefault(record["id"], []).append(record)
+    for base_id, collisions in by_base.items():
+        if len(collisions) < 2:
+            continue
+        used: set[str] = set()
+        ordered = sorted(
+            collisions,
+            key=lambda record: (
+                sha256(_stable_json(record).encode()).hexdigest(),
+                _stable_json(record),
+            ),
+        )
+        for record in ordered:
+            digest = sha256(_stable_json(record).encode()).hexdigest()[:10]
+            candidate = f"{base_id}-{digest}"
+            ordinal = 2
+            while candidate in used:
+                candidate = f"{base_id}-{digest}-{ordinal}"
+                ordinal += 1
+            used.add(candidate)
+            record["id"] = candidate
+    return sorted(records, key=lambda record: (record["id"], _stable_json(record)))
+
+
+def _sum_ranges(records: Iterable[dict[str, Any]]) -> dict[str, float] | None:
+    capacities = [record["capacityMw"] for record in records if record.get("capacityMw")]
+    if not capacities:
+        return None
+    return {
+        part: sum(float(capacity[part]) for capacity in capacities)
+        for part in ("low", "central", "high")
+    }
 
 
 def _capacity_by_technology(records: Iterable[dict[str, Any]]) -> dict[str, float]:
@@ -569,56 +910,156 @@ def _capacity_by_technology(records: Iterable[dict[str, Any]]) -> dict[str, floa
     return dict(sorted(totals.items()))
 
 
+def _capacity_account(
+    records: list[dict[str, Any]],
+    lifecycles: set[str],
+) -> tuple[dict[str, float] | None, dict[str, float], dict[str, Any]]:
+    units = [
+        record
+        for record in records
+        if _unit_record(record) and record.get("lifecycle") in lifecycles
+    ]
+    aggregates = [
+        record
+        for record in records
+        if not _unit_record(record)
+        and record.get("lifecycle") in lifecycles
+        and record.get("capacityMw") is not None
+    ]
+    known_units = [record for record in units if record.get("capacityMw") is not None]
+    metadata: dict[str, Any] = {
+        "knownUnitCount": len(known_units),
+        "totalUnitCount": len(units),
+    }
+    if units and len(known_units) == len(units):
+        metadata["method"] = "complete_unit_sum"
+        metadata["coveragePercent"] = 100.0
+        return _sum_ranges(known_units), _capacity_by_technology(known_units), metadata
+    if units and aggregates:
+        selected = _selected_record(aggregates, "capacityMw")
+        assert selected is not None
+        metadata["method"] = "aggregate_fallback"
+        metadata["coveragePercent"] = round(len(known_units) / len(units) * 100, 2)
+        metadata["partialKnownCapacityMw"] = _sum_ranges(known_units)
+        return (
+            deepcopy(selected["capacityMw"]),
+            _capacity_by_technology([selected]),
+            metadata,
+        )
+    if units:
+        metadata["method"] = "incomplete_units"
+        metadata["coveragePercent"] = round(len(known_units) / len(units) * 100, 2)
+        metadata["partialKnownCapacityMw"] = _sum_ranges(known_units)
+        return None, {}, metadata
+    if aggregates:
+        selected = _selected_record(aggregates, "capacityMw")
+        assert selected is not None
+        metadata.update({"method": "plant_aggregate", "coveragePercent": 100.0})
+        return (
+            deepcopy(selected["capacityMw"]),
+            _capacity_by_technology([selected]),
+            metadata,
+        )
+    metadata.update({"method": "unavailable", "coveragePercent": 0.0})
+    return None, {}, metadata
+
+
+def _summary_anchor(records: list[dict[str, Any]]) -> tuple[str, str]:
+    identities: list[tuple[int, str, str]] = []
+    priority = {"wikidata": 0, "gemplant": 1, "wri": 2, "osm": 3, "official": 4}
+    for record in records:
+        for namespace, identifier in _plant_identity_map(record).items():
+            if namespace.startswith("plantref_"):
+                continue
+            identities.append((priority.get(namespace, 20), namespace, identifier))
+    if identities:
+        _, namespace, identifier = min(identities)
+        slug = re.sub(r"[^a-z0-9]+", "-", identifier.casefold()).strip("-")[:48]
+        if slug:
+            return f"wattlas-plant-{namespace}-{slug}", f"{namespace}:{identifier}"
+    fingerprint = {
+        "country": sorted({_country_key(record) for record in records}),
+        "names": sorted({_key(record.get("plantName") or record.get("name")) for record in records}),
+        "operators": sorted({_key(record.get("operator")) for record in records}),
+        "coordinates": sorted(
+            tuple(round(float(value), 4) for value in record["coordinates"])
+            for record in records
+            if record.get("coordinates")
+        ),
+        "recordIds": sorted(record["id"] for record in records),
+    }
+    digest = sha256(_stable_json(fingerprint).encode()).hexdigest()[:16]
+    return f"wattlas-plant-derived-{digest}", _stable_json(fingerprint)
+
+
 def _summarize_plant(records: list[dict[str, Any]]) -> dict[str, Any]:
     units = [record for record in records if _unit_record(record)]
     counting_records = units if units else records
-    operating = [
-        record
-        for record in counting_records
-        if record.get("lifecycle") in _OPERATING_LIFECYCLES
-    ]
-    planned = [
-        record
-        for record in counting_records
-        if record.get("lifecycle") in _PLANNED_LIFECYCLES
-    ]
     name_record = _selected_record(records, "plantName") or _selected_record(records, "name")
-    id_record = _selected_record(records, "plantId") or _selected_record(records, "id")
-    assert name_record is not None and id_record is not None
+    assert name_record is not None
     lifecycle_counts: dict[str, int] = {}
     for record in counting_records:
         lifecycle = record.get("lifecycle") or "unknown"
         lifecycle_counts[lifecycle] = lifecycle_counts.get(lifecycle, 0) + 1
     external_ids, external_id_aliases = _combine_external_ids(records)
+    operating_capacity, operating_mix, operating_coverage = _capacity_account(
+        records, _OPERATING_LIFECYCLES
+    )
+    planned_capacity, planned_mix, planned_coverage = _capacity_account(
+        records, _PLANNED_LIFECYCLES
+    )
+    summary_id, anchor = _summary_anchor(records)
     summary = {
-        "id": id_record.get("plantId") or id_record["id"],
+        "id": summary_id,
+        "canonicalAnchor": anchor,
         "name": name_record.get("plantName") or name_record["name"],
         "country": (_selected_record(records, "country") or {}).get("country"),
+        "canonicalCountryKey": (_selected_record(records, "canonicalCountryKey") or {}).get(
+            "canonicalCountryKey"
+        ),
         "geographyId": (_selected_record(records, "geographyId") or {}).get("geographyId"),
         "coordinates": deepcopy((_selected_record(records, "coordinates") or {}).get("coordinates")),
         "unitCount": len(units),
         "recordCount": len(records),
-        "technologies": sorted({record.get("technology") or "other" for record in counting_records}),
+        "technologies": sorted(
+            {record.get("technology") or "other" for record in counting_records}
+        ),
         "lifecycleCounts": dict(sorted(lifecycle_counts.items())),
-        "operatingCapacityMw": _sum_ranges(operating),
-        "plannedCapacityMw": _sum_ranges(planned),
-        "operatingCapacityMwByTechnology": _capacity_by_technology(operating),
-        "plannedCapacityMwByTechnology": _capacity_by_technology(planned),
+        "operatingCapacityMw": operating_capacity,
+        "plannedCapacityMw": planned_capacity,
+        "operatingCapacityMwByTechnology": operating_mix,
+        "plannedCapacityMwByTechnology": planned_mix,
+        "operatingCapacityCoverage": operating_coverage,
+        "plannedCapacityCoverage": planned_coverage,
         "sourceIds": sorted(
-            {
-                source_id
-                for record in records
-                for source_id in record.get("sourceIds", [])
-            }
+            {source_id for record in records for source_id in record.get("sourceIds", [])}
         ),
         "externalIds": external_ids,
-        "aliases": sorted({alias for record in records for alias in record.get("aliases", [])}),
+        "aliases": sorted(
+            {alias for record in records for alias in record.get("aliases", [])}
+        ),
         "recordIds": sorted(record["id"] for record in records),
         "unitIds": sorted(record["unitId"] for record in units),
+        "_collisionFingerprint": sha256(
+            _stable_json(sorted(_stable_json(record) for record in records)).encode()
+        ).hexdigest(),
     }
     if external_id_aliases:
         summary["externalIdAliases"] = external_id_aliases
     return summary
+
+
+def _unique_summary_ids(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_base: dict[str, list[dict[str, Any]]] = {}
+    for summary in summaries:
+        by_base.setdefault(summary["id"], []).append(summary)
+    for base_id, collisions in by_base.items():
+        if len(collisions) > 1:
+            for summary in sorted(collisions, key=lambda item: item["_collisionFingerprint"]):
+                summary["id"] = f"{base_id}-{summary['_collisionFingerprint'][:10]}"
+        for summary in collisions:
+            summary.pop("_collisionFingerprint", None)
+    return sorted(summaries, key=lambda summary: summary["id"])
 
 
 def canonicalize_power_plants(
@@ -626,30 +1067,38 @@ def canonicalize_power_plants(
     *,
     geographies: list[dict] | None = None,
     aliases: dict[str, str] | None = None,
+    country_aliases: dict[str, str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Canonicalize source plant records while preserving unit-level evidence.
+    """Canonicalize power records with indexed identity and fuzzy blocking.
 
-    ``records`` contains canonical source rows, ``units`` is the addressable unit
-    subset, and ``plants`` contains capacity summaries. Plant-only source rows are
-    retained as evidence but are not added to a summary's capacity when unit rows
-    exist, preventing plant/unit double counting.
+    Exact matching is approximately O(n) in source rows. Conservative fuzzy
+    matching only compares records sharing country, entity kind, operator/name,
+    nearby one-degree cells, and neighboring ten-percent capacity bands. Bulk
+    geography assignment builds one Shapely STRtree for the whole batch.
     """
 
     alias_map = {_key(key): _key(value) for key, value in (aliases or {}).items()}
-    normalized = [_normalize_record(record, geographies) for record in records]
-    normalized.sort(key=lambda record: (str(record.get("id", "")), _stable_json(record)))
-    canonical_records = [
-        _merge_record_cluster(cluster)
-        for cluster in _clusters(normalized, alias_map)
+    resolved_countries = _build_country_aliases(records, geographies, country_aliases)
+    geography_index = build_geography_index(geographies) if geographies else None
+    normalized = [
+        _normalize_record(record, resolved_countries, geography_index)
+        for record in records
     ]
-    canonical_records.sort(key=lambda record: str(record.get("id", "")))
-    plants = [
-        _summarize_plant(cluster)
-        for cluster in _plant_clusters(canonical_records, alias_map)
-    ]
-    plants.sort(key=lambda plant: str(plant["id"]))
+    normalized.sort(key=lambda record: (record["id"], _stable_json(record)))
+    canonical_records = _unique_record_ids(
+        [
+            _merge_record_cluster(cluster)
+            for cluster in _indexed_clusters(normalized, alias_map, plant_group=False)
+        ]
+    )
+    plants = _unique_summary_ids(
+        [
+            _summarize_plant(cluster)
+            for cluster in _indexed_clusters(canonical_records, alias_map, plant_group=True)
+        ]
+    )
     units = sorted(
         [record for record in canonical_records if _unit_record(record)],
-        key=lambda record: str(record.get("unitId", "")),
+        key=lambda record: (str(record.get("unitId", "")), record["id"]),
     )
     return {"plants": plants, "units": units, "records": canonical_records}

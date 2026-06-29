@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+import grid_scope.power_plants as power_plants
 from grid_scope.models import AssetProperties
 from grid_scope.power_plants import SOURCE_RANK, canonicalize_power_plants
 
@@ -344,3 +345,279 @@ def test_normalized_active_records_fit_the_asset_contract() -> None:
 def test_nonfinite_ranges_and_coordinates_are_rejected(overrides: dict) -> None:
     with pytest.raises(ValueError):
         canonicalize_power_plants([power_record(**overrides)])
+
+
+def test_null_and_nonfinite_power_lineage_ids_are_filtered() -> None:
+    record = power_record(
+        externalIds={
+            "gemPlant": None,
+            "Wiki Data": "Q42",
+            "nan": float("nan"),
+            "infinity": float("inf"),
+        },
+        sourceIds=[None, float("nan"), float("inf"), "gem-gipt"],
+    )
+
+    canonical = canonicalize_power_plants([record])["records"][0]
+
+    assert canonical["externalIds"] == {"wikidata": "Q42"}
+    assert canonical["sourceIds"] == ["gem-gipt"]
+
+
+def test_dataset_country_aliases_merge_iso3_and_country_name() -> None:
+    gem = power_record(
+        id="gem-denmark",
+        country="Denmark",
+        countryIso3=None,
+        externalIds={},
+        plantId="gem-denmark",
+    )
+    wri = power_record(
+        id="wri-denmark",
+        country="Denmark",
+        countryIso3="DNK",
+        externalIds={},
+        plantId="wri-denmark",
+        sourceIds=["wri-gppd"],
+    )
+
+    result = canonicalize_power_plants([gem, wri])
+
+    assert len(result["records"]) == 1
+    assert result["records"][0]["canonicalCountryKey"] == "DNK"
+
+
+def test_adm1_names_cannot_be_mistaken_for_country_iso3_codes() -> None:
+    goa = {
+        "type": "Feature",
+        "id": "IN-GOA",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[70, 10], [71, 10], [71, 11], [70, 11], [70, 10]]],
+        },
+        "properties": {
+            "id": "IN-GOA",
+            "name": "Goa",
+            "country": "IN",
+            "level": "admin_1",
+        },
+    }
+    record = power_record(
+        id="india-record",
+        country="IN",
+        countryIso3=None,
+        coordinates=[77, 20],
+        externalIds={},
+        plantId="india-record",
+    )
+
+    canonical = canonicalize_power_plants([record], geographies=[goa])["records"][0]
+
+    assert canonical["canonicalCountryKey"] == "IN"
+
+
+def test_distinct_twin_units_never_fuzzy_merge_on_plant_fields() -> None:
+    gem_unit = power_record(
+        id="gem-twin-1",
+        name="Twin Unit 1",
+        plantName="Twin Station",
+        unitId="gem-unit-1",
+        externalIds={"gemPlant": "G-TWIN", "gemUnit": "G-U1"},
+    )
+    official_unit = power_record(
+        id="official-twin-2",
+        name="Twin Unit 2",
+        plantName="Twin Station",
+        unitId="official-unit-2",
+        externalIds={"gemPlant": "G-TWIN", "officialUnit": "O-U2"},
+        sourceType="official_verified",
+        sourceIds=["official"],
+    )
+
+    result = canonicalize_power_plants([gem_unit, official_unit])
+
+    assert len(result["units"]) == 2
+    assert result["plants"][0]["unitCount"] == 2
+
+
+def test_transitive_external_identity_bridge_cannot_merge_conflicting_clusters() -> None:
+    q1 = power_record(
+        id="a-q1",
+        externalIds={"wikidata": "Q1"},
+        name="Q1 Plant",
+        plantName="Q1 Plant",
+    )
+    bridge = power_record(
+        id="b-bridge",
+        externalIds={"wikidata": "Q1", "official": "X"},
+        name="Bridge Plant",
+        plantName="Bridge Plant",
+    )
+    q2 = power_record(
+        id="c-q2",
+        externalIds={"wikidata": "Q2", "official": "X"},
+        name="Q2 Plant",
+        plantName="Q2 Plant",
+    )
+
+    result = canonicalize_power_plants([q2, bridge, q1])
+
+    assert len(result["records"]) == 2
+    assert sorted(
+        tuple(record.get("externalIdAliases", {}).get("wikidata", [record["externalIds"].get("wikidata")]))
+        for record in result["records"]
+    ) == [("Q1",), ("Q2",)]
+
+
+def test_summary_ids_are_unique_permutation_stable_and_source_rank_independent() -> None:
+    base = power_record(
+        id="gem-alpha",
+        externalIds={"wikidata": "Q100", "gemPlant": "G100"},
+        plantId="gem-alpha",
+    )
+    stronger = power_record(
+        id="official-alpha",
+        externalIds={"WikiData": "Q100", "official": "OFF100"},
+        plantId="official-alpha",
+        sourceType="official_verified",
+        sourceIds=["official"],
+    )
+    duplicate_source_id_a = power_record(
+        id="duplicate",
+        name="Plant A",
+        plantName="Plant A",
+        operator="A Operator",
+        coordinates=[1, 1],
+        externalIds={},
+        plantId=None,
+    )
+    duplicate_source_id_b = power_record(
+        id="duplicate",
+        name="Plant B",
+        plantName="Plant B",
+        operator="B Operator",
+        coordinates=[20, 20],
+        externalIds={},
+        plantId=None,
+    )
+
+    base_id = canonicalize_power_plants([base])["plants"][0]["id"]
+    with_stronger = canonicalize_power_plants([stronger, base])["plants"][0]["id"]
+    forward = canonicalize_power_plants([base, duplicate_source_id_a, duplicate_source_id_b])
+    reverse = canonicalize_power_plants([duplicate_source_id_b, duplicate_source_id_a, base])
+
+    assert base_id == with_stronger
+    assert [plant["id"] for plant in forward["plants"]] == [plant["id"] for plant in reverse["plants"]]
+    assert len({plant["id"] for plant in forward["plants"]}) == 3
+    assert all(plant["id"].startswith("wattlas-plant-") for plant in forward["plants"])
+    assert len({record["id"] for record in forward["records"]}) == 3
+    assert [record["id"] for record in forward["records"]] == [
+        record["id"] for record in reverse["records"]
+    ]
+
+
+def test_incomplete_units_use_compatible_aggregate_capacity_fallback() -> None:
+    missing_unit = power_record(
+        id="gem-unit-missing",
+        name="Alpha Unit 1",
+        unitId="gem-unit-missing",
+        externalIds={"gemPlant": "G-ALPHA", "gemUnit": "U-MISSING"},
+        capacityMw=None,
+        capacityValueKind="unavailable",
+    )
+    aggregate = power_record(
+        id="wri-alpha-aggregate",
+        unitId=None,
+        externalIds={"gemPlant": "G-ALPHA", "wri": "W-ALPHA"},
+        capacityMw={"low": 100, "central": 100, "high": 100},
+    )
+
+    plant = canonicalize_power_plants([missing_unit, aggregate])["plants"][0]
+
+    assert plant["operatingCapacityMw"] == {"low": 100.0, "central": 100.0, "high": 100.0}
+    assert plant["operatingCapacityCoverage"]["method"] == "aggregate_fallback"
+    assert plant["operatingCapacityCoverage"]["knownUnitCount"] == 0
+    assert plant["operatingCapacityCoverage"]["totalUnitCount"] == 1
+
+
+def test_capacity_metric_kind_and_provenance_are_selected_atomically() -> None:
+    reported = power_record(
+        id="community-reported",
+        externalIds={"wikidata": "Q500"},
+        sourceType="community_mapped",
+        sourceIds=["community"],
+        capacityMw={"low": 80, "central": 90, "high": 100},
+        capacityValueKind="reported",
+    )
+    estimated = power_record(
+        id="official-estimated",
+        externalIds={"wikidata": "Q500"},
+        sourceType="official_verified",
+        sourceIds=["official"],
+        capacityMw={"low": 95, "central": 100, "high": 105},
+        capacityValueKind="estimated",
+    )
+
+    record = canonicalize_power_plants([reported, estimated])["records"][0]
+
+    assert record["capacityValueKind"] == "reported"
+    assert record["fieldProvenance"]["capacityValueKind"] == record["fieldProvenance"]["capacityMw"]
+    assert record["fieldProvenance"]["capacityMw"]["sourceIds"] == ["community"]
+
+
+def test_fuzzy_comparisons_are_blocked_below_quadratic_growth(monkeypatch: pytest.MonkeyPatch) -> None:
+    comparison_count = 0
+    original = power_plants._strong_fuzzy_duplicate
+
+    def counted(first: dict, second: dict, aliases: dict[str, str]) -> bool:
+        nonlocal comparison_count
+        comparison_count += 1
+        return original(first, second, aliases)
+
+    monkeypatch.setattr(power_plants, "_strong_fuzzy_duplicate", counted)
+    records = [
+        power_record(
+            id=f"synthetic-{index}",
+            name=f"Synthetic Plant {index}",
+            plantName=f"Synthetic Plant {index}",
+            operator=f"Operator {index}",
+            coordinates=[-170 + (index % 340), -70 + (index % 140)],
+            externalIds={},
+            plantId=f"synthetic-{index}",
+        )
+        for index in range(3_000)
+    ]
+
+    result = canonicalize_power_plants(records)
+
+    assert len(result["records"]) == 3_000
+    assert comparison_count < 30_000
+
+
+def test_large_shared_plant_does_not_compare_every_distinct_unit_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    comparison_count = 0
+    original = power_plants._strong_fuzzy_duplicate
+
+    def counted(first: dict, second: dict, aliases: dict[str, str]) -> bool:
+        nonlocal comparison_count
+        comparison_count += 1
+        return original(first, second, aliases)
+
+    monkeypatch.setattr(power_plants, "_strong_fuzzy_duplicate", counted)
+    records = [
+        power_record(
+            id=f"gem-unit-{index}",
+            unitId=f"gem-unit-{index}",
+            name=f"Alpha Unit {index}",
+            externalIds={"gemPlant": "GEM-MEGA", "gemUnit": f"GEM-U-{index}"},
+        )
+        for index in range(3_000)
+    ]
+
+    result = canonicalize_power_plants(records)
+
+    assert len(result["units"]) == 3_000
+    assert len(result["plants"]) == 1
+    assert comparison_count < 30_000
