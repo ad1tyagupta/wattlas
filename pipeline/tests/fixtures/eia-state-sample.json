@@ -1,0 +1,57 @@
+{
+  "response": {
+    "frequency": "annual",
+    "data": [
+      {
+        "period": "2024",
+        "stateid": "TX",
+        "series": "sales",
+        "value": "82400000",
+        "unit": "MWh",
+        "series-description": "Total retail sales"
+      },
+      {
+        "period": "2024",
+        "stateid": "TX",
+        "series": "generation",
+        "value": "75000000",
+        "unit": "MWh",
+        "fueltypeid": "ALL",
+        "series-description": "Net generation"
+      },
+      {
+        "period": "2024",
+        "stateid": "TX",
+        "series": "generation",
+        "value": "20000000",
+        "unit": "MWh",
+        "fueltypeid": "NG",
+        "series-description": "Net generation from natural gas"
+      },
+      {
+        "period": "2024",
+        "stateid": "TX",
+        "series": "capability",
+        "value": "152000",
+        "unit": "MW",
+        "series-description": "Net summer capability"
+      },
+      {
+        "period": "2024",
+        "stateid": "TX",
+        "series": "peak-demand",
+        "value": "86100",
+        "unit": "MW",
+        "series-description": "Annual peak demand"
+      },
+      {
+        "period": "2024",
+        "balancingAuthority": "ERCO",
+        "series": "net-interchange",
+        "value": "7700000",
+        "unit": "MWh",
+        "series-description": "Balancing authority net interchange"
+      }
+    ]
+  }
+}

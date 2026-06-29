@@ -1,0 +1,6 @@
+Area,ISO 3 code,Year,Category,Variable,Unit,Value,Source URL,Data source,Last Updated,Licence
+United States,USA,2024,Electricity demand,Electricity demand,TWh,4120.5,https://ember-energy.org/data/yearly-electricity-data,Ember,2026-05-01,CC-BY-4.0
+United States,USA,2024,Electricity generation,Electricity generation,TWh,4380.0,https://ember-energy.org/data/yearly-electricity-data,Ember,2026-05-01,CC-BY-4.0
+United States,USA,2024,Electricity generation,Solar,TWh,303.2,https://ember-energy.org/data/yearly-electricity-data,Ember,2026-05-01,CC-BY-4.0
+United States,USA,2024,Electricity generation,Wind,TWh,453.5,https://ember-energy.org/data/yearly-electricity-data,Ember,2026-05-01,CC-BY-4.0
+France,FRA,2024,Electricity demand,Electricity demand,GWh,,https://ember-energy.org/data/yearly-electricity-data,Ember,2026-05-01,CC-BY-4.0

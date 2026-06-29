@@ -1,0 +1,1 @@
+source_region_code,country_iso3,year,demand_value,demand_unit,generation_value,generation_unit,peak_value,peak_unit,net_interchange_value,net_interchange_unit,observed_unmet_demand_value,observed_unmet_demand_unit,generation_mix_json,source_id,source_record_id,source_url,licence,updated_at,observation_date,value_kind,method_id

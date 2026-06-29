@@ -21,4 +21,12 @@ QLEVER_OSM_URL = os.getenv("QLEVER_OSM_URL", "https://qlever.dev/api/osm-planet"
 GEM_GIPT_PATH = Path(os.environ["GEM_GIPT_PATH"]) if os.getenv("GEM_GIPT_PATH") else None
 GEM_GIPT_URL = os.getenv("GEM_GIPT_URL") or None
 WRI_POWER_URL = os.getenv("WRI_POWER_URL") or None
+EIA_API_V2_URL = os.getenv("EIA_API_V2_URL") or None
+EIA_API_KEY = os.getenv("EIA_API_KEY") or None
+REGIONAL_ELECTRICITY_OBSERVED_PATH = Path(
+    os.getenv(
+        "REGIONAL_ELECTRICITY_OBSERVED_PATH",
+        str(PROJECT_ROOT / "data" / "curated" / "regional-electricity-observed.csv"),
+    )
+)
 MODEL_VERSION = "2.1.0"
