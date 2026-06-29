@@ -683,6 +683,24 @@ def test_ambiguous_duplicate_source_ids_without_durable_identity_are_rejected() 
         canonicalize_power_plants([first, second])
 
 
+def test_conflicting_clusters_with_same_full_anchor_and_no_relationship_are_rejected() -> None:
+    first = power_record(
+        id="conflict-a",
+        externalIds={"wikidata": "Q-SAME", "official": "OFF-A"},
+        plantId=None,
+        unitId=None,
+    )
+    second = power_record(
+        id="conflict-b",
+        externalIds={"wikidata": "Q-SAME", "official": "OFF-B"},
+        plantId=None,
+        unitId=None,
+    )
+
+    with pytest.raises(ValueError, match="ambiguous duplicate canonical record ID"):
+        canonicalize_power_plants([first, second])
+
+
 def test_summary_id_aliases_preserve_previous_gem_anchor_when_wikidata_arrives() -> None:
     gem = power_record(
         id="gem-continuity",
@@ -729,13 +747,32 @@ def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
 
     before_result = canonicalize_power_plants([first, second])
     before = before_result["plants"]
+    stronger = power_record(
+        id="stronger-source-row",
+        externalIds={
+            "wikidata": f"{common_prefix}1",
+            "official": "OFF-COLLISION-A",
+        },
+        plantId="collision-a",
+        name="Stronger corrected name",
+        coordinates=[2, 2],
+        sourceType="official_verified",
+        sourceIds=["official"],
+    )
     first["owner"] = "Owner version two"
     first["updatedAt"] = "2030-01-01"
-    after = canonicalize_power_plants([second, first])["plants"]
+    owner_result = canonicalize_power_plants([second, first])
+    assert [plant["id"] for plant in before] == [
+        plant["id"] for plant in owner_result["plants"]
+    ]
+    first["name"] = "Corrected source name"
+    first["plantName"] = "Corrected source plant name"
+    first["coordinates"] = [3, 3]
+    metadata_result = canonicalize_power_plants([second, first])
+    stronger_result = canonicalize_power_plants([stronger, second, first])
 
-    assert [plant["id"] for plant in before] == [plant["id"] for plant in after]
     assert [plant.get("idAliases", []) for plant in before] == [
-        plant.get("idAliases", []) for plant in after
+        plant.get("idAliases", []) for plant in owner_result["plants"]
     ]
     assert len({plant["id"] for plant in before}) == 2
     assert all(len(plant.get("idAliases", [])) == len(set(plant.get("idAliases", []))) for plant in before)
@@ -752,6 +789,21 @@ def test_collision_suffixes_ignore_mutable_owner_metadata() -> None:
         + re.sub(r"[^a-z0-9]+", "-", f"{common_prefix}1".casefold()).strip("-")[:64]
     )
     assert record_aliases.count(unsuffixed_record_id) == 1
+    before_record_ids = sorted(record["id"] for record in before_result["records"])
+    after_record_ids = sorted(record["id"] for record in stronger_result["records"])
+    assert before_record_ids == after_record_ids
+    for result in (before_result, owner_result, metadata_result, stronger_result):
+        primary_ids = {record["id"] for record in result["records"]}
+        aliases = [
+            alias
+            for record in result["records"]
+            for alias in record.get("idAliases", [])
+        ]
+        assert len(aliases) == len(set(aliases))
+        assert not primary_ids & set(aliases)
+    assert canonicalize_power_plants([first, second, stronger])["records"] == stronger_result[
+        "records"
+    ]
 
 
 def test_incomplete_units_use_compatible_aggregate_capacity_fallback() -> None:

@@ -895,7 +895,7 @@ def _record_anchor_id(namespace: str, identifier: str) -> str | None:
 
 def _canonical_record_identity(
     records: list[dict[str, Any]],
-) -> tuple[str, list[str], list[str]]:
+) -> tuple[str, str, list[str], list[str]]:
     source_record_ids = sorted(
         {
             identifier
@@ -934,9 +934,11 @@ def _canonical_record_identity(
     if anchors:
         ordered_anchors = sorted(anchors)
         primary_id = ordered_anchors[0][3]
+        canonical_anchor = f"{ordered_anchors[0][1]}:{ordered_anchors[0][2]}"
         alternate_anchors = {anchor[3] for anchor in ordered_anchors[1:]}
     elif source_record_ids:
         primary_id = source_record_ids[0]
+        canonical_anchor = f"source:{primary_id}"
         alternate_anchors = set()
     else:
         raise ValueError("canonical power records require a durable anchor or source-row ID")
@@ -949,7 +951,7 @@ def _canonical_record_identity(
     aliases = sorted(
         (set(source_record_ids) | alternate_anchors | existing_aliases) - {primary_id}
     )
-    return primary_id, aliases, source_record_ids
+    return primary_id, canonical_anchor, aliases, source_record_ids
 
 
 def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -959,6 +961,7 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
         "externalIdAliases",
         "externalIds",
         "fieldProvenance",
+        "canonicalRecordAnchor",
         "id",
         "idAliases",
         "sourceRecordIds",
@@ -992,8 +995,11 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
             merged[field] = deepcopy(location_record[field])
             provenance[field] = _provenance(location_record, field)
 
-    canonical_id, id_aliases, source_record_ids = _canonical_record_identity(records)
+    canonical_id, canonical_anchor, id_aliases, source_record_ids = _canonical_record_identity(
+        records
+    )
     merged["id"] = canonical_id
+    merged["canonicalRecordAnchor"] = canonical_anchor
     merged["sourceRecordIds"] = source_record_ids
     if id_aliases:
         merged["idAliases"] = id_aliases
@@ -1042,14 +1048,20 @@ def _merge_record_cluster(records: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _durable_record_identity(record: dict[str, Any]) -> dict[str, Any]:
+def _record_collision_base(record: dict[str, Any]) -> dict[str, Any]:
     return {
-        "externalIds": record.get("externalIds") or {},
-        "plantId": record.get("plantId"),
-        "unitId": record.get("unitId"),
+        "canonicalRecordAnchor": record.get("canonicalRecordAnchor"),
+        "entityKind": "unit" if _unit_record(record) else "plant",
         "canonicalCountryKey": record.get("canonicalCountryKey"),
-        "sourceRecordIds": sorted(record.get("sourceRecordIds") or []),
     }
+
+
+def _record_relationship_anchor(record: dict[str, Any]) -> str | None:
+    if _unit_record(record):
+        identifier = canonical_identifier(record.get("unitId"))
+        return f"unit:{identifier}" if identifier is not None else None
+    identifier = canonical_identifier(record.get("plantId"))
+    return f"plant:{identifier}" if identifier is not None else None
 
 
 def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1061,21 +1073,33 @@ def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for base_id, collisions in by_base.items():
         if len(collisions) < 2:
             continue
-        durable_identities = [_stable_json(_durable_record_identity(record)) for record in collisions]
+        collision_bases = [_stable_json(_record_collision_base(record)) for record in collisions]
+        base_counts: dict[str, int] = {}
+        for base in collision_bases:
+            base_counts[base] = base_counts.get(base, 0) + 1
+        durable_identities = []
+        for record, base in zip(collisions, collision_bases, strict=True):
+            identity = _record_collision_base(record)
+            if base_counts[base] > 1:
+                identity["relationshipAnchor"] = _record_relationship_anchor(record)
+            durable_identities.append(_stable_json(identity))
         if len(set(durable_identities)) != len(durable_identities):
             raise ValueError(
                 f"ambiguous duplicate canonical record ID {base_id!r} lacks distinct durable identity"
             )
+        identity_by_object = {
+            id(record): durable_identity
+            for record, durable_identity in zip(collisions, durable_identities, strict=True)
+        }
         used: set[str] = set()
         ordered = sorted(
             collisions,
-            key=lambda record: sha256(
-                _stable_json(_durable_record_identity(record)).encode()
-            ).hexdigest(),
+            key=lambda record: identity_by_object[id(record)],
         )
         for position, record in enumerate(ordered):
+            durable_identity = identity_by_object[id(record)]
             digest = sha256(
-                _stable_json(_durable_record_identity(record)).encode()
+                durable_identity.encode()
             ).hexdigest()[:10]
             candidate = f"{base_id}-{digest}"
             ordinal = 2
@@ -1089,6 +1113,33 @@ def _unique_record_ids(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 )
             record["id"] = candidate
     return sorted(records, key=lambda record: (record["id"], _stable_json(record)))
+
+
+def _unique_record_aliases(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    primary_ids = {record["id"] for record in records}
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        for alias in set(record.get("idAliases", [])):
+            if alias not in primary_ids:
+                candidates.setdefault(alias, []).append(record)
+        record.pop("idAliases", None)
+    owned: dict[int, list[str]] = {}
+    for alias, owners in sorted(candidates.items()):
+        owner = min(
+            owners,
+            key=lambda record: (
+                str(record.get("canonicalRecordAnchor") or ""),
+                str(record.get("canonicalCountryKey") or ""),
+                str(_record_relationship_anchor(record) or ""),
+                record["id"],
+            ),
+        )
+        owned.setdefault(id(owner), []).append(alias)
+    for record in records:
+        aliases = sorted(owned.get(id(record), []))
+        if aliases:
+            record["idAliases"] = aliases
+    return records
 
 
 def _sum_ranges(records: Iterable[dict[str, Any]]) -> dict[str, float] | None:
@@ -1420,11 +1471,13 @@ def canonicalize_power_plants(
         for record in records
     ]
     normalized.sort(key=lambda record: (record["id"], _stable_json(record)))
-    canonical_records = _unique_record_ids(
-        [
-            _merge_record_cluster(cluster)
-            for cluster in _indexed_clusters(normalized, alias_map, plant_group=False)
-        ]
+    canonical_records = _unique_record_aliases(
+        _unique_record_ids(
+            [
+                _merge_record_cluster(cluster)
+                for cluster in _indexed_clusters(normalized, alias_map, plant_group=False)
+            ]
+        )
     )
     plants = _unique_summary_ids(
         [
