@@ -342,6 +342,21 @@ def test_forward_increment_keeps_prior_once_only_lineage() -> None:
     assert result[0]["appliedIncrementIds"] == ["project-one-2027", "project-zero-2027"]
 
 
+def test_forward_increment_rejects_summed_range_overflow() -> None:
+    base = [{
+        "geographyId": "AA-1", "countryIso3": "AAA", "year": 2027,
+        "demandGwh": {"low": 1e308, "central": 1e308, "high": 1e308},
+        "sourceIds": ["forecast-base"],
+    }]
+    increment = [{
+        "incrementId": "overflow-project", "geographyId": "AA-1", "targetYear": 2027,
+        "demandGwh": {"low": 1e308, "central": 1e308, "high": 1e308},
+        "sourceIds": ["overflow-project-source"],
+    }]
+    with pytest.raises(ValueError, match="finite nonnegative"):
+        add_forward_demand_increments(base, increment)
+
+
 @pytest.mark.parametrize("bad_source_ids", [[None], [42], [{}], [""], ["source-a", "source-a"]])
 def test_source_ids_require_unique_nonempty_strings(bad_source_ids: list[object]) -> None:
     with pytest.raises(ValueError, match="source IDs"):

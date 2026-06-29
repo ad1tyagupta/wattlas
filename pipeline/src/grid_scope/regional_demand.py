@@ -564,10 +564,10 @@ def add_forward_demand_increments(
             key: math.fsum(row["demandGwh"][key] for row in group)
             for key in ("low", "central", "high")
         }
-        base["demandGwh"] = {
+        base["demandGwh"] = _range({
             key: base_range[key] + additions[key]
             for key in ("low", "central", "high")
-        }
+        }, label=f"summed forward demand for {geography_id} {target_year}")
         base["appliedIncrementIds"] = sorted(
             set(base.get("appliedIncrementIds") or [])
             | {row["incrementId"] for row in group}
