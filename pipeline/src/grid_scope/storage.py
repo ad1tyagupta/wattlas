@@ -4,10 +4,20 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import json
 from pathlib import Path
+from dataclasses import dataclass
 
 import duckdb
 
 from grid_scope.connectors.base import CaptureRecord
+
+
+@dataclass(frozen=True)
+class StoredCapture:
+    source_id: str
+    checksum: str
+    path: Path
+    media_type: str
+    retrieved_at: datetime
 
 
 class RawCaptureStore:
@@ -58,17 +68,34 @@ class RawCaptureStore:
         return CaptureRecord(source_id, checksum, path, media_type)
 
     def latest_path(self, source_id: str) -> Path | None:
+        capture = self.latest_capture(source_id)
+        return capture.path if capture else None
+
+    def latest_capture(self, source_id: str) -> StoredCapture | None:
         with duckdb.connect(str(self.database_path)) as connection:
             row = connection.execute(
                 """
-                SELECT path FROM raw_captures
+                SELECT source_id, checksum, path, media_type,
+                       CAST(retrieved_at AS VARCHAR)
+                FROM raw_captures
                 WHERE source_id = ?
                 ORDER BY retrieved_at DESC
                 LIMIT 1
                 """,
                 [source_id],
             ).fetchone()
-        return Path(row[0]) if row else None
+        if row is None:
+            return None
+        retrieved_at = datetime.fromisoformat(str(row[4]).replace("Z", "+00:00"))
+        if retrieved_at.tzinfo is None:
+            retrieved_at = retrieved_at.replace(tzinfo=UTC)
+        return StoredCapture(
+            source_id=str(row[0]),
+            checksum=str(row[1]),
+            path=Path(row[2]),
+            media_type=str(row[3]),
+            retrieved_at=retrieved_at,
+        )
 
     def save_canonical_assets(self, assets: list[dict]) -> None:
         with duckdb.connect(str(self.database_path)) as connection:
