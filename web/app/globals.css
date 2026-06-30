@@ -274,6 +274,10 @@ button {
   background: linear-gradient(90deg, #26312f, #72564d, #a85e51, var(--rust));
 }
 
+.legend-ramp.powerBalance {
+  background: linear-gradient(90deg, #9e4e45, #a4864e, #4d8879, #72d9bd);
+}
+
 .legend-labels {
   display: flex;
   justify-content: space-between;

@@ -4,6 +4,7 @@ const lenses: Array<{ id: LensKey; label: string; description: string }> = [
   { id: "infrastructureDemand", label: "Infrastructure Demand", description: "Primary opportunity signal" },
   { id: "siteAttractiveness", label: "Site Attractiveness", description: "Delivery and location conditions" },
   { id: "systemRisk", label: "System Risk", description: "Constraint and resilience exposure" },
+  { id: "powerBalance", label: "Power Balance", description: "Demand versus dependable supply" },
 ];
 
 type Props = { activeLens: LensKey; onChange: (lens: LensKey) => void };

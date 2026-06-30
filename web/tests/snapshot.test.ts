@@ -145,6 +145,42 @@ describe("power balance snapshot contracts", () => {
     expect(() => generatorCountryShardSchema.parse({ type: "FeatureCollection", features: [base] })).toThrow();
     expect(() => generatorIndexSchema.parse({ countries: { US: { bbox: [0, 0, 1, 1], path: "../US.geojson", featureCount: 1, checksum: "bad", bytes: -1, capacityMw: 1 } }, totals: { featureCount: 1, capacityMw: 1 } })).toThrow();
   });
+
+  it("accepts the pipeline's camel-case power-generation asset contract", () => {
+    const asset = assetPropertiesSchema.parse({
+      id: "generator-de-solar-1-unit-a", name: "Example Solar Unit A",
+      geographyId: "DE12", country: "DE", category: "power_generation", subtype: null,
+      lifecycle: "operational", demandMw: null, technology: "solar",
+      secondaryFuel: "battery storage", capacityMw: { low: 98, central: 100, high: 102 },
+      dependableCapacityMw: { low: 8, central: 12, high: 16 },
+      annualGenerationGwh: { low: 90, central: 105, high: 120 },
+      commissioningYear: 2020, retirementYear: 2050,
+      plantId: "generator-de-solar-1", unitId: "unit-a",
+      locationPrecision: "exact", valueKind: "reported",
+      sourceIds: ["official-generator-register"], sourceType: "research_verified", confidence: 90,
+    });
+    expect(asset.category).toBe("power_generation");
+    expect(asset.subtype).toBeNull();
+    expect(asset.technology).toBe("solar");
+    expect(asset.annualGenerationGwh?.central).toBe(105);
+  });
+
+  it("enforces category-specific asset fields and generation provenance", () => {
+    const base = {
+      id: "asset-1", name: "Asset", geographyId: "DE12", country: "DE",
+      lifecycle: "operational", demandMw: null, locationPrecision: "exact",
+      valueKind: "reported", sourceIds: ["source-1"], confidence: 80,
+    };
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: null })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: "hyperscale", technology: "solar" })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: null, technology: "fusion" })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: null, technology: "solar", capacityMw: { low: -1, central: 2, high: 3 } })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: null, technology: "solar", commissioningYear: 2030, retirementYear: 2029 })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "power_generation", subtype: null, technology: "solar", capacityMw: { low: 1, central: 2, high: 3 }, sourceIds: [] })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "data_centre", subtype: "desalination" })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "water_infrastructure", subtype: "hyperscale" })).toThrow();
+    expect(() => assetPropertiesSchema.parse({ ...base, category: "data_centre", subtype: "hyperscale", technology: "solar" })).toThrow();
+  });
 });
 
 describe("lazy snapshot layers", () => {

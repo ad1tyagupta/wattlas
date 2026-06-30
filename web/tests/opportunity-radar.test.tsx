@@ -7,7 +7,7 @@ import type { SnapshotData } from "@/lib/snapshot/types";
 afterEach(cleanup);
 
 vi.mock("@/components/map/global-map", () => ({
-  GlobalMap: ({ onSelect }: { onSelect: (id: string) => void }) => <div data-testid="global-map">Map<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button></div>,
+  GlobalMap: ({ lens, onSelect }: { lens: string; onSelect: (id: string) => void }) => <div data-testid="global-map">Map lens: {lens}<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button></div>,
 }));
 
 const snapshot = {
@@ -75,6 +75,10 @@ describe("OpportunityRadar", () => {
     expect(screen.getByRole("button", { name: "Infrastructure Demand" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Site Attractiveness" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "System Risk" })).toBeInTheDocument();
+    const powerBalance = screen.getByRole("button", { name: "Power Balance" });
+    expect(powerBalance).toHaveTextContent("04");
+    fireEvent.click(powerBalance);
+    expect(screen.getByTestId("global-map")).toHaveTextContent("powerBalance");
     expect(screen.getAllByText("2030").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^LIVE$/)).not.toBeInTheDocument();
   });

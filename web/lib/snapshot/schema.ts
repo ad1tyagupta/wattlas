@@ -190,9 +190,18 @@ export const assetPropertiesSchema = z.object({
   name: z.string(),
   geographyId: z.string(),
   category: assetCategorySchema,
-  subtype: assetSubtypeSchema,
+  subtype: assetSubtypeSchema.nullable().optional(),
   lifecycle: lifecycleStateSchema,
   demandMw: demandRangeSchema.nullable().default(null),
+  technology: generationTechnologySchema.nullable().optional(),
+  secondaryFuel: z.string().nullable().optional(),
+  capacityMw: demandRangeSchema.nullable().optional(),
+  dependableCapacityMw: demandRangeSchema.nullable().optional(),
+  annualGenerationGwh: demandRangeSchema.nullable().optional(),
+  commissioningYear: z.number().int().positive().nullable().optional(),
+  retirementYear: z.number().int().positive().nullable().optional(),
+  plantId: z.string().nullable().optional(),
+  unitId: z.string().nullable().optional(),
   targetYear: z.number().int().min(2026).max(2031).nullable().optional(),
   locationPrecision: locationPrecisionSchema,
   valueKind: valueKindSchema,
@@ -201,7 +210,7 @@ export const assetPropertiesSchema = z.object({
   country: z.string().length(2),
   confidence: z.number().min(0).max(100),
   assumptionId: z.string().optional(),
-  sourceType: z.enum(["community_mapped", "official_verified"]).default("official_verified"),
+  sourceType: z.enum(["community_mapped", "official_verified", "research_verified", "modelled"]).default("official_verified"),
   sourceUrl: z.string().url().nullable().optional(),
   externalIds: z.record(z.string(), z.string()).default({}),
   lastObservedAt: z.string().datetime().nullable().optional(),
@@ -220,9 +229,42 @@ export const assetPropertiesSchema = z.object({
   openingDate: z.string().nullable().optional(),
   reportedPower: z.string().nullable().optional(),
   admin1Id: z.string().nullable().optional(),
-}).refine(({ demandMw, sourceIds }) => demandMw === null || sourceIds.length > 0, {
-  message: "Demand-contributing assets require at least one source",
-  path: ["sourceIds"],
+}).superRefine((asset, context) => {
+  const sourceIdsAreValid = asset.sourceIds.length > 0 && asset.sourceIds.every((sourceId) => sourceId.trim().length > 0);
+  if (asset.demandMw !== null && !sourceIdsAreValid) {
+    context.addIssue({ code: "custom", message: "Demand-contributing assets require nonblank sources", path: ["sourceIds"] });
+  }
+  const generationFields = [
+    asset.technology, asset.secondaryFuel, asset.capacityMw, asset.dependableCapacityMw,
+    asset.annualGenerationGwh, asset.commissioningYear, asset.retirementYear,
+    asset.plantId, asset.unitId,
+  ];
+  if (asset.category === "power_generation") {
+    if (asset.subtype != null) {
+      context.addIssue({ code: "custom", message: "Power generation cannot have an infrastructure subtype", path: ["subtype"] });
+    }
+    if (asset.technology == null) {
+      context.addIssue({ code: "custom", message: "Power generation requires a technology", path: ["technology"] });
+    }
+    const hasGenerationMetrics = asset.capacityMw != null || asset.dependableCapacityMw != null || asset.annualGenerationGwh != null;
+    if (hasGenerationMetrics && (asset.valueKind === "reported" || asset.valueKind === "estimated") && !sourceIdsAreValid) {
+      context.addIssue({ code: "custom", message: "Reported or estimated generation metrics require nonblank sources", path: ["sourceIds"] });
+    }
+    if (asset.commissioningYear != null && asset.retirementYear != null && asset.retirementYear < asset.commissioningYear) {
+      context.addIssue({ code: "custom", message: "Retirement cannot precede commissioning", path: ["retirementYear"] });
+    }
+    return;
+  }
+  if (asset.subtype == null) {
+    context.addIssue({ code: "custom", message: "Infrastructure assets require a subtype", path: ["subtype"] });
+  } else if (asset.category === "data_centre" && !["hyperscale", "colocation", "cloud", "ai_hpc", "other_data_centre"].includes(asset.subtype)) {
+    context.addIssue({ code: "custom", message: "Data centres require a data-centre subtype", path: ["subtype"] });
+  } else if (asset.category === "water_infrastructure" && !["desalination", "wastewater", "water_reuse", "pipeline_pumping", "reservoir"].includes(asset.subtype)) {
+    context.addIssue({ code: "custom", message: "Water infrastructure requires a water subtype", path: ["subtype"] });
+  }
+  if (generationFields.some((value) => value != null)) {
+    context.addIssue({ code: "custom", message: "Infrastructure assets cannot contain generation-only fields", path: ["technology"] });
+  }
 });
 
 export const regionFeatureCollectionSchema = z.object({
