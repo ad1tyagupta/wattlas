@@ -20,6 +20,11 @@ YEAR_FACTORS = {
     2031: 1.04,
 }
 
+ADM1_UPSTREAM_PROPERTIES = frozenset({
+    "id", "name", "country", "level", "parentId", "peerLevel", "sourceId",
+    "boundaryPerspective", "population",
+})
+
 
 def _supporting_scores(drivers: dict[str, float]) -> tuple[int, int]:
     load = drivers["projected_load"]
@@ -290,8 +295,11 @@ def _enrich_regional_feature(
     feature: dict[str, Any],
     assets: list[dict[str, Any]],
     generated_at: str,
+    compact_upstream: bool = False,
 ) -> dict[str, Any]:
     original = feature.get("properties") or {}
+    if compact_upstream:
+        original = {key: value for key, value in original.items() if key in ADM1_UPSTREAM_PROPERTIES}
     region_id = original.get("id") or feature.get("id")
     payload = _scoring_payload(assets)
     current = payload.pop("current")
@@ -451,7 +459,7 @@ def build_global_snapshot_artifacts(
         if geography_id:
             region_assets.setdefault(geography_id, []).append(asset)
     enriched_admin1 = [
-        _enrich_regional_feature(feature, admin1_assets.get((feature.get("properties") or {}).get("id") or feature.get("id"), []), generated_at)
+        _enrich_regional_feature(feature, admin1_assets.get((feature.get("properties") or {}).get("id") or feature.get("id"), []), generated_at, compact_upstream=True)
         for feature in admin1_features
     ]
     enriched_regions = [

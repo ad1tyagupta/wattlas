@@ -3,16 +3,28 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 from hashlib import sha256
 from pathlib import Path
 from pathlib import PurePosixPath
 
+from grid_scope.generator_artifacts import (
+    generator_longitude_centroid,
+    generator_point_bbox,
+)
+
+SNAPSHOT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
 
 class SnapshotPublisher:
     def __init__(self, publish_dir: Path) -> None:
         self.publish_dir = publish_dir
+        if self.publish_dir.is_symlink():
+            raise ValueError("publish directory cannot be a symlink")
         self.snapshots_dir = publish_dir / "snapshots"
+        if self.snapshots_dir.is_symlink():
+            raise ValueError("snapshots directory cannot be a symlink")
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
 
     def publish(
@@ -21,33 +33,58 @@ class SnapshotPublisher:
         artifacts: dict[str, bytes],
         manifest: dict[str, object],
     ) -> Path:
+        if not isinstance(snapshot_id, str) or not SNAPSHOT_ID_PATTERN.fullmatch(snapshot_id):
+            raise ValueError("snapshot ID must be a safe bounded slug")
+        if manifest.get("snapshotId") != snapshot_id:
+            raise ValueError("manifest snapshotId must match physical snapshot ID")
         self._validate(artifacts, manifest)
 
         temporary = self.snapshots_dir / f"{snapshot_id}.tmp"
         destination = self.snapshots_dir / snapshot_id
-        if temporary.exists():
-            shutil.rmtree(temporary)
-        temporary.mkdir(parents=True)
-
-        checksums: dict[str, str] = {}
-        for filename, body in artifacts.items():
-            target = temporary / filename
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
-            checksums[filename] = sha256(body).hexdigest()
-
-        complete_manifest = {**manifest, "checksums": checksums}
-        (temporary / "manifest.json").write_text(
-            json.dumps(complete_manifest, indent=2, sort_keys=True) + "\n"
-        )
-        if destination.exists():
-            shutil.rmtree(destination)
-        os.replace(temporary, destination)
-
         latest_temp = self.publish_dir / "latest.json.tmp"
-        latest_temp.write_text(json.dumps(complete_manifest, indent=2) + "\n")
-        os.replace(latest_temp, self.publish_dir / "latest.json")
-        return destination
+        latest_path = self.publish_dir / "latest.json"
+        for path in (temporary, destination, latest_temp, latest_path):
+            if path.is_symlink():
+                raise ValueError(f"publisher control path cannot be a symlink: {path.name}")
+        if destination.exists():
+            raise ValueError(f"snapshot {snapshot_id} is immutable and already exists")
+        if temporary.exists():
+            self._safe_rmtree(temporary)
+        temporary.mkdir(parents=True)
+        committed = False
+        try:
+            checksums: dict[str, str] = {}
+            for filename, body in artifacts.items():
+                target = temporary / filename
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(body)
+                checksums[filename] = sha256(body).hexdigest()
+            complete_manifest = {**manifest, "checksums": checksums}
+            (temporary / "manifest.json").write_text(
+                json.dumps(complete_manifest, indent=2, sort_keys=True) + "\n"
+            )
+            os.replace(temporary, destination)
+            committed = True
+            latest_temp.write_text(json.dumps(complete_manifest, indent=2) + "\n")
+            os.replace(latest_temp, latest_path)
+            return destination
+        except BaseException:
+            if latest_temp.exists() and not latest_temp.is_symlink():
+                latest_temp.unlink()
+            if committed and destination.exists():
+                self._safe_rmtree(destination)
+            elif temporary.exists():
+                self._safe_rmtree(temporary)
+            raise
+
+    @staticmethod
+    def _safe_rmtree(path: Path) -> None:
+        if path.is_symlink():
+            raise ValueError(f"publisher refuses to remove symlink: {path.name}")
+        for child in path.rglob("*"):
+            if child.is_symlink():
+                raise ValueError(f"publisher refuses to follow symlink: {child}")
+        shutil.rmtree(path)
 
     @staticmethod
     def _validate(artifacts: dict[str, bytes], manifest: dict[str, object]) -> None:
@@ -58,6 +95,8 @@ class SnapshotPublisher:
                 or path.is_absolute()
                 or ".." in path.parts
                 or "\\" in filename
+                or str(path) != filename
+                or filename == "manifest.json"
                 or not isinstance(body, bytes)
             ):
                 raise ValueError(f"unsafe artifact path: {filename}")
@@ -80,6 +119,13 @@ class SnapshotPublisher:
             present = [identifier for identifier in identifiers if identifier is not None]
             if len(present) != len(set(present)):
                 raise ValueError(f"duplicate feature id in {filename}")
+            if filename in {"countries.geojson", "admin1.geojson", "regions.geojson"}:
+                semantic = [
+                    (feature.get("properties") or {}).get("id") or feature.get("id")
+                    for feature in collection.get("features", [])
+                ]
+                if any(not identifier for identifier in semantic) or len(semantic) != len(set(semantic)):
+                    raise ValueError(f"duplicate semantic geography id in {filename}")
         countries = json.loads(artifacts["countries.geojson"])
         if not countries.get("features"):
             raise ValueError("countries.geojson must contain at least one country")
@@ -107,6 +153,8 @@ class SnapshotPublisher:
             if (
                 not isinstance(coordinates, list)
                 or len(coordinates) != 2
+                or any(isinstance(value, bool) for value in coordinates)
+                or any(not isinstance(value, (int, float)) for value in coordinates)
                 or not -180 <= coordinates[0] <= 180
                 or not -90 <= coordinates[1] <= 90
             ):
@@ -232,6 +280,14 @@ class SnapshotPublisher:
                 })
             shard_rows.sort(key=lambda row: str(row["id"]))
             shard_capacity = math.fsum(float(row["capacityMw"]) for row in shard_rows)
+            expected_bbox = generator_point_bbox(row["coordinates"] for row in shard_rows)
+            if any(
+                not math.isclose(
+                    float(actual), float(expected), rel_tol=0.0, abs_tol=1e-9
+                )
+                for actual, expected in zip(entry["bbox"], expected_bbox, strict=True)
+            ):
+                raise ValueError(f"generator index bbox does not reconcile for {country}")
             for row in shard_rows:
                 regional_generators.setdefault(str(row["geographyId"]), []).append(row)
             entry_capacity = SnapshotPublisher._nonnegative_number(
@@ -321,7 +377,9 @@ class SnapshotPublisher:
             ):
                 raise ValueError(f"generator overview does not reconcile for ADM1 {geography_id}")
             coordinates = feature["geometry"]["coordinates"]
-            expected_longitude = math.fsum(float(row["coordinates"][0]) for row in rows) / len(rows)
+            expected_longitude = generator_longitude_centroid(
+                float(row["coordinates"][0]) for row in rows
+            )
             expected_latitude = math.fsum(float(row["coordinates"][1]) for row in rows) / len(rows)
             if not (
                 math.isclose(
@@ -387,7 +445,8 @@ class SnapshotPublisher:
             or len(value) != 4
             or any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value)
             or any(not math.isfinite(float(item)) for item in value)
-            or not -180 <= float(value[0]) <= float(value[2]) <= 180
+            or not -180 <= float(value[0]) <= 180
+            or not -180 <= float(value[2]) <= 180
             or not -90 <= float(value[1]) <= float(value[3]) <= 90
         ):
             raise ValueError(f"generator index contains invalid bbox for {country}")

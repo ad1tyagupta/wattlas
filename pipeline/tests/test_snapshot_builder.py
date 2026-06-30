@@ -257,7 +257,8 @@ def test_global_builder_publishes_compact_energy_and_sharded_generators() -> Non
             "geometry": {"type": "Polygon", "coordinates": []},
             "properties": {
                 "id": "US-CA", "name": "California", "country": "US",
-                "parentId": "US",
+                "parentId": "US", "upstreamMethods": [{"huge": True}],
+                "regionalEnergy": [{"must": "not leak"}], "secretField": "drop-me",
             },
         }],
     }
@@ -288,6 +289,9 @@ def test_global_builder_publishes_compact_energy_and_sharded_generators() -> Non
     assert "regionalEnergy" not in compact
     assert "generators" not in compact
     assert "methodId" not in compact
+    assert "upstreamMethods" not in compact
+    assert "regionalEnergy" not in compact
+    assert "secretField" not in compact
     energy = json.loads(artifacts["regional-energy.json"])
     assert list(energy) == ["US-CA"]
     assert [row["year"] for row in energy["US-CA"]] == list(range(2026, 2032))

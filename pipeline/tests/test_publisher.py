@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -221,6 +222,98 @@ def test_builder_output_with_adversarial_capacities_always_publishes(tmp_path) -
         assert (destination / "generators" / "US.geojson").exists()
 
 
+@pytest.mark.parametrize("snapshot_id", ["", ".", "..", "../escape", "a/b", "a\\b", "x" * 129])
+def test_publish_rejects_unsafe_snapshot_ids(tmp_path, snapshot_id) -> None:
+    with pytest.raises(ValueError, match="snapshot ID"):
+        SnapshotPublisher(tmp_path).publish(snapshot_id, global_artifacts(), {"snapshotId": snapshot_id})
+    assert not (tmp_path.parent / "escape").exists()
+
+
+def test_publish_requires_manifest_id_to_match_physical_snapshot(tmp_path) -> None:
+    with pytest.raises(ValueError, match="manifest snapshotId"):
+        SnapshotPublisher(tmp_path).publish("physical", global_artifacts(), {"snapshotId": "other"})
+
+
+def test_same_id_republish_and_latest_failure_preserve_last_good(tmp_path, monkeypatch) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    first = publisher.publish("first", global_artifacts(), {"snapshotId": "first"})
+    original = (first / "evidence.json").read_bytes()
+    changed = global_artifacts()
+    changed["evidence.json"] = b'{"sources":[{"id":"changed"}],"claims":[]}'
+    with pytest.raises(ValueError, match="immutable"):
+        publisher.publish("first", changed, {"snapshotId": "first"})
+    assert (first / "evidence.json").read_bytes() == original
+
+    real_replace = os.replace
+    def fail_latest(source, destination):
+        if str(destination).endswith("latest.json"):
+            raise OSError("simulated latest failure")
+        return real_replace(source, destination)
+    monkeypatch.setattr("grid_scope.publisher.os.replace", fail_latest)
+    with pytest.raises(OSError, match="latest failure"):
+        publisher.publish("second", global_artifacts(), {"snapshotId": "second"})
+    assert json.loads((tmp_path / "latest.json").read_text())["snapshotId"] == "first"
+    assert not (tmp_path / "snapshots" / "second").exists()
+
+
+def test_publish_rejects_symlinked_control_paths(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (publisher.snapshots_dir / "evil.tmp").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        publisher.publish("evil", global_artifacts(), {"snapshotId": "evil"})
+    assert outside.exists()
+    (publisher.snapshots_dir / "evil.tmp").unlink()
+    (publisher.snapshots_dir / "dest").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        publisher.publish("dest", global_artifacts(), {"snapshotId": "dest"})
+    (publisher.snapshots_dir / "dest").unlink()
+    (tmp_path / "latest.json.tmp").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        publisher.publish("latest-temp", global_artifacts(), {"snapshotId": "latest-temp"})
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        SnapshotPublisher(linked_root)
+
+
+def test_publish_rejects_semantic_duplicate_ids_and_bool_coordinates(tmp_path) -> None:
+    duplicate = global_artifacts()
+    duplicate["countries.geojson"] = b'{"type":"FeatureCollection","features":[{"id":"AE-1","properties":{"id":"AE"}},{"id":"AE-2","properties":{"id":"AE"}}]}'
+    with pytest.raises(ValueError, match="duplicate semantic"):
+        SnapshotPublisher(tmp_path).publish("duplicate", duplicate, {"snapshotId": "duplicate"})
+
+    invalid = global_artifacts()
+    invalid["assets.geojson"] = b'{"type":"FeatureCollection","features":[{"id":"bad","geometry":{"type":"Point","coordinates":[true,25]},"properties":{"country":"AE"}}]}'
+    with pytest.raises(ValueError, match="invalid coordinates"):
+        SnapshotPublisher(tmp_path).publish("bool", invalid, {"snapshotId": "bool"})
+
+
+def test_publish_reconciles_bbox_and_antimeridian_overview(tmp_path) -> None:
+    countries = {"type": "FeatureCollection", "features": [{"id": "US", "properties": {"id": "US"}}]}
+    admin1 = {"type": "FeatureCollection", "features": [{"id": "US-AK", "properties": {"id": "US-AK", "country": "US", "parentId": "US"}}]}
+    plants = [
+        {"id": "east", "country": "US", "geographyId": "US-AK", "coordinates": [179, 52], "technologies": ["wind"], "operatingCapacityMw": 1, "plannedCapacityMw": 0, "sourceIds": ["public"]},
+        {"id": "west", "country": "US", "geographyId": "US-AK", "coordinates": [-179, 54], "technologies": ["wind"], "operatingCapacityMw": 1, "plannedCapacityMw": 0, "sourceIds": ["public"]},
+    ]
+    artifacts = global_artifacts()
+    artifacts["countries.geojson"] = json.dumps(countries).encode()
+    artifacts["admin1.geojson"] = json.dumps(admin1).encode()
+    artifacts.update(build_generator_artifacts(countries, admin1, plants))
+    index = json.loads(artifacts["generators/index.json"])
+    assert index["countries"]["US"]["bbox"][0] > index["countries"]["US"]["bbox"][2]
+    overview = json.loads(artifacts["generator-overview.geojson"])
+    assert abs(abs(overview["features"][0]["geometry"]["coordinates"][0]) - 180) < 1e-9
+    SnapshotPublisher(tmp_path).publish("dateline", artifacts, {"snapshotId": "dateline"})
+
+    index["countries"]["US"]["bbox"] = [0, 0, 1, 1]
+    artifacts["generators/index.json"] = json.dumps(index).encode()
+    with pytest.raises(ValueError, match="bbox.*reconcile"):
+        SnapshotPublisher(tmp_path).publish("bad-bbox", artifacts, {"snapshotId": "bad-bbox"})
+
+
 def test_publish_rejects_bad_generator_index_and_keeps_last_good(tmp_path) -> None:
     publisher = SnapshotPublisher(tmp_path)
     publisher.publish("first", global_artifacts(), {"snapshotId": "first"})
@@ -255,3 +348,10 @@ def test_publish_rejects_unsafe_nested_artifact_path(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="unsafe artifact path"):
         SnapshotPublisher(tmp_path).publish("invalid", invalid, {"snapshotId": "invalid"})
+
+    noncanonical = global_artifacts()
+    noncanonical["nested//duplicate.json"] = b"{}"
+    with pytest.raises(ValueError, match="unsafe artifact path"):
+        SnapshotPublisher(tmp_path).publish(
+            "noncanonical", noncanonical, {"snapshotId": "noncanonical"}
+        )

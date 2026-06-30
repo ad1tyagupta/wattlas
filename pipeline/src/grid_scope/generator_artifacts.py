@@ -8,6 +8,37 @@ from numbers import Real
 from typing import Any, Iterable, Mapping
 
 
+def generator_longitude_bounds(longitudes: Iterable[float]) -> tuple[float, float]:
+    values = sorted(float(value) for value in longitudes)
+    if not values:
+        raise ValueError("longitude bounds require at least one point")
+    if len(values) == 1:
+        return values[0], values[0]
+    gaps = [
+        (values[(index + 1) % len(values)] + (360 if index == len(values) - 1 else 0) - value, index)
+        for index, value in enumerate(values)
+    ]
+    _, gap_index = max(gaps, key=lambda item: (item[0], -item[1]))
+    return values[(gap_index + 1) % len(values)], values[gap_index]
+
+
+def generator_point_bbox(coordinates: Iterable[Iterable[float]]) -> list[float]:
+    points = [tuple(point) for point in coordinates]
+    west, east = generator_longitude_bounds(point[0] for point in points)
+    latitudes = [point[1] for point in points]
+    return [west, min(latitudes), east, max(latitudes)]
+
+
+def generator_longitude_centroid(longitudes: Iterable[float]) -> float:
+    values = sorted(float(value) for value in longitudes)
+    west, east = generator_longitude_bounds(values)
+    if west <= east:
+        return math.fsum(values) / len(values)
+    unwrapped = [value + 360 if value < west else value for value in values]
+    mean = math.fsum(unwrapped) / len(unwrapped)
+    return mean - 360 if mean > 180 else mean
+
+
 def _dump(value: object) -> bytes:
     return json.dumps(
         value,
@@ -182,12 +213,10 @@ def build_generator_artifacts(
         body = _dump({"type": "FeatureCollection", "features": features})
         path = f"generators/{country}.geojson"
         artifacts[path] = body
-        longitudes = [row["coordinates"][0] for row in rows]
-        latitudes = [row["coordinates"][1] for row in rows]
         capacity = math.fsum(row["capacityMw"] for row in rows)
         country_capacities.append(capacity)
         index_countries[country] = {
-            "bbox": [min(longitudes), min(latitudes), max(longitudes), max(latitudes)],
+            "bbox": generator_point_bbox(row["coordinates"] for row in rows),
             "path": path,
             "featureCount": len(rows),
             "checksum": sha256(body).hexdigest(),
@@ -217,7 +246,7 @@ def build_generator_artifacts(
             "geometry": {
                 "type": "Point",
                 "coordinates": [
-                    math.fsum(row["coordinates"][0] for row in rows) / len(rows),
+                    generator_longitude_centroid(row["coordinates"][0] for row in rows),
                     math.fsum(row["coordinates"][1] for row in rows) / len(rows),
                 ],
             },
