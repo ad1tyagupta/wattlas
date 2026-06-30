@@ -50,6 +50,25 @@ class ScoreResult:
     available_points: int
 
 
+def _canonical_source_ids(
+    source_ids: list[str] | None,
+    *,
+    required: bool,
+) -> list[str]:
+    if source_ids is None:
+        if required:
+            raise ValueError("source_ids must contain nonblank provenance for available evidence")
+        return []
+    if not isinstance(source_ids, list) or any(
+        not isinstance(source_id, str) or not source_id.strip() for source_id in source_ids
+    ):
+        raise ValueError("source_ids must be a list of nonblank strings")
+    canonical = sorted({source_id.strip() for source_id in source_ids})
+    if required and not canonical:
+        raise ValueError("source_ids must contain nonblank provenance for available evidence")
+    return canonical
+
+
 def score_infrastructure_demand(
     *,
     projected_load_index: float | None = None,
@@ -65,6 +84,7 @@ def score_infrastructure_demand(
         "delivery_timing": delivery_timing_index,
         "local_load_shock": local_load_shock_index,
     }
+    canonical_source_ids = _canonical_source_ids(source_ids, required=False)
     contributions: list[ScoreContribution] = []
     coverage = 0
     for driver in DRIVERS:
@@ -82,7 +102,7 @@ def score_infrastructure_demand(
                 points=points,
                 max_points=driver.weight,
                 value_kind=ValueKind.ESTIMATED,
-                source_ids=source_ids or [],
+                source_ids=canonical_source_ids,
                 normalization="Fixed 0–100 threshold, Wattlas model 2.0.0",
                 method_version="infrastructure-demand-score-2.0.0",
             )
@@ -129,18 +149,24 @@ def score_power_balance(
         "forecast_demand_growth": "demand_growth_index",
         "supply_delivery_gap": "supply_delivery_index",
     }
+    if value_kinds is not None and not isinstance(value_kinds, Mapping):
+        raise ValueError("value_kinds must be a mapping keyed by Power Balance component ID")
     unknown_value_kinds = set(value_kinds or {}) - set(values)
     if unknown_value_kinds:
         raise ValueError(f"unknown Power Balance value-kind IDs: {sorted(unknown_value_kinds)}")
 
+    parsed_value_kinds: dict[str, ValueKind] = {}
+    for component_id, raw_kind in (value_kinds or {}).items():
+        try:
+            parsed_kind = ValueKind(raw_kind)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid value kind for {component_id}") from exc
+        if values[component_id] is None and parsed_kind != ValueKind.UNAVAILABLE:
+            raise ValueError(f"unavailable {component_id} cannot have an available value kind")
+        parsed_value_kinds[component_id] = parsed_kind
+
     available = any(value is not None for value in values.values())
-    if available and (
-        not isinstance(source_ids, list)
-        or not source_ids
-        or any(not isinstance(source_id, str) or not source_id.strip() for source_id in source_ids)
-    ):
-        raise ValueError("source_ids must contain nonblank provenance for available evidence")
-    canonical_source_ids = sorted(set(source_ids or []))
+    canonical_source_ids = _canonical_source_ids(source_ids, required=available)
 
     contributions: list[ScoreContribution] = []
     available_points = 0
@@ -175,10 +201,7 @@ def score_power_balance(
             if driver.id == "observed_unmet_demand"
             else ValueKind.ESTIMATED
         )
-        try:
-            value_kind = ValueKind((value_kinds or {}).get(driver.id, default_value_kind))
-        except ValueError as exc:
-            raise ValueError(f"invalid value kind for {driver.id}") from exc
+        value_kind = parsed_value_kinds.get(driver.id, default_value_kind)
         if value_kind == ValueKind.UNAVAILABLE:
             raise ValueError(f"available {driver.id} evidence cannot have unavailable value kind")
         if driver.id == "observed_unmet_demand" and value_kind not in {

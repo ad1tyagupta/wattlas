@@ -51,6 +51,18 @@ def test_confidence_does_not_change_demand_score() -> None:
     assert low_confidence.score == high_confidence.score == 67
 
 
+def test_infrastructure_demand_canonicalizes_duplicate_source_ids() -> None:
+    result = score_infrastructure_demand(
+        projected_load_index=80,
+        delivery_timing_index=60,
+        local_load_shock_index=40,
+        source_ids=[" source-b ", "source-a", "source-a"],
+    )
+
+    assert result.score == 67
+    assert all(item.source_ids == ["source-a", "source-b"] for item in result.contributions)
+
+
 def test_combined_load_sums_mw_not_category_scores() -> None:
     assert combine_asset_demand(data_centre_mw=900, water_mw=100) == 1000
 
@@ -173,6 +185,31 @@ def test_power_balance_contributions_are_deterministic_and_lens_serializes_camel
 
     assert first.contributions == second.contributions
     assert LensScores(power_balance=64).model_dump(by_alias=True)["powerBalance"] == 64
+
+
+def test_power_balance_trims_and_deduplicates_source_ids() -> None:
+    result = score_power_balance(
+        capacity_margin_index=80,
+        local_balance_index=60,
+        source_ids=[" source-b ", "source-a", "source-b", " source-a"],
+    )
+
+    available = [item for item in result.contributions if item.raw_value is not None]
+    assert all(item.source_ids == ["source-a", "source-b"] for item in available)
+
+
+@pytest.mark.parametrize("source_ids", ["source-a", 7, [7]])
+def test_power_balance_validates_provenance_type_without_available_evidence(source_ids: object) -> None:
+    with pytest.raises(ValueError, match="source_ids"):
+        score_power_balance(source_ids=source_ids)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value_kind", ["not-a-value-kind", "estimated"])
+def test_power_balance_rejects_invalid_value_kind_for_unavailable_component(
+    value_kind: str,
+) -> None:
+    with pytest.raises(ValueError, match="capacity_margin"):
+        score_power_balance(value_kinds={"capacity_margin": value_kind})
 
 
 def test_observed_unmet_demand_cannot_be_labelled_as_estimated() -> None:
