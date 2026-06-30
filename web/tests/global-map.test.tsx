@@ -89,6 +89,18 @@ describe("GlobalMap", () => {
     ]));
   });
 
+  it("renders overview and technology generators with neutral composition-aware clusters", () => {
+    render(
+      <GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined} coverage={{ countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} generatorOverview={{ type: "FeatureCollection", features: [] }} />,
+    );
+    expect(mapCalls.sources.find(([id]) => id === "generators")?.[1]).toMatchObject({ cluster: true, clusterRadius: 44, clusterProperties: expect.objectContaining({ solar: expect.any(Array), wind: expect.any(Array) }) });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-markers")).toMatchObject({ maxzoom: 3 });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-clusters")?.paint).toMatchObject({ "circle-color": "#84918E" });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-assets")?.paint).toMatchObject({ "circle-stroke-width": 1.5 });
+    expect(mapCalls.layers.find((layer) => layer.id === "water-assets")).toMatchObject({ type: "symbol", layout: { "text-field": "◆" } });
+    expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "generator-assets")).toBe(true);
+  });
+
   it("renders global ADM1 before the deeper Europe NUTS-2 layer", () => {
     render(
       <GlobalMap

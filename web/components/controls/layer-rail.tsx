@@ -1,4 +1,5 @@
-import type { LensKey } from "@/lib/snapshot/types";
+import { GENERATOR_COLORS } from "@/lib/map/generator-colors";
+import type { GenerationTechnology, LensKey } from "@/lib/snapshot/types";
 
 const lenses: Array<{ id: LensKey; label: string; description: string }> = [
   { id: "infrastructureDemand", label: "Infrastructure Demand", description: "Primary opportunity signal" },
@@ -7,9 +8,22 @@ const lenses: Array<{ id: LensKey; label: string; description: string }> = [
   { id: "powerBalance", label: "Power Balance", description: "Demand versus dependable supply" },
 ];
 
-type Props = { activeLens: LensKey; onChange: (lens: LensKey) => void };
+export type InfrastructureVisibility = { dataCentres: boolean; water: boolean; generators: boolean };
+type Props = {
+  activeLens: LensKey; onChange: (lens: LensKey) => void;
+  infrastructure?: InfrastructureVisibility; onInfrastructureChange?: (value: InfrastructureVisibility) => void;
+  technologies?: ReadonlySet<GenerationTechnology>; onTechnologiesChange?: (value: Set<GenerationTechnology>) => void;
+  lifecycles?: ReadonlySet<string>; onLifecyclesChange?: (value: Set<string>) => void;
+};
 
-export function LayerRail({ activeLens, onChange }: Props) {
+const technologyLabels: Record<GenerationTechnology, string> = { solar: "Solar", wind: "Wind", hydro: "Hydro", nuclear: "Nuclear", gas: "Gas", coal: "Coal", oil: "Oil", biomass: "Biomass", geothermal: "Geothermal", other: "Other" };
+const lifecycleGroups = {
+  operational: { label: "Operational", states: ["operational"] },
+  construction: { label: "Under construction", states: ["under_construction"] },
+  planned: { label: "Planned", states: ["announced", "planning_filed", "permitted"] },
+} as const;
+
+export function LayerRail({ activeLens, onChange, infrastructure, onInfrastructureChange, technologies, onTechnologiesChange, lifecycles, onLifecyclesChange }: Props) {
   return (
     <aside className="layer-rail" aria-label="Map controls">
       <div className="rail-section">
@@ -33,6 +47,16 @@ export function LayerRail({ activeLens, onChange }: Props) {
           ))}
         </div>
       </div>
+      {infrastructure && onInfrastructureChange && <div className="rail-section infrastructure-controls">
+        <p className="rail-heading">Infrastructure</p>
+        {([['dataCentres', 'Data centres'], ['water', 'Water infrastructure'], ['generators', 'Power generators']] as const).map(([id, label]) => <button key={id} type="button" aria-label={label} aria-pressed={infrastructure[id]} onClick={() => onInfrastructureChange({ ...infrastructure, [id]: !infrastructure[id] })}>{label}</button>)}
+        {infrastructure.generators && technologies && onTechnologiesChange && <div className="generator-filters" aria-label="Generator technology filters">
+          {(Object.keys(technologyLabels) as GenerationTechnology[]).map((technology) => <button key={technology} type="button" aria-label={technologyLabels[technology]} aria-pressed={technologies.has(technology)} onClick={() => { const next = new Set(technologies); if (next.has(technology)) next.delete(technology); else next.add(technology); onTechnologiesChange(next); }}><span aria-hidden="true" className="generator-swatch" style={{ backgroundColor: GENERATOR_COLORS[technology] }} />{technologyLabels[technology]}</button>)}
+        </div>}
+        {infrastructure.generators && lifecycles && onLifecyclesChange && <div className="generator-filters" aria-label="Generator lifecycle filters">
+          {(Object.entries(lifecycleGroups)).map(([id, group]) => { const pressed = group.states.every((state) => lifecycles.has(state)); return <button key={id} type="button" aria-label={group.label} aria-pressed={pressed} onClick={() => { const next = new Set(lifecycles); for (const state of group.states) { if (pressed) next.delete(state); else next.add(state); } onLifecyclesChange(next); }}>{group.label}</button>; })}
+        </div>}
+      </div>}
       <div className="rail-section map-legend">
         <p className="rail-heading">Score intensity</p>
         <div className={`legend-ramp ${activeLens}`} />

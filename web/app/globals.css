@@ -190,6 +190,39 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
+.infrastructure-controls > button,
+.generator-filters button {
+  min-height: 30px;
+  margin: 8px 5px 0 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 10px var(--font-plex-mono), monospace;
+}
+
+.infrastructure-controls button[aria-pressed="true"],
+.generator-filters button[aria-pressed="true"] {
+  border-color: var(--mint);
+  color: var(--text);
+  background: rgb(114 217 189 / 8%);
+}
+
+.generator-filters {
+  margin-top: 8px;
+}
+
+.generator-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border: 1px solid rgb(241 246 244 / 65%);
+  border-radius: 50%;
+}
+
 .rail-heading,
 .section-heading,
 .inspector-kicker {

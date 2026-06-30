@@ -102,4 +102,20 @@ describe("OpportunityRadar", () => {
     expect(screen.getByRole("heading", { name: "Assam" })).toBeInTheDocument();
     expect(screen.getByText("1 facilities")).toBeInTheDocument();
   });
+
+  it("offers independent infrastructure layers and accessible generator filters", () => {
+    render(<OpportunityRadar snapshot={snapshot} />);
+    for (const name of ["Data centres", "Water infrastructure", "Power generators"]) {
+      const toggle = screen.getByRole("button", { name });
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Power generators" }));
+    const solar = screen.getByRole("button", { name: "Solar" });
+    expect(solar).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(solar);
+    expect(solar).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Operational" })).toBeInTheDocument();
+  });
 });

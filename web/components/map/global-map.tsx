@@ -6,12 +6,20 @@ import { useEffect, useMemo, useRef } from "react";
 import maplibregl, { type GeoJSONSource, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 
 import { baseMapStyle } from "@/components/map/map-style";
+import type { InfrastructureVisibility } from "@/components/controls/layer-rail";
+import { generatorColorExpression, generatorTechnologyExpression } from "@/lib/map/generator-colors";
+import { countriesInBounds, createGeneratorShardController, filterGenerators, generatorSelection, type MapBounds } from "@/lib/map/generator-shards";
 import { admin1LineOpacityExpression, admin1LineWidthExpression, assetColor, assetStrokeColorExpression, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
 import type {
   AssetCollection,
   GeographyCollection,
   LensKey,
   SnapshotManifest,
+  GenerationTechnology,
+  GeneratorFeature,
+  GeneratorIndex,
+  GeneratorOverviewCollection,
+  GeneratorCollection,
 } from "@/lib/snapshot/types";
 
 type Props = {
@@ -24,9 +32,20 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   coverage: SnapshotManifest["coverage"];
+  infrastructure?: InfrastructureVisibility;
+  technologies?: ReadonlySet<GenerationTechnology>;
+  lifecycles?: ReadonlySet<string>;
+  generatorOverview?: GeneratorOverviewCollection | null;
+  generatorIndex?: GeneratorIndex | null;
+  snapshotRoot?: string | null;
+  onSelectGenerator?: (generator: GeneratorFeature) => void;
 };
 
 export const GLOBAL_VIEW = { center: [12, 22] as [number, number], zoom: 1.25 };
+
+function visibleAssets(assets: AssetCollection, infrastructure: InfrastructureVisibility): AssetCollection {
+  return { ...assets, features: assets.features.filter(({ properties }) => properties.category === "data_centre" ? infrastructure.dataCentres : infrastructure.water) };
+}
 
 function activeCountries(countries: GeographyCollection, lens: LensKey, year: number): GeoJSON.FeatureCollection {
   return {
@@ -57,10 +76,19 @@ function activeRegions(regions: GeographyCollection, lens: LensKey, year: number
   };
 }
 
-export function GlobalMap({ countries, admin1, regions, assets, lens, year, selectedId, onSelect, coverage }: Props) {
+const EMPTY_GENERATORS: GeneratorCollection = { type: "FeatureCollection", features: [] };
+const EMPTY_OVERVIEW: GeneratorOverviewCollection = { type: "FeatureCollection", features: [] };
+
+export function GlobalMap({ countries, admin1, regions, assets, lens, year, selectedId, onSelect, coverage, infrastructure = { dataCentres: true, water: true, generators: true }, technologies = new Set<GenerationTechnology>(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"]), lifecycles = new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved"]), generatorOverview = null, generatorIndex = null, snapshotRoot = null, onSelectGenerator }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const onSelectRef = useRef(onSelect);
+  const onSelectGeneratorRef = useRef(onSelectGenerator);
+  const infrastructureRef = useRef(infrastructure);
+  const generatorOverviewRef = useRef(generatorOverview);
+  const generatorControllerRef = useRef<ReturnType<typeof createGeneratorShardController> | null>(null);
+  const activeGeneratorsRef = useRef<GeneratorCollection>(EMPTY_GENERATORS);
+  const generatorFiltersRef = useRef({ technologies, lifecycles });
   const preparedCountries = useMemo(() => activeCountries(countries, lens, year), [countries, lens, year]);
   const preparedAdmin1 = useMemo(() => activeCountries(admin1, lens, year), [admin1, lens, year]);
   const preparedRegions = useMemo(() => activeRegions(regions, lens, year), [regions, lens, year]);
@@ -73,12 +101,16 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
 
   useEffect(() => {
     onSelectRef.current = onSelect;
+    onSelectGeneratorRef.current = onSelectGenerator;
     countriesRef.current = preparedCountries;
     admin1Ref.current = preparedAdmin1;
     regionsRef.current = preparedRegions;
     selectedIdRef.current = selectedId;
     lensRef.current = lens;
-  }, [lens, onSelect, preparedAdmin1, preparedCountries, preparedRegions, selectedId]);
+    generatorFiltersRef.current = { technologies, lifecycles };
+    infrastructureRef.current = infrastructure;
+    generatorOverviewRef.current = generatorOverview;
+  }, [generatorOverview, infrastructure, lens, lifecycles, onSelect, onSelectGenerator, preparedAdmin1, preparedCountries, preparedRegions, selectedId, technologies]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -103,10 +135,26 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       map.addSource("regions", { type: "geojson", data: regionsRef.current, promoteId: "id" });
       map.addSource("assets", {
         type: "geojson",
-        data: assets,
+        data: visibleAssets(assets, infrastructureRef.current),
         cluster: true,
         clusterRadius: 48,
         clusterMaxZoom: 6,
+      });
+      map.addSource("generator-overview", { type: "geojson", data: generatorOverviewRef.current ?? EMPTY_OVERVIEW });
+      map.addSource("generators", {
+        type: "geojson", data: EMPTY_GENERATORS, cluster: true, clusterRadius: 44, clusterMaxZoom: 8,
+        clusterProperties: {
+          solar: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "solar"], 1, 0]],
+          wind: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "wind"], 1, 0]],
+          hydro: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "hydro"], 1, 0]],
+          nuclear: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "nuclear"], 1, 0]],
+          gas: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "gas"], 1, 0]],
+          coal: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "coal"], 1, 0]],
+          oil: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "oil"], 1, 0]],
+          biomass: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "biomass"], 1, 0]],
+          geothermal: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "geothermal"], 1, 0]],
+          other: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "other"], 1, 0]],
+        },
       });
       map.addLayer({
         id: "countries-fill",
@@ -209,6 +257,10 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
           "circle-stroke-width": 2,
         },
       });
+      map.addLayer({ id: "generator-overview-markers", type: "circle", source: "generator-overview", maxzoom: 3, paint: { "circle-color": generatorColorExpression(), "circle-radius": ["step", ["get", "count"], 5, 10, 8, 50, 11], "circle-stroke-color": "#07100F", "circle-stroke-width": 1.5, "circle-opacity": 0.9 } });
+      map.addLayer({ id: "generator-clusters", type: "circle", source: "generators", minzoom: 3, filter: ["has", "point_count"], paint: { "circle-color": "#84918E", "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24], "circle-stroke-color": "#E8EFED", "circle-stroke-width": 1.5 } });
+      map.addLayer({ id: "generator-cluster-count", type: "symbol", source: "generators", minzoom: 3, filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 10 }, paint: { "text-color": "#07100F" } });
+      map.addLayer({ id: "generator-assets", type: "circle", source: "generators", minzoom: 3, filter: ["!", ["has", "point_count"]], paint: { "circle-color": generatorTechnologyExpression(), "circle-radius": 5, "circle-stroke-color": "#F1F6F4", "circle-stroke-width": 1.5, "circle-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.82, 1] } });
       map.addLayer({
         id: "asset-cluster-count",
         type: "symbol",
@@ -235,19 +287,19 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       });
       map.addLayer({
         id: "water-assets",
-        type: "circle",
+        type: "symbol",
         source: "assets",
         filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "category"], "water_infrastructure"]],
+        layout: { "text-field": "◆", "text-size": 14, "text-allow-overlap": true },
         paint: {
-          "circle-color": assetColor("water_infrastructure"),
-          "circle-radius": 5,
-          "circle-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.68, 1],
-          "circle-stroke-color": assetStrokeColorExpression(),
-          "circle-stroke-width": 1.25,
+          "text-color": assetColor("water_infrastructure"),
+          "text-halo-color": "#07100F",
+          "text-halo-width": 1.5,
+          "text-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.72, 1],
         },
       });
 
-      for (const layer of ["countries-fill", "admin1-fill", "regions-fill", "asset-clusters", "data-centre-assets", "water-assets"]) {
+      for (const layer of ["countries-fill", "admin1-fill", "regions-fill", "asset-clusters", "data-centre-assets", "water-assets", "generator-overview-markers", "generator-clusters", "generator-assets"]) {
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
       }
@@ -286,6 +338,19 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       map.on("click", "regions-fill", selectGeography);
       map.on("click", "data-centre-assets", selectAsset);
       map.on("click", "water-assets", selectAsset);
+      map.on("click", "generator-assets", (event) => {
+        const id = event.features?.[0]?.properties?.id;
+        const generator = generatorSelection(activeGeneratorsRef.current, id);
+        if (generator) onSelectGeneratorRef.current?.(generator);
+      });
+      map.on("click", "generator-clusters", async (event) => {
+        const feature = event.features?.[0];
+        const clusterId = Number(feature?.properties?.cluster_id);
+        const coordinates = feature?.geometry.type === "Point" ? feature.geometry.coordinates : null;
+        const source = map.getSource("generators") as GeoJSONSource | undefined;
+        if (!source || !coordinates || !Number.isFinite(clusterId)) return;
+        map.easeTo({ center: [coordinates[0], coordinates[1]], zoom: await source.getClusterExpansionZoom(clusterId) });
+      });
       container.setAttribute("data-map-loaded", "true");
     });
     return () => {
@@ -295,6 +360,53 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       mapRef.current = null;
     };
   }, [assets]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+    (map.getSource("generator-overview") as GeoJSONSource | undefined)?.setData(generatorOverview ?? EMPTY_OVERVIEW);
+  }, [generatorOverview]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    generatorControllerRef.current?.dispose();
+    generatorControllerRef.current = null;
+    activeGeneratorsRef.current = EMPTY_GENERATORS;
+    if (!map || !generatorIndex || !snapshotRoot) return;
+    const controller = createGeneratorShardController(snapshotRoot, generatorIndex);
+    generatorControllerRef.current = controller;
+    const refresh = async () => {
+      if (map.getZoom() < 3 || !infrastructure.generators) {
+        activeGeneratorsRef.current = EMPTY_GENERATORS;
+        (map.getSource("generators") as GeoJSONSource | undefined)?.setData(EMPTY_GENERATORS);
+        return;
+      }
+      const bounds = map.getBounds();
+      const visible = countriesInBounds(generatorIndex, [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()] as MapBounds);
+      const combined = await controller.show(visible);
+      if (generatorControllerRef.current !== controller) return;
+      activeGeneratorsRef.current = combined;
+      const filters = generatorFiltersRef.current;
+      (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filterGenerators(combined, filters.technologies, filters.lifecycles));
+    };
+    map.on("moveend", refresh);
+    void refresh();
+    return () => {
+      map.off("moveend", refresh);
+      controller.dispose();
+      if (generatorControllerRef.current === controller) generatorControllerRef.current = null;
+    };
+  }, [generatorIndex, infrastructure.generators, snapshotRoot]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+    (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filterGenerators(activeGeneratorsRef.current, technologies, lifecycles));
+    (map.getSource("assets") as GeoJSONSource | undefined)?.setData(visibleAssets(assets, infrastructure));
+    for (const id of ["data-centre-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.dataCentres ? "visible" : "none");
+    for (const id of ["water-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.water ? "visible" : "none");
+    for (const id of ["generator-overview-markers", "generator-clusters", "generator-cluster-count", "generator-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.generators ? "visible" : "none");
+  }, [assets, infrastructure, lifecycles, technologies]);
 
   useEffect(() => {
     const map = mapRef.current;
