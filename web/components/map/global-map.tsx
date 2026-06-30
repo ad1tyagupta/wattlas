@@ -92,6 +92,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       maxZoom: 8,
       attributionControl: false,
     });
+    hoveredAdmin1Ref.current = null;
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
@@ -147,24 +148,6 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
         },
       });
       map.addLayer({
-        id: "admin1-label",
-        type: "symbol",
-        source: "admin1",
-        minzoom: 3,
-        layout: {
-          "text-field": ["get", "name"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 10, 6, 12],
-          "text-allow-overlap": false,
-          "text-ignore-placement": false,
-          "text-optional": true,
-        },
-        paint: {
-          "text-color": "#D7E2DF",
-          "text-halo-color": "#0B1715",
-          "text-halo-width": 1.25,
-        },
-      });
-      map.addLayer({
         id: "regions-fill",
         type: "fill",
         source: "regions",
@@ -183,6 +166,24 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
           "line-color": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], "#E1EBE8", "#47635E"],
           "line-width": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], 2.2, 0.5],
           "line-opacity": 0.72,
+        },
+      });
+      map.addLayer({
+        id: "admin1-label",
+        type: "symbol",
+        source: "admin1",
+        minzoom: 3,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 10, 6, 12],
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#D7E2DF",
+          "text-halo-color": "#0B1715",
+          "text-halo-width": 1.25,
         },
       });
       map.addLayer({
@@ -288,6 +289,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       container.setAttribute("data-map-loaded", "true");
     });
     return () => {
+      hoveredAdmin1Ref.current = null;
       container.removeAttribute("data-map-loaded");
       map.remove();
       mapRef.current = null;

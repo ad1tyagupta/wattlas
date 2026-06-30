@@ -79,6 +79,8 @@ describe("OpportunityRadar", () => {
     expect(powerBalance).toHaveTextContent("04");
     fireEvent.click(powerBalance);
     expect(screen.getByTestId("global-map")).toHaveTextContent("powerBalance");
+    expect(screen.getByText("Comfortable margin")).toBeInTheDocument();
+    expect(screen.getByText("Severe pressure")).toBeInTheDocument();
     expect(screen.getAllByText("2030").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^LIVE$/)).not.toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mapCalls = vi.hoisted(() => ({
@@ -32,6 +32,7 @@ vi.mock("maplibre-gl", () => ({
 }));
 
 import { GLOBAL_VIEW, GlobalMap } from "@/components/map/global-map";
+import type { AssetCollection, GeographyCollection } from "@/lib/snapshot/types";
 
 describe("GlobalMap", () => {
   beforeEach(() => {
@@ -121,6 +122,24 @@ describe("GlobalMap", () => {
     const outline = mapCalls.layers.find((layer) => layer.id === "admin1-outline");
     expect(JSON.stringify(outline?.paint)).toContain("feature-state");
     expect(JSON.stringify(outline?.paint)).toContain("ADM1-X");
+    const ids = mapCalls.layers.map((layer) => layer.id);
+    expect(ids.indexOf("admin1-label")).toBeGreaterThan(ids.indexOf("regions-line"));
+    expect(ids.indexOf("admin1-label")).toBeLessThan(ids.indexOf("countries-line"));
+  });
+
+  it("restores hover feature state after the map is recreated", () => {
+    const emptyGeographies: GeographyCollection = { type: "FeatureCollection", features: [] };
+    const baseProps = { countries: emptyGeographies, admin1: emptyGeographies, regions: emptyGeographies, lens: "powerBalance" as const, year: 2030, selectedId: null, onSelect: () => undefined, coverage: { countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 0, dataCentres: 0, waterInfrastructure: 0 } };
+    const firstAssets: AssetCollection = { type: "FeatureCollection", features: [] };
+    const { rerender } = render(<GlobalMap {...baseProps} assets={firstAssets} />);
+    const firstMove = mapCalls.handlers.find(([event, layer]) => event === "mousemove" && layer === "admin1-fill")?.[2] as ((event: unknown) => void);
+    act(() => firstMove({ features: [{ id: "ADM1-X" }] }));
+    const secondAssets: AssetCollection = { type: "FeatureCollection", features: [] };
+    rerender(<GlobalMap {...baseProps} assets={secondAssets} />);
+    const moves = mapCalls.handlers.filter(([event, layer]) => event === "mousemove" && layer === "admin1-fill");
+    const secondMove = moves.at(-1)?.[2] as ((event: unknown) => void);
+    act(() => secondMove({ features: [{ id: "ADM1-X" }] }));
+    expect(mapCalls.featureStates.filter(({ state }) => (state as Record<string, unknown>).hover === true)).toHaveLength(2);
   });
 
   it("keeps unavailable ADM1 and country-only exceptions selectable without inventing subdivisions", () => {

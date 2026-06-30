@@ -275,7 +275,7 @@ button {
 }
 
 .legend-ramp.powerBalance {
-  background: linear-gradient(90deg, #9e4e45, #a4864e, #4d8879, #72d9bd);
+  background: linear-gradient(90deg, #4d8879, #71817d, #a4864e, #d66f5f);
 }
 
 .legend-labels {

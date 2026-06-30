@@ -36,8 +36,15 @@ export function LayerRail({ activeLens, onChange }: Props) {
       <div className="rail-section map-legend">
         <p className="rail-heading">Score intensity</p>
         <div className={`legend-ramp ${activeLens}`} />
-        <div className="legend-labels"><span>Low</span><span>High</span></div>
-        <p className="legend-note">Neutral regions are not yet rankable. They remain selectable.</p>
+        <div className="legend-labels">
+          <span>{activeLens === "powerBalance" ? "Comfortable margin" : "Low"}</span>
+          <span>{activeLens === "powerBalance" ? "Severe pressure" : "High"}</span>
+        </div>
+        <p className="legend-note">
+          {activeLens === "powerBalance"
+            ? "Slate indicates broad balance or uncertainty. Unavailable regions remain selectable."
+            : "Neutral regions are not yet rankable. They remain selectable."}
+        </p>
       </div>
       <div className="rail-section coverage-key">
         <p className="rail-heading">Coverage</p>

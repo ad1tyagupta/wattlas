@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
   assetColor,
@@ -37,6 +38,11 @@ describe("global map expressions", () => {
       "#142321",
       ["interpolate", ["linear"], ["to-number", ["get", "activeScore"]], 0, "#4D8879", 35, "#71817D", 55, "#A4864E", 75, "#D66F5F"],
     ]);
+  });
+
+  it("keeps the Power Balance legend gradient consistent with the map ramp", () => {
+    const css = readFileSync(`${process.cwd()}/app/globals.css`, "utf8");
+    expect(css).toContain("linear-gradient(90deg, #4d8879, #71817d, #a4864e, #d66f5f)");
   });
 
   it("keeps national borders stronger than regional boundaries", () => {
