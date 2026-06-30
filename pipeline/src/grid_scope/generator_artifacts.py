@@ -167,7 +167,7 @@ def build_generator_artifacts(
 
     artifacts: dict[str, bytes] = {}
     index_countries: dict[str, dict[str, Any]] = {}
-    total_capacity = 0.0
+    country_capacities: list[float] = []
     for country in sorted(by_country):
         rows = sorted(by_country[country], key=lambda item: item["id"])
         features = []
@@ -185,7 +185,7 @@ def build_generator_artifacts(
         longitudes = [row["coordinates"][0] for row in rows]
         latitudes = [row["coordinates"][1] for row in rows]
         capacity = math.fsum(row["capacityMw"] for row in rows)
-        total_capacity = math.fsum((total_capacity, capacity))
+        country_capacities.append(capacity)
         index_countries[country] = {
             "bbox": [min(longitudes), min(latitudes), max(longitudes), max(latitudes)],
             "path": path,
@@ -239,6 +239,9 @@ def build_generator_artifacts(
     })
     artifacts["generators/index.json"] = _dump({
         "countries": index_countries,
-        "totals": {"featureCount": len(seen_ids), "capacityMw": total_capacity},
+        "totals": {
+            "featureCount": len(seen_ids),
+            "capacityMw": math.fsum(country_capacities),
+        },
     })
     return artifacts

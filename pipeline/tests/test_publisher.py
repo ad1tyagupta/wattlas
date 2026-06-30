@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from grid_scope.generator_artifacts import build_generator_artifacts
 from grid_scope.publisher import SnapshotPublisher
 
 
@@ -181,6 +182,43 @@ def test_publish_rejects_generator_assigned_to_foreign_country_adm1(tmp_path) ->
 
     with pytest.raises(ValueError, match="ADM1.*country"):
         SnapshotPublisher(tmp_path).publish("invalid", artifacts, {"snapshotId": "invalid"})
+
+
+def test_builder_output_with_adversarial_capacities_always_publishes(tmp_path) -> None:
+    countries = {
+        "type": "FeatureCollection",
+        "features": [{"id": "US", "properties": {"id": "US"}}],
+    }
+    admin1 = {
+        "type": "FeatureCollection",
+        "features": [{
+            "id": "US-CA",
+            "properties": {"id": "US-CA", "country": "US", "parentId": "US"},
+        }],
+    }
+    plants = [
+        {
+            "id": plant_id, "country": "US", "geographyId": "US-CA",
+            "coordinates": [-120 + position, 36], "technologies": ["solar"],
+            "operatingCapacityMw": capacity, "plannedCapacityMw": 0,
+            "sourceIds": ["public-registry"],
+        }
+        for position, (plant_id, capacity) in enumerate((
+            ("plant-a", 10_000_000_000_000_000.0),
+            ("plant-b", 1.0),
+            ("plant-c", 1.0),
+        ))
+    ]
+    base = global_artifacts()
+    base["countries.geojson"] = json.dumps(countries, separators=(",", ":")).encode()
+    base["admin1.geojson"] = json.dumps(admin1, separators=(",", ":")).encode()
+
+    for snapshot_id, rows in (("forward", plants), ("reverse", list(reversed(plants)))):
+        artifacts = {**base, **build_generator_artifacts(countries, admin1, rows)}
+        destination = SnapshotPublisher(tmp_path).publish(
+            snapshot_id, artifacts, {"snapshotId": snapshot_id}
+        )
+        assert (destination / "generators" / "US.geojson").exists()
 
 
 def test_publish_rejects_bad_generator_index_and_keeps_last_good(tmp_path) -> None:

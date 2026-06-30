@@ -162,9 +162,10 @@ class SnapshotPublisher:
             raise ValueError("generator shard paths must exactly match generators/index.json")
         shard_ids: set[str] = set()
         indexed_count = 0
-        indexed_capacity = 0.0
+        indexed_country_capacities: list[float] = []
         regional_generators: dict[str, list[dict[str, object]]] = {}
-        for country, entry in entries.items():
+        for country in sorted(entries):
+            entry = entries[country]
             if country not in country_ids:
                 raise ValueError(f"generator index contains unknown country: {country}")
             if not isinstance(entry, dict):
@@ -184,7 +185,7 @@ class SnapshotPublisher:
             if entry.get("featureCount") != len(features):
                 raise ValueError(f"generator index feature count mismatch for {country}")
             indexed_count += len(features)
-            shard_capacity = 0.0
+            shard_rows: list[dict[str, object]] = []
             for feature in features:
                 identifier = feature.get("id") or (feature.get("properties") or {}).get("id")
                 if not identifier or identifier in shard_ids:
@@ -218,17 +219,21 @@ class SnapshotPublisher:
                 technology_mix = SnapshotPublisher._technology_mix(
                     properties.get("technologyMixMw"), capacity=capacity
                 )
-                shard_capacity = math.fsum((shard_capacity, capacity))
                 coordinates = (feature.get("geometry") or {}).get("coordinates")
-                regional_generators.setdefault(properties["geographyId"], []).append({
+                shard_rows.append({
                     "id": identifier,
                     "country": country,
+                    "geographyId": properties["geographyId"],
                     "coordinates": coordinates,
                     "capacityMw": capacity,
                     "operatingCapacityMw": operating_capacity,
                     "plannedCapacityMw": planned_capacity,
                     "technologyMixMw": technology_mix,
                 })
+            shard_rows.sort(key=lambda row: str(row["id"]))
+            shard_capacity = math.fsum(float(row["capacityMw"]) for row in shard_rows)
+            for row in shard_rows:
+                regional_generators.setdefault(str(row["geographyId"]), []).append(row)
             entry_capacity = SnapshotPublisher._nonnegative_number(
                 entry.get("capacityMw", shard_capacity), label="generator index capacity"
             )
@@ -236,7 +241,8 @@ class SnapshotPublisher:
                 entry_capacity, shard_capacity, rel_tol=0.0, abs_tol=1e-6
             ):
                 raise ValueError(f"generator index capacity mismatch for {country}")
-            indexed_capacity = math.fsum((indexed_capacity, shard_capacity))
+            indexed_country_capacities.append(shard_capacity)
+        indexed_capacity = math.fsum(indexed_country_capacities)
         totals = index.get("totals") or {}
         if totals.get("featureCount") != indexed_count:
             raise ValueError("generator index total feature count does not reconcile")
