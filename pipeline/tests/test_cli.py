@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from hashlib import sha256
 import json
 
 import pytest
@@ -20,13 +21,32 @@ from grid_scope.cli import (
     build_forward_demand_increments,
     run_refresh_stage_sequence,
     _fetch_eia_observations,
+    _field_lineage,
 )
 from grid_scope.connectors.base import ConnectorResult, FetchPayload
 from grid_scope.models import ConnectorState
 from grid_scope.storage import RawCaptureStore
 from grid_scope.power_balance import load_generation_assumptions
 from grid_scope.power_plants import canonicalize_power_plants
-from grid_scope.regional_demand import load_regional_demand_methods
+from grid_scope.regional_demand import (
+    build_regional_demand_weights,
+    load_regional_demand_methods,
+)
+
+
+def _sealed_weights(population_fingerprint: str, records: list[dict]) -> dict:
+    build_inputs = {"populationFingerprint": population_fingerprint}
+    fingerprint = lambda value: "sha256:" + sha256(json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()).hexdigest()
+    artifact = {
+        "schemaVersion": "wattlas-regional-demand-weights-v1",
+        "effectiveInputFingerprint": fingerprint(build_inputs),
+        "buildInputs": build_inputs,
+        "records": records,
+    }
+    artifact["buildFingerprint"] = fingerprint(artifact)
+    return artifact
 
 
 def test_cli_help_exits_cleanly(capsys) -> None:
@@ -119,13 +139,10 @@ def test_model_artifacts_are_loaded_and_version_checked_without_raster_rebuild(t
     }))
     # The population loader validates its own cryptographic seal, so this test
     # deliberately exercises the lightweight daily metadata gate only.
-    weights.write_text(json.dumps({
-        "schemaVersion": "wattlas-regional-demand-weights-v1",
-        "effectiveInputFingerprint": "sha256:" + "1" * 64,
-        "buildFingerprint": "sha256:" + "2" * 64,
-        "buildInputs": {"populationFingerprint": "sha256:" + "f" * 64},
-        "records": [{"geographyId": "AA-1", "countryIso3": "AAA", "year": 2030}],
-    }))
+    weights.write_text(json.dumps(_sealed_weights(
+        "sha256:" + "f" * 64,
+        [{"geographyId": "AA-1", "countryIso3": "AAA", "year": 2030}],
+    )))
 
     loaded = load_refresh_model_artifacts(population, weights, validate_population=False)
 
@@ -147,9 +164,36 @@ def test_model_artifacts_reject_population_weight_release_mismatch(tmp_path) -> 
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
     population.write_text('{"schemaVersion":"wattlas-adm1-population-v1","buildFingerprint":"sha256:' + "a" * 64 + '"}')
-    weights.write_text('{"schemaVersion":"wattlas-regional-demand-weights-v1","buildFingerprint":"sha256:' + "b" * 64 + '","effectiveInputFingerprint":"sha256:' + "c" * 64 + '","buildInputs":{"populationFingerprint":"sha256:' + "d" * 64 + '"},"records":[]}')
+    weights.write_text(json.dumps(_sealed_weights("sha256:" + "d" * 64, [])))
 
     with pytest.raises(ValueError, match="population release"):
+        load_refresh_model_artifacts(population, weights, validate_population=False)
+
+
+def test_model_artifacts_reject_tampered_demand_weight_content(tmp_path) -> None:
+    population_fingerprint = "sha256:" + "a" * 64
+    population_records = [{
+        "geographyId": "AA-1", "country": "AA", "year": year,
+        "population": 100, "sourceIds": ["worldpop"],
+    } for year in range(2026, 2032)]
+    artifact = build_regional_demand_weights(
+        population_artifact={
+            "buildFingerprint": population_fingerprint,
+            "records": population_records,
+        },
+        active_geography_ids={"AA-1"},
+    )
+    population = tmp_path / "population.json"
+    weights = tmp_path / "weights.json"
+    population.write_text(json.dumps({
+        "schemaVersion": "wattlas-adm1-population-v1",
+        "buildFingerprint": population_fingerprint,
+        "records": population_records,
+    }))
+    artifact["records"][0]["populationShare"] = 0.5
+    weights.write_text(json.dumps(artifact))
+
+    with pytest.raises(ValueError, match="integrity|fingerprint"):
         load_refresh_model_artifacts(population, weights, validate_population=False)
 
 
@@ -164,13 +208,10 @@ def test_model_artifacts_are_mandatory_and_never_accept_empty_releases(
         "buildFingerprint": "sha256:" + "a" * 64,
         "records": [{"geographyId": "AA-1", "year": 2030, "population": 1}],
     }))
-    weights.write_text(json.dumps({
-        "schemaVersion": "wattlas-regional-demand-weights-v1",
-        "buildFingerprint": "sha256:" + "b" * 64,
-        "effectiveInputFingerprint": "sha256:" + "c" * 64,
-        "buildInputs": {"populationFingerprint": "sha256:" + "a" * 64},
-        "records": [{"geographyId": "AA-1", "countryIso3": "AAA", "year": 2030}],
-    }))
+    weights.write_text(json.dumps(_sealed_weights(
+        "sha256:" + "a" * 64,
+        [{"geographyId": "AA-1", "countryIso3": "AAA", "year": 2030}],
+    )))
     (population if missing == "population" else weights).unlink()
     with pytest.raises((FileNotFoundError, ValueError)):
         load_refresh_model_artifacts(population, weights, validate_population=False)
@@ -183,13 +224,7 @@ def test_model_artifacts_are_mandatory_and_never_accept_empty_releases(
             "records": [],
         }))
     else:
-        weights.write_text(json.dumps({
-            "schemaVersion": "wattlas-regional-demand-weights-v1",
-            "buildFingerprint": "sha256:" + "b" * 64,
-            "effectiveInputFingerprint": "sha256:" + "c" * 64,
-            "buildInputs": {"populationFingerprint": "sha256:" + "a" * 64},
-            "records": [],
-        }))
+        weights.write_text(json.dumps(_sealed_weights("sha256:" + "a" * 64, [])))
     with pytest.raises(ValueError, match="non-empty records"):
         load_refresh_model_artifacts(population, weights, validate_population=False)
 
@@ -538,7 +573,85 @@ def test_regional_model_uses_every_official_field_and_forward_increment_once() -
     assert metrics["generationMixGwh"] == {"gas": 700, "solar": 100}
     assert forecasts["USA-A"][0]["appliedIncrementIds"] == ["dc-2026"]
     assert forecasts["USA-A"][1]["appliedIncrementIds"] == []
+    assert forecasts["USA-A"][0]["metrics"]["metricLineage"]["demandGwh"]["sourceIds"] == [
+        "dc-source", "eia-api-v2",
+    ]
     assert observed == ["supply"]
+
+
+def test_regional_model_preserves_mixed_field_specific_official_lineage() -> None:
+    root = Path(__file__).parents[2]
+    weights = [{
+        "geographyId": "USA-A", "countryIso3": "USA", "year": year,
+        "populationShare": 1, "activityShare": None, "industrialShare": None,
+        "sourceIds": ["population-release"], "coverage": 100,
+    } for year in range(2026, 2032)]
+    field_sources = {
+        "demandGwh": "curated-demand", "localGenerationGwh": "eia-generation",
+        "peakDemandMw": "curated-peak", "installedCapacityMw": "eia-installed",
+        "dependableCapacityMw": "eia-capability", "netInterchangeGwh": "curated-net",
+        "observedUnmetDemandGwh": "curated-unmet",
+        "generationMixGwh.gas": "eia-generation-mix",
+    }
+    field_provenance = {
+        field: {
+            "sourceId": source, "sourceRecordId": f"{source}-record",
+            "sourceType": "official_verified", "sourceUrl": "https://example.gov/data",
+            "licence": "CC0-1.0", "updatedAt": "2026-01-02",
+            "observationDate": "2026-01-01", "freshnessDays": 1,
+            "valueKind": "reported", "methodId": f"{source}-method",
+        }
+        for field, source in field_sources.items()
+    }
+    observation = {
+        "geographyId": "USA-A", "geographyLevel": "admin_1",
+        "countryIso3": "USA", "year": 2026, "period": "annual",
+        "demandGwh": 1000, "localGenerationGwh": 800, "peakDemandMw": 250,
+        "installedCapacityMw": 300, "dependableCapacityMw": 200,
+        "netInterchangeGwh": 50, "observedUnmetDemandGwh": 10,
+        "generationMixGwh": {"gas": 800}, "fieldProvenance": field_provenance,
+        "sourceIds": [*field_sources.values(), "unused-evidence"],
+        "sourceId": "unused-evidence", "sourceType": "official_verified",
+        "valueKind": "reported", "methodId": "unused-method",
+    }
+    forecasts, _ = build_regional_energy_model(
+        demand_weights={"records": weights},
+        country_controls=[{
+            "countryIso3": "USA", "year": 2026, "demandGwh": 1000,
+            "sourceIds": ["country-series"], "valueKind": "reported",
+            "methodId": "country-control-v1", "confidence": 90, "coverage": 100,
+        }],
+        official_observations=[observation], power_records=[],
+        assumptions=load_generation_assumptions(root / "data/curated/generation-assumptions.json"),
+        method_config=load_regional_demand_methods(root / "data/curated/regional-demand-methods.json"),
+    )
+    row = forecasts["USA-A"][0]
+    lineage = row["metrics"]["metricLineage"]
+    for field, source in field_sources.items():
+        assert lineage[field]["sourceIds"] == [source]
+        assert lineage[field]["methodId"] == f"{source}-method"
+    assert "unused-evidence" not in row["sourceIds"]
+    contributions = {item["id"]: item for item in row["powerBalance"]["contributions"]}
+    assert contributions["capacity_margin"]["sourceIds"] == [
+        "curated-peak", "eia-capability",
+    ]
+    assert contributions["annual_local_balance"]["sourceIds"] == [
+        "curated-demand", "eia-generation",
+    ]
+    assert contributions["observed_unmet_demand"]["sourceIds"] == ["curated-unmet"]
+    assert contributions["forecast_demand_growth"]["sourceIds"] == ["curated-demand"]
+
+
+def test_field_lineage_falls_back_only_for_complete_legacy_observations() -> None:
+    legacy = {
+        "sourceIds": ["legacy-official"], "methodId": "legacy-method-v1",
+        "valueKind": "reported",
+    }
+    assert _field_lineage(legacy, "demandGwh")["sourceIds"] == ["legacy-official"]
+    with pytest.raises(ValueError, match="field-specific provenance"):
+        _field_lineage({**legacy, "fieldProvenance": {}}, "demandGwh")
+    with pytest.raises(ValueError, match="source IDs"):
+        _field_lineage({"methodId": "legacy-method-v1", "valueKind": "reported"}, "demandGwh")
 
 
 def test_asset_forward_increments_include_only_sourced_adm1_future_loads() -> None:

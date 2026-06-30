@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, date, datetime
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -53,7 +54,11 @@ from grid_scope.power_balance import (
     load_generation_assumptions,
 )
 from grid_scope.power_plants import canonicalize_power_plants
-from grid_scope.regional_demand import allocate_country_demand, load_regional_demand_methods
+from grid_scope.regional_demand import (
+    FORECAST_INCREMENT_METHOD_ID,
+    allocate_country_demand,
+    load_regional_demand_methods,
+)
 from grid_scope.scoring import score_power_balance
 from grid_scope.publisher import SnapshotPublisher
 from grid_scope.snapshot_builder import build_global_snapshot_artifacts, build_snapshot_artifacts
@@ -121,6 +126,13 @@ def _validated_fingerprint(value: object, *, label: str) -> str:
     return value
 
 
+def _content_fingerprint(value: object) -> str:
+    canonical = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+    return f"sha256:{sha256(canonical).hexdigest()}"
+
+
 def load_refresh_model_artifacts(
     population_path: Path,
     demand_weights_path: Path,
@@ -147,6 +159,12 @@ def load_refresh_model_artifacts(
     weight_inputs = weights.get("buildInputs")
     if not isinstance(weight_inputs, Mapping):
         raise ValueError("regional demand weights require versioned build inputs")
+    if weights["effectiveInputFingerprint"] != _content_fingerprint(weight_inputs):
+        raise ValueError("regional demand weights effective-input fingerprint integrity failed")
+    weight_seal_payload = dict(weights)
+    stored_weight_seal = weight_seal_payload.pop("buildFingerprint")
+    if stored_weight_seal != _content_fingerprint(weight_seal_payload):
+        raise ValueError("regional demand weights build fingerprint integrity failed")
     population_fingerprint = _validated_fingerprint(
         weight_inputs.get("populationFingerprint"),
         label="demand weights population release",
@@ -408,7 +426,7 @@ def _official_observed_capacity_factors(
     observations: Iterable[Mapping[str, Any]],
     plants: Iterable[Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    capacities: dict[tuple[str, str], float] = {}
+    capacities: dict[tuple[str, str], dict[str, Any]] = {}
     for plant in plants:
         if plant.get("lifecycle") != "operational" or plant.get("capacityMw") is None:
             continue
@@ -419,14 +437,23 @@ def _official_observed_capacity_factors(
             float(raw_capacity.get("central"))
             if isinstance(raw_capacity, Mapping) else float(raw_capacity)
         )
-        capacities[(region_id, technology)] = capacities.get((region_id, technology), 0.0) + capacity
+        capacity_row = capacities.setdefault(
+            (region_id, technology), {"capacityMw": 0.0, "sourceIds": set()}
+        )
+        capacity_row["capacityMw"] += capacity
+        capacity_row["sourceIds"].update(plant.get("sourceIds") or [])
     grouped: dict[tuple[str, str, int], dict[str, Any]] = {}
     for observation in observations:
         mix = observation.get("generationMixGwh")
         if not isinstance(mix, Mapping):
             continue
         for technology, generation in mix.items():
-            capacity = capacities.get((str(observation.get("geographyId") or ""), str(technology)))
+            capacity_row = capacities.get(
+                (str(observation.get("geographyId") or ""), str(technology))
+            )
+            if capacity_row is None:
+                continue
+            capacity = float(capacity_row["capacityMw"])
             if not capacity or float(generation) < 0 or float(generation) > capacity * 8.76:
                 continue
             key = (
@@ -439,7 +466,12 @@ def _official_observed_capacity_factors(
             })
             row["annualGenerationGwh"] += float(generation)
             row["capacityMw"] += capacity
-            row["sourceIds"].update(observation.get("sourceIds") or [])
+            row["sourceIds"].update(capacity_row["sourceIds"])
+            row["sourceIds"].update(
+                _field_lineage(
+                    observation, f"generationMixGwh.{technology}"
+                )["sourceIds"]
+            )
     inputs = [
         {**row, "sourceIds": sorted(row["sourceIds"])} for row in grouped.values()
     ]
@@ -656,6 +688,42 @@ def _clamp_index(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
+def _field_lineage(
+    observation: Mapping[str, Any], field: str
+) -> dict[str, Any]:
+    field_provenance = observation.get("fieldProvenance")
+    if field_provenance is not None:
+        if not isinstance(field_provenance, Mapping):
+            raise ValueError("official fieldProvenance must be an object")
+        raw = field_provenance.get(field)
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"official {field} requires field-specific provenance")
+    else:
+        # Legacy unmerged inputs remain supported only when their top-level
+        # lineage is itself complete and valid.
+        raw = observation
+    raw_source_ids = raw.get("sourceIds")
+    if raw_source_ids is None and raw.get("sourceId") is not None:
+        raw_source_ids = [raw.get("sourceId")]
+    if (
+        not isinstance(raw_source_ids, list)
+        or not raw_source_ids
+        or any(not isinstance(value, str) or not value.strip() for value in raw_source_ids)
+    ):
+        raise ValueError(f"official {field} provenance requires source IDs")
+    method_id = raw.get("methodId")
+    if not isinstance(method_id, str) or not method_id.strip():
+        raise ValueError(f"official {field} provenance requires a method ID")
+    value_kind = str(raw.get("valueKind") or "").strip()
+    if value_kind not in {"observed", "reported", "estimated", "inherited"}:
+        raise ValueError(f"official {field} provenance has an invalid value kind")
+    return {
+        "sourceIds": sorted({value.strip() for value in raw_source_ids}),
+        "methodId": method_id.strip(),
+        "valueKind": value_kind,
+    }
+
+
 def _attach_power_balance_scores(rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -700,14 +768,37 @@ def _attach_power_balance_scores(rows: list[dict[str, Any]]) -> None:
                 "supply_delivery_gap": "unavailable",
             },
         )
+        contributions = [
+            contribution.model_dump(by_alias=True, mode="json")
+            for contribution in result.contributions
+        ]
+        metric_lineage = metrics.get("metricLineage") or {}
+
+        def metric_sources(*fields: str) -> list[str]:
+            sources = {
+                source_id
+                for field in fields
+                for source_id in (metric_lineage.get(field) or {}).get("sourceIds", [])
+            }
+            return sorted(sources) if sources else list(row["sourceIds"])
+
+        driver_fields = {
+            "capacity_margin": ("dependableCapacityMw", "peakDemandMw"),
+            "annual_local_balance": ("demandGwh", "localGenerationGwh"),
+            "observed_unmet_demand": ("observedUnmetDemandGwh",),
+            "forecast_demand_growth": ("demandGwh",),
+            "supply_delivery_gap": (),
+        }
+        for contribution in contributions:
+            if contribution["rawValue"] is not None:
+                contribution["sourceIds"] = metric_sources(
+                    *driver_fields[contribution["id"]]
+                )
         row["powerBalance"] = {
             "score": result.score,
             "coverage": result.coverage,
             "status": result.status,
-            "contributions": [
-                contribution.model_dump(by_alias=True, mode="json")
-                for contribution in result.contributions
-            ],
+            "contributions": contributions,
         }
 
 
@@ -728,6 +819,14 @@ def build_regional_energy_model(
     weights = [dict(row) for row in demand_weights.get("records", [])]
     controls = [dict(row) for row in country_controls if row.get("demandGwh") is not None]
     official = [dict(row) for row in official_observations]
+    allocation_official: list[dict[str, Any]] = []
+    for observation in official:
+        if observation.get("demandGwh") is None:
+            continue
+        allocation_official.append({
+            **observation,
+            **_field_lineage(observation, "demandGwh"),
+        })
     increments = [dict(row) for row in demand_increments]
     if not weights or not controls:
         return {}, True
@@ -764,7 +863,7 @@ def build_regional_energy_model(
                 regions=year_weights,
                 country_control=projected_control,
                 official_observations=[
-                    row for row in official
+                    row for row in allocation_official
                     if str(row.get("countryIso3") or "").upper() == country
                     and int(row.get("year", 0)) == year
                     and row.get("demandGwh") is not None
@@ -802,15 +901,16 @@ def build_regional_energy_model(
             if observation.get("geographyId") != region_id:
                 continue
             year = int(observation["year"])
-            provenance = {
-                "sourceIds": observation.get("sourceIds") or [observation.get("sourceId")],
-                "methodId": observation.get("methodId"),
-                "valueKind": observation.get("valueKind"),
-            }
             if observation.get("netInterchangeGwh") is not None:
-                net_interchange[year] = {**provenance, "netInterchangeGwh": observation["netInterchangeGwh"]}
+                net_interchange[year] = {
+                    **_field_lineage(observation, "netInterchangeGwh"),
+                    "netInterchangeGwh": observation["netInterchangeGwh"],
+                }
             if observation.get("observedUnmetDemandGwh") is not None:
-                observed_unmet[year] = {**provenance, "observedUnmetDemandGwh": observation["observedUnmetDemandGwh"]}
+                observed_unmet[year] = {
+                    **_field_lineage(observation, "observedUnmetDemandGwh"),
+                    "observedUnmetDemandGwh": observation["observedUnmetDemandGwh"],
+                }
         regional = build_regional_energy_forecasts(
             geography_id=region_id,
             demand_forecasts=rows,
@@ -827,7 +927,36 @@ def build_regional_energy_model(
             int(row["year"]): row for row in official
             if row.get("geographyId") == region_id
         }
+        demand_rows_by_year = {int(row["year"]): row for row in rows}
+        increments_by_id = {
+            str(row.get("incrementId")): row
+            for row in increments if row.get("geographyId") == region_id
+        }
         for forecast in regional:
+            demand_row = demand_rows_by_year[int(forecast["year"])]
+            base_demand_lineage = _field_lineage(demand_row, "demandGwh")
+            applied_ids = forecast.get("appliedIncrementIds") or []
+            if applied_ids:
+                base_demand_lineage = {
+                    "sourceIds": sorted(
+                        set(base_demand_lineage["sourceIds"])
+                        | {
+                            source_id
+                            for increment_id in applied_ids
+                            for source_id in increments_by_id[increment_id]["sourceIds"]
+                        }
+                    ),
+                    "methodId": FORECAST_INCREMENT_METHOD_ID,
+                    "valueKind": "estimated",
+                }
+            forecast["metrics"].setdefault("metricLineage", {})["demandGwh"] = (
+                base_demand_lineage
+            )
+            forecast["metrics"]["metricLineage"]["peakDemandMw"] = {
+                **base_demand_lineage,
+                "methodId": "annual-demand-derived-peak-v1",
+                "valueKind": "estimated",
+            }
             observation = observations_by_year.get(int(forecast["year"]))
             if observation is None:
                 continue
@@ -853,19 +982,15 @@ def build_regional_energy_model(
                 ),
                 net_interchange_gwh=(
                     {
+                        **_field_lineage(observation, "netInterchangeGwh"),
                         "netInterchangeGwh": observation["netInterchangeGwh"],
-                        "sourceIds": observation.get("sourceIds"),
-                        "methodId": observation.get("methodId"),
-                        "valueKind": observation.get("valueKind"),
                     }
                     if observation.get("netInterchangeGwh") is not None else None
                 ),
                 observed_unmet_demand_gwh=(
                     {
+                        **_field_lineage(observation, "observedUnmetDemandGwh"),
                         "observedUnmetDemandGwh": observation["observedUnmetDemandGwh"],
-                        "sourceIds": observation.get("sourceIds"),
-                        "methodId": observation.get("methodId"),
-                        "valueKind": observation.get("valueKind"),
                     }
                     if observation.get("observedUnmetDemandGwh") is not None else None
                 ),
@@ -875,19 +1000,29 @@ def build_regional_energy_model(
             official_fields = [
                 field for field in (
                     "localGenerationGwh", "peakDemandMw", "installedCapacityMw",
-                    "dependableCapacityMw", "generationMixGwh",
+                    "dependableCapacityMw",
                 ) if observation.get(field) not in (None, {})
             ]
             lineage = rebuilt.setdefault("metricLineage", {})
+            lineage["demandGwh"] = base_demand_lineage
+            lineage["peakDemandMw"] = (
+                _field_lineage(observation, "peakDemandMw")
+                if observation.get("peakDemandMw") is not None
+                else forecast["metrics"]["metricLineage"]["peakDemandMw"]
+            )
             for field in official_fields:
-                lineage[field] = {
-                    "sourceIds": sorted(set(observation.get("sourceIds") or [])),
-                    "methodId": observation.get("methodId"),
-                    "valueKind": observation.get("valueKind"),
-                }
+                lineage[field] = _field_lineage(observation, field)
+            for technology in sorted(observation.get("generationMixGwh") or {}):
+                mix_field = f"generationMixGwh.{technology}"
+                lineage[mix_field] = _field_lineage(observation, mix_field)
             forecast["metrics"] = rebuilt
+            used_official_sources = {
+                source_id
+                for field_lineage in lineage.values()
+                for source_id in field_lineage.get("sourceIds", [])
+            }
             forecast["sourceIds"] = sorted(
-                set(forecast["sourceIds"]) | set(observation.get("sourceIds") or [])
+                set(forecast["sourceIds"]) | used_official_sources
             )
         if attach_scores:
             _attach_power_balance_scores(regional)
