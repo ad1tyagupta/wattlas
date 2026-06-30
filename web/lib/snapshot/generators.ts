@@ -16,6 +16,7 @@ import type {
   LayerResult,
   RegionalEnergyData,
 } from "@/lib/snapshot/types";
+import { migrateLegacyContributions } from "@/lib/snapshot/legacy";
 
 type CacheEntry<T> = {
   promise: Promise<LayerResult<T>>;
@@ -37,6 +38,14 @@ const MAX_BYTES: Record<LayerKind, number> = {
 };
 const MAX_COUNTRY_FEATURES = 250_000;
 const immutablePathCache = new Map<string, CacheEntry<unknown>>();
+
+function pruneCache(): void {
+  while (immutablePathCache.size > MAX_CACHE_ENTRIES) {
+    const candidate = [...immutablePathCache].find(([, entry]) => entry.settled && entry.observers === 0);
+    if (!candidate) return;
+    immutablePathCache.delete(candidate[0]);
+  }
+}
 
 class LayerFailure extends Error {
   constructor(readonly kind: "invalid" | "http", message: string) {
@@ -95,6 +104,7 @@ async function requestLayer<T>(
   signal: AbortSignal,
   maxBytes: number,
   integrity?: IntegrityExpectation,
+  transform?: (payload: unknown) => unknown,
 ): Promise<LayerResult<T>> {
   const response = await fetch(`/data/${path}`, { signal });
   if (!response.ok) throw new LayerFailure("http", `Layer request failed (${response.status})`);
@@ -116,21 +126,21 @@ async function requestLayer<T>(
   } catch {
     throw new LayerFailure("invalid", "Layer response is not valid UTF-8 JSON");
   }
-  const data = schema.parse(decoded);
+  const data = schema.parse(transform ? transform(decoded) : decoded);
   if (integrity && (data as GeneratorCollection).features.length !== integrity.featureCount) {
     throw new LayerFailure("invalid", "Generator shard feature count does not match its index");
   }
   return { ok: true, data };
 }
 
-function loadLayer<T>(kind: LayerKind, rawPath: string, schema: z.ZodType<T>, signal?: AbortSignal, integrity?: IntegrityExpectation): Promise<LayerResult<T>> {
+function loadLayer<T>(kind: LayerKind, rawPath: string, schema: z.ZodType<T>, signal?: AbortSignal, integrity?: IntegrityExpectation, variant = "strict", transform?: (payload: unknown) => unknown): Promise<LayerResult<T>> {
   let path: string;
   try {
     path = canonicalArtifactPath(rawPath);
   } catch (error) {
     return Promise.resolve({ ok: false, error: layerError(rawPath, error) });
   }
-  const cacheKey = `${kind}:${path}${integrity ? `:${integrity.checksum}:${integrity.bytes}:${integrity.featureCount}` : ""}`;
+  const cacheKey = `${kind}:${variant}:${path}${integrity ? `:${integrity.checksum}:${integrity.bytes}:${integrity.featureCount}` : ""}`;
   const existing = immutablePathCache.get(cacheKey) as CacheEntry<T> | undefined;
   if (existing) {
     immutablePathCache.delete(cacheKey);
@@ -144,20 +154,16 @@ function loadLayer<T>(kind: LayerKind, rawPath: string, schema: z.ZodType<T>, si
     settled: false,
     promise: Promise.resolve({ ok: false, error: layerError(path, new Error("Layer request not started")) }),
   };
-  entry.promise = requestLayer(path, schema, controller.signal, MAX_BYTES[kind], integrity)
+  entry.promise = requestLayer(path, schema, controller.signal, MAX_BYTES[kind], integrity, transform)
     .catch((error: unknown): LayerResult<T> => ({ ok: false, error: layerError(path, error) }))
     .then((result) => {
       entry.settled = true;
       if (!result.ok && immutablePathCache.get(cacheKey) === entry) immutablePathCache.delete(cacheKey);
+      pruneCache();
       return result;
     });
   immutablePathCache.set(cacheKey, entry as CacheEntry<unknown>);
-  while (immutablePathCache.size > MAX_CACHE_ENTRIES) {
-    const oldestKey = immutablePathCache.keys().next().value as string;
-    const oldest = immutablePathCache.get(oldestKey);
-    oldest?.controller.abort();
-    immutablePathCache.delete(oldestKey);
-  }
+  pruneCache();
   return observeWithSignal(entry, cacheKey, path, signal);
 }
 
@@ -176,6 +182,7 @@ function observeWithSignal<T>(entry: CacheEntry<T>, cacheKey: string, path: stri
         entry.controller.abort();
         if (immutablePathCache.get(cacheKey) === entry) immutablePathCache.delete(cacheKey);
       }
+      pruneCache();
     };
     const abort = () => {
       release();
@@ -196,8 +203,13 @@ export function clearSnapshotLayerCache(): void {
   immutablePathCache.clear();
 }
 
-export function loadAdmin1(path: string, options: { signal?: AbortSignal } = {}): Promise<LayerResult<GeographyCollection>> {
-  return loadLayer("admin1", path, geographyFeatureCollectionSchema, options.signal);
+export function loadAdmin1(path: string, options: { signal?: AbortSignal; modelVersion?: string; legacyContributions?: boolean } = {}): Promise<LayerResult<GeographyCollection>> {
+  const legacy = options.legacyContributions === true && options.modelVersion === "2.1.0";
+  return loadLayer(
+    "admin1", path, geographyFeatureCollectionSchema, options.signal, undefined,
+    legacy ? "legacy-2.1.0" : "strict",
+    legacy ? (payload) => migrateLegacyContributions(payload, options.modelVersion!, true) : undefined,
+  );
 }
 
 export function loadRegionalEnergy(path: string, options: { signal?: AbortSignal } = {}): Promise<LayerResult<RegionalEnergyData>> {

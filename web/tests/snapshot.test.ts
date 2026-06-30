@@ -26,14 +26,14 @@ const validManifest = {
   modelVersion: "1.0.0",
   activeYears: [2026, 2027, 2028, 2029, 2030, 2031],
   artifacts: {
-    countries: "countries.geojson",
-    admin1: "admin1.geojson",
-    regions: "regions.geojson",
-    assets: "assets.geojson",
-    evidence: "evidence.json",
-    regionalEnergy: "regional-energy.json",
-    generatorOverview: "generator-overview.geojson",
-    generatorIndex: "generators/index.json",
+    countries: "snapshots/2026-06-27T04-12-00Z/countries.geojson",
+    admin1: "snapshots/2026-06-27T04-12-00Z/admin1.geojson",
+    regions: "snapshots/2026-06-27T04-12-00Z/regions.geojson",
+    assets: "snapshots/2026-06-27T04-12-00Z/assets.geojson",
+    evidence: "snapshots/2026-06-27T04-12-00Z/evidence.json",
+    regionalEnergy: "snapshots/2026-06-27T04-12-00Z/regional-energy.json",
+    generatorOverview: "snapshots/2026-06-27T04-12-00Z/generator-overview.geojson",
+    generatorIndex: "snapshots/2026-06-27T04-12-00Z/generators/index.json",
   },
   coverage: {
     countries: 246,
@@ -73,9 +73,20 @@ describe("snapshot manifest", () => {
   it("keeps ADM1, regional energy, and generator layers out of the server payload", () => {
     const manifest = manifestSchema.parse(validManifest);
     expect(serverSnapshotArtifactPaths(manifest)).toEqual({
-      countries: "countries.geojson", regions: "regions.geojson",
-      assets: "assets.geojson", evidence: "evidence.json",
+      countries: "snapshots/2026-06-27T04-12-00Z/countries.geojson",
+      regions: "snapshots/2026-06-27T04-12-00Z/regions.geojson",
+      assets: "snapshots/2026-06-27T04-12-00Z/assets.geojson",
+      evidence: "snapshots/2026-06-27T04-12-00Z/evidence.json",
     });
+  });
+
+  it("rejects server artifact paths that could read outside the exact snapshot", () => {
+    for (const countries of ["../../secret.json", "/tmp/secret.json", "snapshots/id/../secret.json", "snapshots\\id\\countries.geojson", "snapshots/id/countries.geojson?x=1"]) {
+      const manifest = manifestSchema.parse({ ...validManifest, artifacts: { ...validManifest.artifacts, countries } });
+      expect(() => serverSnapshotArtifactPaths(manifest)).toThrow();
+    }
+    const unsafeId = manifestSchema.parse({ ...validManifest, snapshotId: ".." });
+    expect(() => serverSnapshotArtifactPaths(unsafeId)).toThrow();
   });
 
   it("rejects an invalid connector state", () => {
@@ -293,6 +304,30 @@ describe("lazy snapshot layers", () => {
     expect(results.every((result) => !result.ok && result.error.kind === "invalid")).toBe(true);
   });
 
+  it("migrates only explicitly opted-in legacy 2.1 ADM1 contributions", async () => {
+    const contribution = {
+      id: "projected_load", label: "Projected load", rawValue: 88, unit: "index",
+      points: 52.8, maxPoints: 60, valueKind: "estimated", sourceIds: ["source-1"], normalization: "Wattlas 2.1 fixed threshold",
+    };
+    const payload = { type: "FeatureCollection", features: [{
+      type: "Feature", id: "US-CA", geometry: { type: "Polygon", coordinates: [] }, properties: {
+        id: "US-CA", name: "California", country: "US", level: "admin_1", parentId: "US", peerLevel: "admin_1",
+        scoreYear: 2030, scores: { infrastructureDemand: 60, siteAttractiveness: 50, systemRisk: 40 },
+        scoresByYear: { "2030": { infrastructureDemand: 60, siteAttractiveness: 50, systemRisk: 40 } },
+        categoryScoresByYear: {}, demandMwByYear: {}, confidence: 70, coverage: 80, valueKind: "estimated",
+        updatedAt: "2026-06-28T05:11:05Z", contributions: [contribution], contributionsByYear: { "2030": [contribution] },
+        sourceIds: ["source-1"], assetCount: 0,
+        assetSummary: { total: 0, operational: 0, planned: 0, dataCentres: 0, waterInfrastructure: 0, officialVerified: 0, communityMapped: 0 },
+      },
+    }] };
+    const fetcher = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(payload)));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await loadAdmin1("snapshots/legacy-id/admin1.geojson", { modelVersion: "2.1.0" })).toMatchObject({ ok: false, error: { kind: "invalid" } });
+    const migrated = await loadAdmin1("snapshots/legacy-id/admin1.geojson", { modelVersion: "2.1.0", legacyContributions: true });
+    expect(migrated.ok && migrated.data.features[0].properties.contributions[0].methodVersion).toBe("legacy-2.1.0");
+    expect(await loadAdmin1("snapshots/new-id/admin1.geojson", { modelVersion: "3.0.0", legacyContributions: true })).toMatchObject({ ok: false, error: { kind: "invalid" } });
+  });
+
   it("rejects tampered shard bytes before schema parsing", async () => {
     const payload = { type: "FeatureCollection", features: [] };
     const expected = JSON.stringify(payload);
@@ -348,6 +383,23 @@ describe("lazy snapshot layers", () => {
     }
     expect((await loadGeneratorOverview("snapshots/safe-id/overview-0.geojson")).ok).toBe(true);
     expect(fetcher).toHaveBeenCalledTimes(34);
+  });
+
+  it("does not abort any of 33 concurrent actively observed layers under LRU pressure", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const signals: AbortSignal[] = [];
+    const fetcher = vi.fn((_url: string, options: { signal: AbortSignal }) => {
+      signals.push(options.signal);
+      return new Promise<Response>((resolve) => resolvers.push(resolve));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const pending = Array.from({ length: 33 }, (_, index) => loadGeneratorOverview(`snapshots/concurrent-id/overview-${index}.geojson`));
+    expect(signals).toHaveLength(33);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+    for (const resolve of resolvers) resolve(jsonResponse({ type: "FeatureCollection", features: [] }));
+    const results = await Promise.all(pending);
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
   });
 
   it("rejects oversized indexed shards before fetch", async () => {

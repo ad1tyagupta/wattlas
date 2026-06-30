@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -8,40 +8,35 @@ import {
   manifestSchema,
 } from "@/lib/snapshot/schema";
 import type { SnapshotData, SnapshotManifest } from "@/lib/snapshot/types";
+import { migrateLegacyContributions } from "@/lib/snapshot/legacy";
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
 }
 
-function migrateLegacyContributions<T>(payload: T, modelVersion: string): T {
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (value === null || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    if (
-      typeof record.id === "string" && typeof record.label === "string"
-      && "points" in record && typeof record.normalization === "string"
-      && !("methodVersion" in record)
-    ) {
-      record.methodVersion = `legacy-${modelVersion}`;
-    }
-    for (const child of Object.values(record)) visit(child);
-  };
-  visit(payload);
-  return payload;
+async function readJsonContained<T>(root: string, relativePath: string): Promise<T> {
+  const [resolvedRoot, resolvedFile] = await Promise.all([realpath(root), realpath(path.join(root, relativePath))]);
+  if (!resolvedFile.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error("Snapshot artifact resolves outside public data");
+  return readJson<T>(resolvedFile);
 }
 
 /** The deliberately small snapshot subset serialized into the initial RSC payload. */
 export function serverSnapshotArtifactPaths(manifest: SnapshotManifest) {
-  return {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(manifest.snapshotId) || manifest.snapshotId === "." || manifest.snapshotId === "..") {
+    throw new Error("Snapshot ID is not a safe path segment");
+  }
+  const artifacts = {
     countries: manifest.artifacts.countries,
     regions: manifest.artifacts.regions,
     assets: manifest.artifacts.assets,
     evidence: manifest.artifacts.evidence,
   } as const;
+  for (const [name, artifactPath] of Object.entries(artifacts)) {
+    const extension = name === "evidence" ? "json" : "geojson";
+    const expected = `snapshots/${manifest.snapshotId}/${name}.${extension}`;
+    if (artifactPath !== expected) throw new Error(`Snapshot artifact path must be ${expected}`);
+  }
+  return artifacts;
 }
 
 export async function loadSnapshot(): Promise<SnapshotData> {
@@ -52,14 +47,15 @@ export async function loadSnapshot(): Promise<SnapshotData> {
 
   const serverArtifacts = serverSnapshotArtifactPaths(manifest);
   const [countriesRaw, regionsRaw, assetsRaw, evidenceRaw] = await Promise.all([
-    readJson(path.join(publicData, serverArtifacts.countries)),
-    readJson(path.join(publicData, serverArtifacts.regions)),
-    readJson(path.join(publicData, serverArtifacts.assets)),
-    readJson(path.join(publicData, serverArtifacts.evidence)),
+    readJsonContained(publicData, serverArtifacts.countries),
+    readJsonContained(publicData, serverArtifacts.regions),
+    readJsonContained(publicData, serverArtifacts.assets),
+    readJsonContained(publicData, serverArtifacts.evidence),
   ]);
 
-  const countries = geographyFeatureCollectionSchema.parse(migrateLegacyContributions(countriesRaw, manifest.modelVersion));
-  const regions = geographyFeatureCollectionSchema.parse(migrateLegacyContributions(regionsRaw, manifest.modelVersion));
+  const legacyContributions = manifest.modelVersion === "2.1.0" && manifest.artifacts.regionalEnergy === undefined;
+  const countries = geographyFeatureCollectionSchema.parse(migrateLegacyContributions(countriesRaw, manifest.modelVersion, legacyContributions));
+  const regions = geographyFeatureCollectionSchema.parse(migrateLegacyContributions(regionsRaw, manifest.modelVersion, legacyContributions));
   const assets = assetFeatureCollectionSchema.parse(assetsRaw);
   const evidence = evidenceSchema.parse(evidenceRaw);
   const admin1 = { type: "FeatureCollection", features: [] } as SnapshotData["admin1"];
