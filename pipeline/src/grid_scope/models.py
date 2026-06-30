@@ -195,21 +195,38 @@ class SourceRef(ContractModel):
 
 
 class ScoreContribution(ContractModel):
-    id: str
-    label: str
-    raw_value: float | None
-    unit: str | None
-    points: float = Field(ge=0, le=100)
-    max_points: float = Field(gt=0, le=100)
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    raw_value: float | None = Field(allow_inf_nan=False)
+    unit: str | None = Field(default=None, min_length=1)
+    points: float = Field(ge=0, le=100, allow_inf_nan=False)
+    max_points: float = Field(gt=0, le=100, allow_inf_nan=False)
     value_kind: ValueKind
     source_ids: list[str] = Field(default_factory=list)
-    normalization: str
+    normalization: str = Field(min_length=1)
+    method_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def metadata_is_valid(self) -> "ScoreContribution":
+        text_fields = (self.id, self.label, self.normalization, self.method_version)
+        if any(not value.strip() for value in text_fields):
+            raise ValueError("score contribution metadata must be nonblank")
+        if self.unit is not None and not self.unit.strip():
+            raise ValueError("score contribution unit must be nonblank when present")
+        if any(not source_id.strip() for source_id in self.source_ids):
+            raise ValueError("score contribution source IDs must be nonblank")
+        if len(self.source_ids) != len(set(self.source_ids)):
+            raise ValueError("score contribution source IDs must be unique")
+        if self.points > self.max_points:
+            raise ValueError("score contribution points cannot exceed maximum points")
+        return self
 
 
 class LensScores(ContractModel):
     infrastructure_demand: Score = Field(default=None, ge=0, le=100)
     site_attractiveness: Score = Field(default=None, ge=0, le=100)
     system_risk: Score = Field(default=None, ge=0, le=100)
+    power_balance: Score = Field(default=None, ge=0, le=100)
 
 
 class RegionProperties(ContractModel):

@@ -1,7 +1,13 @@
+import math
+
+import pytest
+
+from grid_scope.models import LensScores
 from grid_scope.scoring import (
     combine_asset_demand,
     lifecycle_timing_index,
     score_infrastructure_demand,
+    score_power_balance,
 )
 
 
@@ -50,3 +56,126 @@ def test_combined_load_sums_mw_not_category_scores() -> None:
 def test_lifecycle_timing_rewards_near_term_delivery() -> None:
     assert lifecycle_timing_index("under_construction", 2027) > lifecycle_timing_index("announced", 2031)
     assert lifecycle_timing_index("cancelled", 2027) == 0
+
+
+def test_power_balance_uses_approved_weights_and_metadata() -> None:
+    result = score_power_balance(
+        capacity_margin_index=80,
+        local_balance_index=60,
+        observed_unmet_demand_index=40,
+        demand_growth_index=70,
+        supply_delivery_index=50,
+        source_ids=["source-b", "source-a", "source-a"],
+    )
+
+    assert result.score == pytest.approx(64)
+    assert result.available_points == 100
+    assert result.coverage == 100
+    assert result.status == "rankable"
+    assert [item.id for item in result.contributions] == [
+        "capacity_margin",
+        "annual_local_balance",
+        "observed_unmet_demand",
+        "forecast_demand_growth",
+        "supply_delivery_gap",
+    ]
+    assert [item.max_points for item in result.contributions] == [35, 30, 15, 10, 10]
+    for item in result.contributions:
+        assert item.unit == "index"
+        assert item.normalization
+        assert item.method_version == "power-balance-score-1.0.0"
+        assert item.source_ids == ["source-a", "source-b"]
+    assert [item.value_kind for item in result.contributions] == [
+        "estimated",
+        "estimated",
+        "observed",
+        "estimated",
+        "estimated",
+    ]
+
+
+def test_power_balance_missing_component_is_not_zero_and_exposes_denominator() -> None:
+    result = score_power_balance(
+        capacity_margin_index=80,
+        local_balance_index=60,
+        observed_unmet_demand_index=None,
+        demand_growth_index=70,
+        supply_delivery_index=50,
+        source_ids=["source-a"],
+    )
+
+    assert result.available_points == 85
+    assert result.coverage == 85
+    assert result.score == pytest.approx((80 * 35 + 60 * 30 + 70 * 10 + 50 * 10) / 85)
+    assert len(result.contributions) == 5
+    unavailable = result.contributions[2]
+    assert unavailable.raw_value is None
+    assert unavailable.value_kind == "unavailable"
+    assert unavailable.source_ids == []
+    assert unavailable.points == 0
+    assert unavailable.max_points == 15
+
+
+def test_power_balance_withholds_score_below_sixty_weighted_points() -> None:
+    result = score_power_balance(
+        capacity_margin_index=90,
+        local_balance_index=None,
+        observed_unmet_demand_index=None,
+        demand_growth_index=70,
+        supply_delivery_index=50,
+        source_ids=["source-a"],
+    )
+
+    assert result.available_points == 55
+    assert result.score is None
+    assert result.status == "not_yet_rankable"
+
+
+@pytest.mark.parametrize("bad_value", [-0.01, 100.01, math.nan, math.inf, -math.inf])
+def test_power_balance_rejects_nonfinite_or_out_of_range_indices(bad_value: float) -> None:
+    with pytest.raises(ValueError, match="capacity_margin_index"):
+        score_power_balance(capacity_margin_index=bad_value, source_ids=["source-a"])
+
+
+@pytest.mark.parametrize("bad_value", [True, "50", object()])
+def test_power_balance_rejects_non_numeric_indices(bad_value: object) -> None:
+    with pytest.raises(ValueError, match="capacity_margin_index"):
+        score_power_balance(capacity_margin_index=bad_value, source_ids=["source-a"])  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("source_ids", [None, [], [""], ["source-a", " "]])
+def test_power_balance_requires_provenance_for_available_evidence(
+    source_ids: list[str] | None,
+) -> None:
+    with pytest.raises(ValueError, match="source_ids"):
+        score_power_balance(capacity_margin_index=50, source_ids=source_ids)
+
+
+def test_power_balance_rejects_non_list_provenance() -> None:
+    with pytest.raises(ValueError, match="source_ids"):
+        score_power_balance(capacity_margin_index=50, source_ids="source-a")  # type: ignore[arg-type]
+
+
+def test_power_balance_contributions_are_deterministic_and_lens_serializes_camel_case() -> None:
+    first = score_power_balance(
+        capacity_margin_index=80,
+        local_balance_index=60,
+        source_ids=["z", "a", "z"],
+    )
+    second = score_power_balance(
+        capacity_margin_index=80,
+        local_balance_index=60,
+        source_ids=["a", "z"],
+    )
+
+    assert first.contributions == second.contributions
+    assert LensScores(power_balance=64).model_dump(by_alias=True)["powerBalance"] == 64
+
+
+def test_observed_unmet_demand_cannot_be_labelled_as_estimated() -> None:
+    with pytest.raises(ValueError, match="observed_unmet_demand"):
+        score_power_balance(
+            observed_unmet_demand_index=40,
+            source_ids=["official-load-shedding"],
+            value_kinds={"observed_unmet_demand": "estimated"},
+        )
