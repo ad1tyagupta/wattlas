@@ -23,8 +23,17 @@
       "id": "ember-yearly-electricity-data",
       "url": "https://ember-energy.org/data/yearly-electricity-data/",
       "licence": "CC-BY-4.0"
+    },
+    {
+      "id": "gem-gipt",
+      "url": "https://globalenergymonitor.org/projects/global-integrated-power-tracker/",
+      "licence": "CC-BY-4.0"
     }
   ],
+  "lifecycleDeliveryFactorMethod": {
+    "sourceIds": ["gem-gipt"],
+    "methodNote": "Wattlas scenario delivery weights applied to public project lifecycle states; these are transparent modelling assumptions, not source-reported completion probabilities."
+  },
   "technologies": {
     "solar": {
       "capacityFactor": {"low": 0.12, "central": 0.2, "high": 0.3},

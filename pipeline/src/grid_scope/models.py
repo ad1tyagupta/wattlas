@@ -141,12 +141,12 @@ class MetricRange(ContractModel):
 
 class PowerBalanceMetrics(ContractModel):
     demand_gwh: MetricRange
-    local_generation_gwh: MetricRange
-    local_generation_gap_gwh: MetricRange
+    local_generation_gwh: MetricRange | None = None
+    local_generation_gap_gwh: MetricRange | None = None
     net_balance_gwh: MetricRange | None = None
     observed_unmet_demand_gwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    installed_capacity_mw: float = Field(ge=0, allow_inf_nan=False)
-    dependable_capacity_mw: MetricRange
+    installed_capacity_mw: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    dependable_capacity_mw: MetricRange | None = None
     peak_demand_mw: MetricRange
 
     @model_validator(mode="after")
@@ -157,8 +157,14 @@ class PowerBalanceMetrics(ContractModel):
             self.dependable_capacity_mw,
             self.peak_demand_mw,
         )
-        if any(metric.low < 0 for metric in non_negative_ranges):
+        if any(metric is not None and metric.low < 0 for metric in non_negative_ranges):
             raise ValueError("demand, generation, and capacity values cannot be negative")
+        if (self.local_generation_gwh is None) != (self.local_generation_gap_gwh is None):
+            raise ValueError(
+                "local generation and local gap supply metrics must be available together"
+            )
+        if self.net_balance_gwh is not None and self.local_generation_gwh is None:
+            raise ValueError("net balance requires available local generation")
         return self
 
 

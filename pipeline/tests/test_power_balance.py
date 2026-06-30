@@ -71,6 +71,30 @@ def test_fully_reported_supply_does_not_claim_model_assumption_lineage(assumptio
     assert supply["generationComponents"][0]["dependableMethod"] == "reported_dependable_capacity"
 
 
+def test_reported_generation_does_not_turn_missing_capacity_into_zero(assumptions: dict) -> None:
+    supply = calculate_supply(
+        [_plant(
+            capacityMw=None,
+            annualGenerationGwh={"low": 499, "central": 500, "high": 501},
+        )],
+        year=2026,
+        assumptions=assumptions,
+    )
+    balance = calculate_power_balance(
+        demand_gwh={"low": 600, "central": 620, "high": 650},
+        supply=supply,
+        peak_demand_mw={"low": 80, "central": 90, "high": 100},
+    )
+
+    assert supply["installedCapacityMw"] is None
+    assert supply["dependableCapacityMw"] is None
+    assert balance["localGenerationGapGwh"] == {
+        "low": 99.0,
+        "central": 120.0,
+        "high": 151.0,
+    }
+
+
 def test_estimated_generation_uses_capacity_factor_and_capacity_credit(assumptions: dict) -> None:
     supply = calculate_supply([_plant()], year=2026, assumptions=assumptions)
 
@@ -173,7 +197,8 @@ def test_future_plant_uses_commissioning_year_when_target_year_is_unavailable(
         lifecycle="under_construction", targetYear=None, commissioningYear=2028
     )
 
-    assert calculate_supply([plant], year=2027, assumptions=assumptions)["installedCapacityMw"] == 0
+    before = calculate_supply([plant], year=2027, assumptions=assumptions)
+    assert before["installedCapacityMw"] is None
     supply = calculate_supply([plant], year=2028, assumptions=assumptions)
     assert supply["installedCapacityMw"] == pytest.approx(
         100 * assumptions["lifecycleDeliveryFactors"]["under_construction"]
@@ -292,6 +317,20 @@ def test_assumption_loader_rejects_private_lineage_and_invalid_ranges(tmp_path: 
     with pytest.raises(ValueError, match="redistributable"):
         load_generation_assumptions(proprietary)
 
+    payload = json.loads(ASSUMPTIONS_PATH.read_text())
+    payload.pop("lifecycleDeliveryFactorMethod")
+    missing_delivery_lineage = tmp_path / "missing-delivery-lineage.json"
+    missing_delivery_lineage.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="delivery-factor method"):
+        load_generation_assumptions(missing_delivery_lineage)
+
+    payload = json.loads(ASSUMPTIONS_PATH.read_text())
+    payload["lifecycleDeliveryFactorMethod"]["sourceIds"] = ["unknown-source"]
+    unknown_delivery_source = tmp_path / "unknown-delivery-source.json"
+    unknown_delivery_source.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="unknown source"):
+        load_generation_assumptions(unknown_delivery_source)
+
 
 def test_supply_rejects_malformed_physical_inputs(assumptions: dict) -> None:
     with pytest.raises(ValueError, match="capacity"):
@@ -319,4 +358,30 @@ def test_unavailable_supply_is_explicit_and_coverage_counts_missing_capacity(
     assert supply["coverage"] == 50
     assert empty["valueKind"] == "unavailable"
     assert empty["coverage"] == 0
-    assert empty["sourceIds"] == ["ember-yearly-electricity-data", "nrel-atb-2024"]
+    assert empty["localGenerationGwh"] is None
+    assert empty["dependableCapacityMw"] is None
+    assert empty["installedCapacityMw"] is None
+    assert empty["sourceIds"] == []
+
+    balance = calculate_power_balance(
+        demand_gwh={"low": 950, "central": 1_000, "high": 1_080},
+        supply=empty,
+        peak_demand_mw={"low": 280, "central": 300, "high": 330},
+        net_interchange_gwh={"low": 95, "central": 100, "high": 105},
+    )
+    assert balance["localGenerationGwh"] is None
+    assert balance["localGenerationGapGwh"] is None
+    assert balance["netBalanceGwh"] is None
+
+
+def test_future_delivery_factor_exposes_public_method_lineage(assumptions: dict) -> None:
+    supply = calculate_supply(
+        [_plant(lifecycle="under_construction", targetYear=2026)],
+        year=2026,
+        assumptions=assumptions,
+    )
+
+    component = supply["generationComponents"][0]
+    method = assumptions["lifecycleDeliveryFactorMethod"]
+    assert component["deliveryFactorSourceIds"] == method["sourceIds"]
+    assert component["deliveryFactorMethodNote"] == method["methodNote"]

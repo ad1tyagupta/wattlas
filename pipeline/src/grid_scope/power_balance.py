@@ -127,6 +127,19 @@ def load_generation_assumptions(path: Path | str) -> dict[str, Any]:
         factor = _number(value, label=f"{lifecycle} delivery factor")
         if factor > 1:
             raise ValueError("lifecycle delivery factors must be within 0-1")
+    delivery_method = payload.get("lifecycleDeliveryFactorMethod")
+    if not isinstance(delivery_method, Mapping):
+        raise ValueError("generation assumptions require a delivery-factor method")
+    delivery_source_ids = _source_ids(
+        delivery_method.get("sourceIds"), label="delivery-factor method"
+    )
+    if not set(delivery_source_ids).issubset(known_sources):
+        raise ValueError("delivery-factor method references an unknown source")
+    if (
+        not isinstance(delivery_method.get("methodNote"), str)
+        or not delivery_method["methodNote"].strip()
+    ):
+        raise ValueError("generation assumptions require a delivery-factor method note")
 
     technologies = payload.get("technologies")
     if not isinstance(technologies, Mapping) or set(technologies) != TECHNOLOGIES:
@@ -312,9 +325,10 @@ def calculate_supply(
             continue
         capacity = (
             _range(capacity_raw, label=f"capacity for {asset_id}")
-            if capacity_raw is not None else {part: 0.0 for part in RANGE_PARTS}
+            if capacity_raw is not None else None
         )
-        installed.append(capacity["central"] * factor)
+        if capacity is not None:
+            installed.append(capacity["central"] * factor)
         technology_assumption = technologies[technology]
 
         if reported_generation_raw is not None:
@@ -325,6 +339,7 @@ def calculate_supply(
             generation_sources = sources
             confidence = 92.0
         else:
+            assert capacity is not None
             country = str(plant.get("countryIso3") or plant.get("country") or "").strip().upper()
             preferred = _observed_factor(
                 country=country,
@@ -359,7 +374,7 @@ def calculate_supply(
             dependable_range = {part: dependable_range[part] * factor for part in RANGE_PARTS}
             dependable_method = "reported_dependable_capacity"
             dependable_sources = sources
-        else:
+        elif capacity is not None:
             credit = _range(
                 technology_assumption["capacityCredit"],
                 label=f"{technology} capacity credit",
@@ -369,12 +384,23 @@ def calculate_supply(
             }
             dependable_method = "technology_capacity_credit"
             dependable_sources = sorted(set(sources) | set(technology_assumption["sourceIds"]))
+        else:
+            dependable_range = None
+            dependable_method = "unavailable"
+            dependable_sources = []
 
         for part in RANGE_PARTS:
             generation[part].append(annual[part])
-            dependable[part].append(dependable_range[part])
+            if dependable_range is not None:
+                dependable[part].append(dependable_range[part])
         all_sources.update(generation_sources)
         all_sources.update(dependable_sources)
+        delivery_method = assumptions["lifecycleDeliveryFactorMethod"]
+        delivery_source_ids = (
+            list(delivery_method["sourceIds"])
+            if str(plant["lifecycle"]) in FUTURE_LIFECYCLES else []
+        )
+        all_sources.update(delivery_source_ids)
         confidences.append(confidence)
         components.append({
             "assetId": asset_id,
@@ -387,16 +413,28 @@ def calculate_supply(
             "factorMethod": factor_method,
             "dependableMethod": dependable_method,
             "sourceIds": sorted(set(generation_sources) | set(dependable_sources)),
+            "deliveryFactorSourceIds": delivery_source_ids,
+            "deliveryFactorMethodNote": (
+                delivery_method["methodNote"] if delivery_source_ids else None
+            ),
         })
 
+    has_generation = any(generation[part] for part in RANGE_PARTS)
+    has_dependable = any(dependable[part] for part in RANGE_PARTS)
     return {
         "year": target_year,
-        "installedCapacityMw": math.fsum(installed),
-        "localGenerationGwh": {part: math.fsum(generation[part]) for part in RANGE_PARTS},
-        "dependableCapacityMw": {part: math.fsum(dependable[part]) for part in RANGE_PARTS},
+        "installedCapacityMw": math.fsum(installed) if installed else None,
+        "localGenerationGwh": (
+            {part: math.fsum(generation[part]) for part in RANGE_PARTS}
+            if has_generation else None
+        ),
+        "dependableCapacityMw": (
+            {part: math.fsum(dependable[part]) for part in RANGE_PARTS}
+            if has_dependable else None
+        ),
         "generationComponents": components,
         "methodId": str(assumptions.get("methodId") or SUPPLY_METHOD_ID),
-        "sourceIds": sorted(all_sources) or assumption_source_ids,
+        "sourceIds": sorted(all_sources),
         "confidence": min(confidences) if confidences else 0.0,
         "coverage": 100.0 * len(components) / eligible_count if eligible_count else 0.0,
         "valueKind": (
@@ -418,17 +456,31 @@ def calculate_power_balance(
     """Keep local generation gap, known net balance, and observed unmet demand distinct."""
 
     demand = _range(demand_gwh, label="demand")
-    generation = _range(supply.get("localGenerationGwh"), label="local generation")
-    dependable = _range(supply.get("dependableCapacityMw"), label="dependable capacity")
     peak = _range(peak_demand_mw, label="peak demand")
-    installed = _number(supply.get("installedCapacityMw"), label="installed capacity")
-    local_gap = {
-        "low": demand["low"] - generation["high"],
-        "central": demand["central"] - generation["central"],
-        "high": demand["high"] - generation["low"],
-    }
+    generation_raw = supply.get("localGenerationGwh")
+    generation = (
+        None if generation_raw is None
+        else _range(generation_raw, label="local generation")
+    )
+    dependable_raw = supply.get("dependableCapacityMw")
+    dependable = (
+        None if dependable_raw is None
+        else _range(dependable_raw, label="dependable capacity")
+    )
+    installed_raw = supply.get("installedCapacityMw")
+    installed = (
+        None if installed_raw is None
+        else _number(installed_raw, label="installed capacity")
+    )
+    local_gap = None
+    if generation is not None:
+        local_gap = {
+            "low": demand["low"] - generation["high"],
+            "central": demand["central"] - generation["central"],
+            "high": demand["high"] - generation["low"],
+        }
     net_balance = None
-    if net_interchange_gwh is not None:
+    if net_interchange_gwh is not None and generation is not None:
         interchange = _range(net_interchange_gwh, label="net interchange", nonnegative=False)
         net_balance = {
             "low": generation["low"] + interchange["low"] - demand["high"],
@@ -518,7 +570,9 @@ def build_regional_energy_forecasts(
                 _number(demand.get("coverage", 0), label="demand coverage"),
                 supply["coverage"],
             ),
-            value_kind="estimated",
+            value_kind=(
+                "unavailable" if supply["valueKind"] == "unavailable" else "estimated"
+            ),
         ).model_dump(by_alias=True, mode="json")
         forecast["geographyId"] = region_id
         forecast["appliedIncrementIds"] = sorted(demand.get("appliedIncrementIds") or [])

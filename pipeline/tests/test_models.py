@@ -253,6 +253,33 @@ def test_power_balance_contract_allows_signed_balance() -> None:
     assert metrics.net_balance_gwh.low == -150
 
 
+def test_power_balance_contract_preserves_unavailable_supply_without_false_zero() -> None:
+    metrics = PowerBalanceMetrics(
+        demand_gwh={"low": 980, "central": 1000, "high": 1040},
+        local_generation_gwh=None,
+        local_generation_gap_gwh=None,
+        net_balance_gwh=None,
+        observed_unmet_demand_gwh=None,
+        installed_capacity_mw=None,
+        dependable_capacity_mw=None,
+        peak_demand_mw={"low": 290, "central": 310, "high": 340},
+    )
+
+    dumped = metrics.model_dump(by_alias=True)
+    assert dumped["localGenerationGwh"] is None
+    assert dumped["localGenerationGapGwh"] is None
+    assert dumped["installedCapacityMw"] is None
+    with pytest.raises(ValidationError, match="supply metrics"):
+        PowerBalanceMetrics(
+            demand_gwh={"low": 980, "central": 1000, "high": 1040},
+            local_generation_gwh=None,
+            local_generation_gap_gwh={"low": 0, "central": 0, "high": 0},
+            installed_capacity_mw=None,
+            dependable_capacity_mw=None,
+            peak_demand_mw={"low": 290, "central": 310, "high": 340},
+        )
+
+
 def test_power_balance_contract_rejects_unordered_ranges() -> None:
     with pytest.raises(ValidationError):
         PowerBalanceMetrics(
