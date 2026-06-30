@@ -1,10 +1,13 @@
 from datetime import UTC, datetime
+from hashlib import sha256
 import json
+import os
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 import httpx
+import duckdb
 
 from grid_scope.connectors.entsoe import EntsoeConnector
 from grid_scope.connectors.eurostat import parse_population
@@ -38,6 +41,78 @@ def test_identical_payloads_reuse_capture(tmp_path) -> None:
     assert first.checksum == second.checksum
     assert first.path == second.path
     assert first.path.exists()
+
+
+def test_identical_capture_advances_success_time_without_rewriting_body(tmp_path) -> None:
+    store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
+    body = b'{"same":true}'
+    first = store.save("gisco", body, "application/json")
+    original_mtime = first.path.stat().st_mtime_ns
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "UPDATE raw_captures SET retrieved_at = ? WHERE source_id = ?",
+            [datetime(2000, 1, 1, tzinfo=UTC), "gisco"],
+        )
+    store.save("gisco", body, "application/json")
+    latest = store.latest_capture("gisco")
+    assert latest is not None
+    assert latest.retrieved_at.year > 2000
+    assert first.path.stat().st_mtime_ns == original_mtime
+
+
+def test_latest_capture_skips_tampered_newest_and_uses_older_valid_file(tmp_path) -> None:
+    store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
+    valid = store.save("gem_power", b'{"records":[{"id":"valid"}]}', "application/json")
+    tampered = store.save(
+        "gem_power", b'{"records":[{"id":"newer"}]}', "application/json"
+    )
+    tampered.path.write_bytes(b"tampered")
+    bad_body = b'{"records":[{"id":"bad"}]}'
+    bad_checksum = sha256(bad_body).hexdigest()
+    bad_path = tmp_path / "outside.json"
+    bad_path.write_bytes(bad_body)
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "INSERT INTO raw_captures VALUES (?, ?, ?, ?, ?)",
+            ["gem_power", bad_checksum, str(bad_path), "application/json",
+                 datetime(2099, 1, 1, tzinfo=UTC)],
+        )
+        connection.execute(
+            "UPDATE raw_captures SET retrieved_at = ? WHERE source_id = ? AND checksum = ?",
+            [datetime(2098, 1, 1, tzinfo=UTC), "gem_power", tampered.checksum],
+        )
+    assert store.latest_path("gem_power") == valid.path
+
+
+def test_latest_capture_rejects_tamper_symlink_and_source_path_escape(tmp_path) -> None:
+    store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
+    capture = store.save("wri_power", b'{"records":[1]}', "application/json")
+    capture.path.write_bytes(b"tampered")
+    assert store.latest_capture("wri_power") is None
+
+    target = tmp_path / "target.json"
+    body = b'{"records":[2]}'
+    target.write_bytes(body)
+    checksum = sha256(body).hexdigest()
+    link = store.raw_dir / "osm_power" / f"{checksum}.json"
+    link.parent.mkdir()
+    os.symlink(target, link)
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "INSERT INTO raw_captures VALUES (?, ?, ?, ?, ?)",
+            ["osm_power", checksum, str(link), "application/json", datetime.now(UTC)],
+        )
+    assert store.latest_capture("osm_power") is None
+
+    media = store.save("media_source", b'{"records":[3]}', "application/json")
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "UPDATE raw_captures SET media_type = ? WHERE source_id = ? AND checksum = ?",
+            ["application/octet-stream", "media_source", media.checksum],
+        )
+    assert store.latest_capture("media_source") is None
+    with pytest.raises(ValueError, match="source ID"):
+        store.save("../escape", b"bad", "application/json")
 
 
 def test_gisco_filter_keeps_only_level_two() -> None:

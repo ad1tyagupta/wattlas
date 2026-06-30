@@ -537,6 +537,21 @@ def validate_refresh_quality(
             raise ValueError(f"coverage drop for {field}: {new} < {old}")
 
 
+def _validate_connector_identity(
+    result: ConnectorResult, requested_source_id: str
+) -> None:
+    if result.source_id != requested_source_id:
+        raise ValueError(
+            f"connector result source ID {result.source_id!r} does not match "
+            f"requested source ID {requested_source_id!r}"
+        )
+    if result.payload is not None and result.payload.source_id != requested_source_id:
+        raise ValueError(
+            f"connector payload source ID {result.payload.source_id!r} does not match "
+            f"requested source ID {requested_source_id!r}"
+        )
+
+
 def _network_result(
     fetch: Callable[[], ConnectorResult],
     source_id: str,
@@ -544,6 +559,7 @@ def _network_result(
 ) -> tuple[bytes, ConnectorResult]:
     try:
         result = fetch()
+        _validate_connector_identity(result, source_id)
         if result.payload:
             capture = store.save(
                 result.source_id,
@@ -573,6 +589,7 @@ def _optional_network_result(
 
     try:
         result = fetch()
+        _validate_connector_identity(result, source_id)
         if result.payload is not None and result.payload.body:
             capture = store.save(
                 result.source_id, result.payload.body, result.payload.media_type

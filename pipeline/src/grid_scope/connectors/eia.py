@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from hashlib import sha256
 import json
 import re
 from typing import Any, Iterable, Mapping
@@ -744,6 +745,8 @@ class EiaV2Connector:
         path: str | None = None,
         route_id: str | None = None,
         page_size: int = 5000,
+        max_records: int = 250_000,
+        max_pages: int = 1_000,
         now: datetime | None = None,
         client: httpx.Client | None = None,
     ) -> ConnectorResult:
@@ -764,8 +767,12 @@ class EiaV2Connector:
                 ),
                 None,
             )
-        if page_size <= 0:
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
             raise ValueError("EIA page size must be positive")
+        if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records <= 0:
+            raise ValueError("EIA maximum record limit must be a positive integer")
+        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages <= 0:
+            raise ValueError("EIA maximum page limit must be a positive integer")
         if selected_route == "interchange":
             raise ValueError(
                 "EIA connector never fetches direct RTO interchange; normalize only "
@@ -785,14 +792,22 @@ class EiaV2Connector:
         if self.api_key:
             base_query["api_key"] = self.api_key
         start_offset = int(base_query.pop("offset", 0))
+        if start_offset < 0:
+            raise ValueError("EIA starting offset cannot be negative")
         base_query["length"] = page_size
         owns_client = client is None
         session = client or httpx.Client()
         combined: dict[str, Any] | None = None
         collected: list[dict[str, Any]] = []
         offset = start_offset
+        expected_total: int | None = None
+        page_count = 0
+        seen_pages: set[str] = set()
         try:
             while True:
+                if page_count >= max_pages:
+                    raise ValueError("EIA pagination exceeded the configured page limit")
+                page_count += 1
                 query = {**base_query, "offset": offset}
                 response = session.get(
                     urljoin(self.base_url, selected_path.lstrip("/")), params=query
@@ -800,6 +815,41 @@ class EiaV2Connector:
                 response.raise_for_status()
                 payload = response.json()
                 response_meta, page_rows = _response(payload)
+                raw_total = response_meta.get("total")
+                if isinstance(raw_total, bool) or raw_total is None:
+                    raise ValueError("EIA response total must be a nonnegative integer")
+                try:
+                    total = int(raw_total)
+                except (TypeError, ValueError) as error:
+                    raise ValueError("EIA response total must be a nonnegative integer") from error
+                if total < 0 or str(raw_total).strip() != str(total):
+                    raise ValueError("EIA response total must be a nonnegative integer")
+                if expected_total is None:
+                    expected_total = total
+                    if total < start_offset:
+                        raise ValueError("EIA response total is below the observed starting offset")
+                    if total - start_offset > max_records:
+                        raise ValueError("EIA response exceeds the configured record limit")
+                elif total != expected_total:
+                    raise ValueError(
+                        f"EIA response total changed across pages: {expected_total} to {total}"
+                    )
+                if page_rows and total == 0:
+                    raise ValueError("EIA response total is zero but rows were returned")
+                if len(page_rows) > page_size:
+                    raise ValueError("EIA page returned more rows than the requested page size")
+                observed_after_page = start_offset + len(collected) + len(page_rows)
+                if observed_after_page > total:
+                    raise ValueError("EIA response total is below observed rows")
+                if page_rows:
+                    page_fingerprint = sha256(json.dumps(
+                        page_rows, sort_keys=True, separators=(",", ":"), default=str
+                    ).encode()).hexdigest()
+                    if page_fingerprint in seen_pages:
+                        raise ValueError("EIA pagination returned a repeated page")
+                    seen_pages.add(page_fingerprint)
+                elif observed_after_page < total:
+                    raise ValueError("EIA pagination made non-progress before reaching total")
                 if combined is None:
                     combined = dict(payload)
                     combined["response"] = dict(response_meta)
@@ -811,16 +861,17 @@ class EiaV2Connector:
                         row["_series"] = selected_route
                     tagged_rows.append(row)
                 collected.extend(tagged_rows)
-                try:
-                    total = int(response_meta.get("total", len(collected)))
-                except (TypeError, ValueError) as error:
-                    raise ValueError("EIA response total must be an integer") from error
-                if not page_rows or start_offset + len(collected) >= total:
+                if len(collected) > max_records:
+                    raise ValueError("EIA pagination exceeded the configured record limit")
+                if start_offset + len(collected) == total:
                     break
+                if not page_rows:
+                    raise ValueError("EIA pagination made non-progress")
                 offset += len(page_rows)
             assert combined is not None
+            assert expected_total is not None
             combined["response"]["data"] = collected
-            combined["response"]["total"] = str(total)
+            combined["response"]["total"] = str(expected_total)
             body = json.dumps(
                 _scrub_secrets(combined, secrets=(self.api_key or "",)),
                 sort_keys=True,

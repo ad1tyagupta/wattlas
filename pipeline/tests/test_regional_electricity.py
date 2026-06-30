@@ -4,6 +4,7 @@ import csv
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 
 import httpx
 import pytest
@@ -778,6 +779,66 @@ def test_eia_connector_fetches_configured_public_v2_resource() -> None:
     assert b"SECOND-SECRET" not in result.payload.body
     assert b"THIRD-SECRET" not in result.payload.body
     assert body["request"]["params"]["frequency"] == "annual"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        ("changing_total", "total changed"),
+        ("zero_with_rows", "total.*rows"),
+        ("total_below_rows", "total.*observed"),
+        ("empty_before_total", "non-progress"),
+        ("repeated_page", "repeated page"),
+        ("max_records", "record limit"),
+        ("max_pages", "page limit"),
+    ],
+)
+def test_eia_pagination_fails_closed_on_inconsistent_or_unbounded_pages(
+    scenario, message
+) -> None:
+    calls = 0
+    repeated = [{"period": "2024", "stateid": "TX", "sales": "1"}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if scenario == "zero_with_rows":
+            total, rows = 0, repeated
+        elif scenario == "total_below_rows":
+            total, rows = 1, [*repeated, {**repeated[0], "stateid": "CA"}]
+        elif scenario == "max_records":
+            total, rows = 11, repeated
+        elif scenario == "max_pages":
+            total, rows = 3, [{**repeated[0], "stateid": f"S{calls}"}]
+        elif scenario == "changing_total":
+            total = 3 if calls == 1 else 4
+            rows = [{**repeated[0], "stateid": f"S{calls}-{index}"} for index in range(2)]
+        elif scenario == "empty_before_total":
+            total, rows = 3, ([*repeated, {**repeated[0], "stateid": "CA"}] if calls == 1 else [])
+        else:
+            total, rows = 4, repeated
+        return httpx.Response(200, json={
+            "request": {"command": "/v2/?api_key=TOPSECRET"},
+            "response": {"frequency": "annual", "total": str(total), "data": rows},
+        })
+
+    connector = EiaV2Connector(base_url="https://api.eia.gov/v2/", api_key="TOPSECRET")
+    kwargs = {}
+    if scenario == "max_records":
+        kwargs["max_records"] = 10
+    if scenario == "max_pages":
+        kwargs["max_pages"] = 1
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = connector.fetch(
+            route_id="sales", params=build_eia_route_query("sales"),
+            page_size=2 if scenario not in {"max_pages"} else 1,
+            client=client, **kwargs,
+        )
+    assert result.state == ConnectorState.FAILED
+    assert result.payload is None
+    assert result.message is not None
+    assert re.search(message, result.message, re.IGNORECASE)
+    assert "TOPSECRET" not in result.message
 
 
 def test_eia_route_queries_are_annual_explicit_and_fetch_rejects_unsafe_routes() -> None:

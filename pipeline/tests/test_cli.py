@@ -3,6 +3,7 @@ from hashlib import sha256
 import json
 
 import pytest
+import duckdb
 from pathlib import Path
 
 from grid_scope.cli import (
@@ -16,6 +17,7 @@ from grid_scope.cli import (
     merge_asset_feeds,
     validate_refresh_quality,
     _optional_network_result,
+    _network_result,
     _local_records_with_lkg,
     _generator_artifacts_reconcile,
     build_forward_demand_increments,
@@ -301,6 +303,60 @@ def test_optional_source_uses_its_own_last_known_good_capture(tmp_path) -> None:
     assert json.loads(body)["records"][0]["id"] == "cached-gem"
     assert status.state == ConnectorState.CACHED
     assert "last successful" in (status.message or "")
+
+
+def test_unchanged_success_refreshes_cached_connector_last_success_time(tmp_path) -> None:
+    store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
+    body = b'{"records":[{"id":"same"}]}'
+    store.save("gem_power", body, "application/json")
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "UPDATE raw_captures SET retrieved_at = ? WHERE source_id = ?",
+            [datetime(2000, 1, 1, tzinfo=UTC), "gem_power"],
+        )
+    current = ConnectorResult(
+        source_id="gem_power", state=ConnectorState.CURRENT,
+        payload=FetchPayload(
+            source_id="gem_power", retrieved_at=datetime(2026, 6, 30, tzinfo=UTC),
+            media_type="application/json", body=body,
+        ),
+    )
+    _optional_network_result(lambda: current, "gem_power", store)
+    _, cached = _optional_network_result(
+        lambda: (_ for _ in ()).throw(RuntimeError("offline")), "gem_power", store
+    )
+    latest = store.latest_capture("gem_power")
+    assert latest is not None and latest.retrieved_at.year > 2000
+    last_success = latest.retrieved_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    status = build_connector_status(
+        cached, checked_at="2026-07-01T04:00:00Z",
+        observation_body=body, last_success_at=last_success,
+    )
+    assert status["lastSuccessAt"] == last_success
+
+
+@pytest.mark.parametrize("optional", [False, True])
+@pytest.mark.parametrize("mismatch", ["result", "payload"])
+def test_network_capture_rejects_connector_identity_mismatch_without_cache_poisoning(
+    tmp_path, optional, mismatch
+) -> None:
+    store = RawCaptureStore(tmp_path / "raw", tmp_path / "warehouse.duckdb")
+    requested = "gem_power"
+    result_source = "wri_power" if mismatch == "result" else requested
+    payload_source = "osm_power" if mismatch == "payload" else result_source
+    result = ConnectorResult(
+        source_id=result_source, state=ConnectorState.CURRENT,
+        payload=FetchPayload(
+            source_id=payload_source, retrieved_at=datetime.now(UTC),
+            media_type="application/json", body=b'{"records":[{"id":"poison"}]}',
+        ),
+    )
+    capture = _optional_network_result if optional else _network_result
+    with pytest.raises(ValueError, match="source ID"):
+        capture(lambda: result, requested, store)
+    assert store.latest_capture(requested) is None
+    assert store.latest_capture("wri_power") is None
+    assert store.latest_capture("osm_power") is None
 
 
 def test_optional_unconfigured_source_is_empty_without_masking_other_sources(tmp_path) -> None:
