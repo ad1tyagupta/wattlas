@@ -139,7 +139,10 @@ def test_observed_country_technology_factor_wins_only_when_adequate(assumptions:
 
     assert preferred["localGenerationGwh"]["central"] == pytest.approx(100 * 8.76 * 0.30)
     assert preferred["generationComponents"][0]["factorMethod"] == "country_technology_observed"
-    assert preferred["confidence"] > inadequate["confidence"]
+    assert (
+        preferred["metricConfidence"]["localGenerationGwh"]
+        > inadequate["metricConfidence"]["localGenerationGwh"]
+    )
     assert inadequate["generationComponents"][0]["factorMethod"] == "global_technology_fallback"
 
 
@@ -221,8 +224,18 @@ def test_balance_keeps_local_gap_net_balance_and_observed_unmet_distinct() -> No
         demand_gwh={"low": 950, "central": 1_000, "high": 1_080},
         supply=supply,
         peak_demand_mw={"low": 280, "central": 300, "high": 330},
-        net_interchange_gwh={"low": 95, "central": 100, "high": 105},
-        observed_unmet_demand_gwh=7,
+        net_interchange_gwh={
+            "netInterchangeGwh": {"low": 95, "central": 100, "high": 105},
+            "sourceIds": ["eia-interchange"],
+            "methodId": "official-net-interchange-v1",
+            "valueKind": "reported",
+        },
+        observed_unmet_demand_gwh={
+            "observedUnmetDemandGwh": 7,
+            "sourceIds": ["utility-shortage-report"],
+            "methodId": "official-shortage-v1",
+            "valueKind": "observed",
+        },
     )
 
     assert unknown["localGenerationGapGwh"] == {"low": 50.0, "central": 200.0, "high": 380.0}
@@ -230,6 +243,31 @@ def test_balance_keeps_local_gap_net_balance_and_observed_unmet_distinct() -> No
     assert unknown["observedUnmetDemandGwh"] is None
     assert known["netBalanceGwh"] == {"low": -285.0, "central": -100.0, "high": 55.0}
     assert known["observedUnmetDemandGwh"] == 7.0
+    assert known["metricLineage"]["netInterchangeGwh"]["sourceIds"] == [
+        "eia-interchange"
+    ]
+
+
+def test_reported_balance_inputs_without_provenance_are_rejected() -> None:
+    supply = {
+        "localGenerationGwh": {"low": 700, "central": 800, "high": 900},
+        "installedCapacityMw": 400,
+        "dependableCapacityMw": {"low": 180, "central": 250, "high": 320},
+    }
+    with pytest.raises(ValueError, match="provenance"):
+        calculate_power_balance(
+            demand_gwh={"low": 950, "central": 1_000, "high": 1_080},
+            supply=supply,
+            peak_demand_mw={"low": 280, "central": 300, "high": 330},
+            net_interchange_gwh=100,
+        )
+    with pytest.raises(ValueError, match="provenance"):
+        calculate_power_balance(
+            demand_gwh={"low": 950, "central": 1_000, "high": 1_080},
+            supply=supply,
+            peak_demand_mw={"low": 280, "central": 300, "high": 330},
+            observed_unmet_demand_gwh=7,
+        )
 
 
 def test_forecasts_add_forward_infrastructure_once_and_preserve_order(assumptions: dict) -> None:
@@ -331,6 +369,13 @@ def test_assumption_loader_rejects_private_lineage_and_invalid_ranges(tmp_path: 
     with pytest.raises(ValueError, match="unknown source"):
         load_generation_assumptions(unknown_delivery_source)
 
+    payload = json.loads(ASSUMPTIONS_PATH.read_text())
+    payload["observedFactorAdequacy"]["minimumCapacityMw"] = 0
+    zero_adequacy = tmp_path / "zero-adequacy.json"
+    zero_adequacy.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="positive"):
+        load_generation_assumptions(zero_adequacy)
+
 
 def test_supply_rejects_malformed_physical_inputs(assumptions: dict) -> None:
     with pytest.raises(ValueError, match="capacity"):
@@ -367,7 +412,12 @@ def test_unavailable_supply_is_explicit_and_coverage_counts_missing_capacity(
         demand_gwh={"low": 950, "central": 1_000, "high": 1_080},
         supply=empty,
         peak_demand_mw={"low": 280, "central": 300, "high": 330},
-        net_interchange_gwh={"low": 95, "central": 100, "high": 105},
+        net_interchange_gwh={
+            "netInterchangeGwh": {"low": 95, "central": 100, "high": 105},
+            "sourceIds": ["public-interchange"],
+            "methodId": "reported-interchange-v1",
+            "valueKind": "reported",
+        },
     )
     assert balance["localGenerationGwh"] is None
     assert balance["localGenerationGapGwh"] is None
@@ -376,7 +426,12 @@ def test_unavailable_supply_is_explicit_and_coverage_counts_missing_capacity(
 
 def test_future_delivery_factor_exposes_public_method_lineage(assumptions: dict) -> None:
     supply = calculate_supply(
-        [_plant(lifecycle="under_construction", targetYear=2026)],
+        [_plant(
+            lifecycle="under_construction",
+            targetYear=2026,
+            annualGenerationGwh=500,
+            dependableCapacityMw=80,
+        )],
         year=2026,
         assumptions=assumptions,
     )
@@ -385,3 +440,134 @@ def test_future_delivery_factor_exposes_public_method_lineage(assumptions: dict)
     method = assumptions["lifecycleDeliveryFactorMethod"]
     assert component["deliveryFactorSourceIds"] == method["sourceIds"]
     assert component["deliveryFactorMethodNote"] == method["methodNote"]
+    assert supply["confidence"] == 55
+
+
+def test_forecasts_filter_plants_to_the_requested_region(assumptions: dict) -> None:
+    base = [
+        {
+            "geographyId": "US-CA",
+            "year": year,
+            "demandGwh": {"low": 900, "central": 1_000, "high": 1_100},
+            "peakDemandMw": {"low": 200, "central": 220, "high": 250},
+            "sourceIds": ["regional-demand-public"],
+            "confidence": 80,
+            "coverage": 90,
+        }
+        for year in range(2026, 2032)
+    ]
+    forecasts = build_regional_energy_forecasts(
+        geography_id="US-CA",
+        demand_forecasts=base,
+        plants=[
+            _plant(id="ca", geographyId="US-CA", capacityMw=100),
+            _plant(id="tx", geographyId="US-TX", capacityMw=900),
+        ],
+        assumptions=assumptions,
+    )
+
+    expected = calculate_supply(
+        [_plant(id="ca", geographyId="US-CA", capacityMw=100)],
+        year=2026,
+        assumptions=assumptions,
+    )
+    assert forecasts[0]["metrics"]["installedCapacityMw"] == expected["installedCapacityMw"]
+
+
+def test_derived_supply_arithmetic_rejects_overflow_and_runtime_nan(assumptions: dict) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        calculate_supply(
+            [_plant(capacityMw=1e308)], year=2026, assumptions=assumptions
+        )
+    with pytest.raises(ValueError, match="finite"):
+        calculate_supply(
+            [
+                _plant(id="one", capacityMw=None, annualGenerationGwh=1e308),
+                _plant(id="two", capacityMw=None, annualGenerationGwh=1e308),
+            ],
+            year=2026,
+            assumptions=assumptions,
+        )
+
+    mutated = json.loads(json.dumps(assumptions))
+    mutated["lifecycleDeliveryFactors"]["under_construction"] = float("nan")
+    with pytest.raises(ValueError, match="finite"):
+        calculate_supply(
+            [_plant(lifecycle="under_construction", targetYear=2026)],
+            year=2026,
+            assumptions=mutated,
+        )
+
+    with pytest.raises(ValueError, match="finite"):
+        calculate_power_balance(
+            demand_gwh=0,
+            supply={
+                "localGenerationGwh": 1e308,
+                "installedCapacityMw": 1,
+                "dependableCapacityMw": 1,
+            },
+            peak_demand_mw=0,
+            net_interchange_gwh={
+                "netInterchangeGwh": 1e308,
+                "sourceIds": ["public-interchange"],
+                "methodId": "reported-interchange-v1",
+                "valueKind": "reported",
+            },
+        )
+
+
+def test_supply_quality_is_conservative_across_generation_and_capacity_metrics(
+    assumptions: dict,
+) -> None:
+    generation_only = calculate_supply(
+        [_plant(capacityMw=None, annualGenerationGwh=500)],
+        year=2026,
+        assumptions=assumptions,
+    )
+
+    assert generation_only["metricCoverage"] == {
+        "localGenerationGwh": 100.0,
+        "installedCapacityMw": 0.0,
+        "dependableCapacityMw": 0.0,
+    }
+    assert generation_only["coverage"] == 0
+    assert generation_only["confidence"] == 0
+
+
+def test_forecast_preserves_interchange_and_shortage_lineage(assumptions: dict) -> None:
+    base = [
+        {
+            "geographyId": "US-CA", "year": year,
+            "demandGwh": {"low": 900, "central": 1_000, "high": 1_100},
+            "peakDemandMw": {"low": 200, "central": 220, "high": 250},
+            "sourceIds": ["regional-demand-public"], "confidence": 80, "coverage": 90,
+        }
+        for year in range(2026, 2032)
+    ]
+    forecasts = build_regional_energy_forecasts(
+        geography_id="US-CA",
+        demand_forecasts=base,
+        plants=[_plant()],
+        assumptions=assumptions,
+        net_interchange_by_year={
+            2026: {
+                "netInterchangeGwh": 100,
+                "sourceIds": ["eia-interchange"],
+                "methodId": "official-interchange-v1",
+                "valueKind": "reported",
+            }
+        },
+        observed_unmet_by_year={
+            2026: {
+                "observedUnmetDemandGwh": 7,
+                "sourceIds": ["utility-shortage"],
+                "methodId": "official-shortage-v1",
+                "valueKind": "observed",
+            }
+        },
+    )
+
+    first = forecasts[0]
+    assert first["metricLineage"]["netInterchangeGwh"]["methodId"] == "official-interchange-v1"
+    assert first["metricLineage"]["observedUnmetDemandGwh"]["valueKind"] == "observed"
+    assert {"eia-interchange", "utility-shortage"}.issubset(first["sourceIds"])
