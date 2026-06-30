@@ -20,8 +20,7 @@ SNAPSHOT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 class SnapshotPublisher:
     def __init__(self, publish_dir: Path) -> None:
         self.publish_dir = publish_dir
-        if self.publish_dir.is_symlink():
-            raise ValueError("publish directory cannot be a symlink")
+        self._assert_no_symlink_ancestors(self.publish_dir)
         self.snapshots_dir = publish_dir / "snapshots"
         if self.snapshots_dir.is_symlink():
             raise ValueError("snapshots directory cannot be a symlink")
@@ -43,13 +42,19 @@ class SnapshotPublisher:
         destination = self.snapshots_dir / snapshot_id
         latest_temp = self.publish_dir / "latest.json.tmp"
         latest_path = self.publish_dir / "latest.json"
+        for path in (self.publish_dir, self.snapshots_dir, temporary, destination, latest_temp, latest_path):
+            self._assert_no_symlink_ancestors(path)
         for path in (temporary, destination, latest_temp, latest_path):
             if path.is_symlink():
                 raise ValueError(f"publisher control path cannot be a symlink: {path.name}")
+        if latest_path.exists() and not latest_path.is_file():
+            raise ValueError("latest.json must be a regular file")
         if destination.exists():
             raise ValueError(f"snapshot {snapshot_id} is immutable and already exists")
         if temporary.exists():
-            self._safe_rmtree(temporary)
+            self._remove_path(temporary)
+        if latest_temp.exists():
+            self._remove_path(latest_temp)
         temporary.mkdir(parents=True)
         committed = False
         try:
@@ -68,14 +73,47 @@ class SnapshotPublisher:
             latest_temp.write_text(json.dumps(complete_manifest, indent=2) + "\n")
             os.replace(latest_temp, latest_path)
             return destination
-        except BaseException:
-            if latest_temp.exists() and not latest_temp.is_symlink():
-                latest_temp.unlink()
-            if committed and destination.exists():
-                self._safe_rmtree(destination)
-            elif temporary.exists():
-                self._safe_rmtree(temporary)
+        except BaseException as publish_error:
+            cleanup_errors: list[BaseException] = []
+            cleanup_paths = []
+            if committed:
+                cleanup_paths.append(destination)
+            else:
+                cleanup_paths.append(temporary)
+            cleanup_paths.append(latest_temp)
+            for path in cleanup_paths:
+                try:
+                    self._remove_path(path)
+                except BaseException as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+            if cleanup_errors:
+                details = "; ".join(str(error) for error in cleanup_errors)
+                raise BaseExceptionGroup(
+                    f"snapshot publish failed; cleanup failures: {details}",
+                    [publish_error, *cleanup_errors],
+                )
             raise
+
+    @staticmethod
+    def _assert_no_symlink_ancestors(path: Path) -> None:
+        absolute = path.absolute()
+        for component in reversed((absolute, *absolute.parents)):
+            if component.is_symlink():
+                raise ValueError(f"symlink ancestor is not allowed: {component}")
+
+    @staticmethod
+    def _remove_path(path: Path) -> None:
+        if path.is_symlink():
+            raise ValueError(f"publisher refuses to remove symlink: {path.name}")
+        if not path.exists():
+            return
+        if path.is_file():
+            path.unlink()
+            return
+        if path.is_dir():
+            SnapshotPublisher._safe_rmtree(path)
+            return
+        raise ValueError(f"publisher refuses to remove special path: {path}")
 
     @staticmethod
     def _safe_rmtree(path: Path) -> None:

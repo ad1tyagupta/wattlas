@@ -279,6 +279,57 @@ def test_publish_rejects_symlinked_control_paths(tmp_path) -> None:
         SnapshotPublisher(linked_root)
 
 
+def test_publish_rejects_symlinked_publish_ancestor(tmp_path) -> None:
+    outside = tmp_path / "outside-ancestor"
+    outside.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink.*ancestor"):
+        SnapshotPublisher(linked_parent / "publish")
+
+
+def test_stale_regular_snapshot_temp_is_safely_recovered(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    stale = publisher.snapshots_dir / "recover.tmp"
+    stale.write_text("stale partial snapshot")
+
+    destination = publisher.publish(
+        "recover", global_artifacts(), {"snapshotId": "recover"}
+    )
+
+    assert destination.is_dir()
+    assert not stale.exists()
+
+
+def test_latest_temp_cleanup_failure_does_not_block_snapshot_rollback(
+    tmp_path, monkeypatch
+) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    publisher.publish("first", global_artifacts(), {"snapshotId": "first"})
+    real_replace = os.replace
+
+    def inject_stale_latest_directory(source, destination):
+        result = real_replace(source, destination)
+        if str(destination).endswith("snapshots/second"):
+            (tmp_path / "latest.json.tmp").mkdir()
+        return result
+
+    real_remove = publisher._remove_path
+    def fail_only_latest_cleanup(path):
+        if path == tmp_path / "latest.json.tmp":
+            raise OSError("simulated stale latest cleanup failure")
+        return real_remove(path)
+
+    monkeypatch.setattr("grid_scope.publisher.os.replace", inject_stale_latest_directory)
+    monkeypatch.setattr(publisher, "_remove_path", fail_only_latest_cleanup)
+
+    with pytest.raises(BaseException, match="stale latest cleanup failure"):
+        publisher.publish("second", global_artifacts(), {"snapshotId": "second"})
+    assert not (publisher.snapshots_dir / "second").exists()
+    assert json.loads((tmp_path / "latest.json").read_text())["snapshotId"] == "first"
+
+
 def test_publish_rejects_semantic_duplicate_ids_and_bool_coordinates(tmp_path) -> None:
     duplicate = global_artifacts()
     duplicate["countries.geojson"] = b'{"type":"FeatureCollection","features":[{"id":"AE-1","properties":{"id":"AE"}},{"id":"AE-2","properties":{"id":"AE"}}]}'
