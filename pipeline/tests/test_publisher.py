@@ -11,6 +11,9 @@ def global_artifacts() -> dict[str, bytes]:
         "admin1.geojson": b'{"type":"FeatureCollection","features":[]}',
         "regions.geojson": b'{"type":"FeatureCollection","features":[]}',
         "assets.geojson": b'{"type":"FeatureCollection","features":[]}',
+        "regional-energy.json": b'{}',
+        "generator-overview.geojson": b'{"type":"FeatureCollection","features":[]}',
+        "generators/index.json": b'{"countries":{},"totals":{"featureCount":0,"capacityMw":0}}',
         "evidence.json": b'{"sources":[],"claims":[]}',
     }
 
@@ -87,4 +90,62 @@ def test_publish_rejects_invalid_admin1_parent_country(tmp_path) -> None:
     invalid["admin1.geojson"] = b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"ZZ-1","geometry":{"type":"Polygon","coordinates":[]},"properties":{"id":"ZZ-1","country":"ZZ","parentId":"ZZ"}}]}'
 
     with pytest.raises(ValueError, match="unknown parent country"):
+        SnapshotPublisher(tmp_path).publish("invalid", invalid, {"snapshotId": "invalid"})
+
+
+def test_publish_writes_nested_generator_shards_and_manifest_checksums(tmp_path) -> None:
+    artifacts = global_artifacts()
+    shard = b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"plant-1","geometry":{"type":"Point","coordinates":[-119.5,36.5]},"properties":{"id":"plant-1","country":"US","geographyId":"US-CA","operatingCapacityMw":120,"plannedCapacityMw":0}}]}'
+    artifacts["countries.geojson"] = b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"US","geometry":{"type":"Polygon","coordinates":[]},"properties":{"id":"US"}}]}'
+    artifacts["admin1.geojson"] = b'{"type":"FeatureCollection","features":[{"type":"Feature","id":"US-CA","geometry":{"type":"Polygon","coordinates":[]},"properties":{"id":"US-CA","country":"US","parentId":"US"}}]}'
+    artifacts["generators/US.geojson"] = shard
+    import hashlib
+    artifacts["generators/index.json"] = json.dumps({
+        "countries": {"US": {
+            "bbox": [-119.5, 36.5, -119.5, 36.5], "path": "generators/US.geojson",
+            "featureCount": 1, "checksum": hashlib.sha256(shard).hexdigest(), "bytes": len(shard),
+        }},
+        "totals": {"featureCount": 1, "capacityMw": 120},
+    }, separators=(",", ":"), sort_keys=True).encode()
+
+    destination = SnapshotPublisher(tmp_path).publish("with-shards", artifacts, {"snapshotId": "with-shards"})
+
+    assert (destination / "generators" / "US.geojson").read_bytes() == shard
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert manifest["checksums"]["generators/US.geojson"] == hashlib.sha256(shard).hexdigest()
+
+
+def test_publish_rejects_bad_generator_index_and_keeps_last_good(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    publisher.publish("first", global_artifacts(), {"snapshotId": "first"})
+    invalid = global_artifacts()
+    invalid["generators/index.json"] = b'{"countries":{"ZZ":{"bbox":[0,0,0,0],"path":"generators/ZZ.geojson","featureCount":1,"checksum":"bad","bytes":12}},"totals":{"featureCount":1,"capacityMw":1}}'
+
+    with pytest.raises(ValueError, match="unknown country"):
+        publisher.publish("bad", invalid, {"snapshotId": "bad"})
+    assert json.loads((tmp_path / "latest.json").read_text())["snapshotId"] == "first"
+
+
+def test_publish_size_and_feature_guards_keep_last_good(tmp_path) -> None:
+    publisher = SnapshotPublisher(tmp_path)
+    publisher.publish("first", global_artifacts(), {"snapshotId": "first"})
+
+    with pytest.raises(ValueError, match="artifact size guard"):
+        publisher.publish(
+            "too-large", global_artifacts(),
+            {"snapshotId": "too-large", "guards": {"maxArtifactBytes": 8}},
+        )
+    with pytest.raises(ValueError, match="generator feature-count guard"):
+        publisher.publish(
+            "too-many", global_artifacts(),
+            {"snapshotId": "too-many", "guards": {"maxGeneratorFeatures": -1}},
+        )
+    assert json.loads((tmp_path / "latest.json").read_text())["snapshotId"] == "first"
+
+
+def test_publish_rejects_unsafe_nested_artifact_path(tmp_path) -> None:
+    invalid = global_artifacts()
+    invalid["../outside.json"] = b"{}"
+
+    with pytest.raises(ValueError, match="unsafe artifact path"):
         SnapshotPublisher(tmp_path).publish("invalid", invalid, {"snapshotId": "invalid"})

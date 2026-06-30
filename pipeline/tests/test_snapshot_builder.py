@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+from grid_scope.generator_artifacts import build_generator_artifacts
 from grid_scope.snapshot_builder import build_global_snapshot_artifacts, build_snapshot_artifacts
 
 
@@ -93,7 +96,11 @@ def test_global_builder_publishes_countries_assets_and_category_scores() -> None
         generated_at="2026-06-27T04:12:00Z",
     )
 
-    assert set(artifacts) == {"countries.geojson", "admin1.geojson", "regions.geojson", "assets.geojson", "evidence.json"}
+    assert set(artifacts) == {
+        "countries.geojson", "admin1.geojson", "regions.geojson", "assets.geojson",
+        "regional-energy.json", "generator-overview.geojson", "generators/index.json",
+        "evidence.json",
+    }
     country_data = json.loads(artifacts["countries.geojson"])
     by_id = {feature["id"]: feature for feature in country_data["features"]}
     assert by_id["AE"]["properties"]["scores"]["infrastructureDemand"] is not None
@@ -192,3 +199,199 @@ def test_global_builder_assigns_assets_to_adm1_and_overrides_india_outline() -> 
     assert region["properties"]["assetSummary"]["total"] == 1
     asset = json.loads(artifacts["assets.geojson"])["features"][0]
     assert asset["properties"]["geographyId"] == "IN-ASSAM"
+
+
+def _energy_forecast(year: int, score: float = 72) -> dict:
+    return {
+        "year": year,
+        "metrics": {
+            "demandGwh": {"low": 900, "central": 1000, "high": 1100},
+            "localGenerationGwh": {"low": 700, "central": 800, "high": 900},
+            "localGenerationGapGwh": {"low": 0, "central": 200, "high": 400},
+            "netBalanceGwh": None,
+            "observedUnmetDemandGwh": None,
+            "installedCapacityMw": 400,
+            "dependableCapacityMw": {"low": 200, "central": 250, "high": 300},
+            "peakDemandMw": {"low": 120, "central": 130, "high": 140},
+        },
+        "powerBalance": {"score": score, "coverage": 75, "status": "rankable"},
+        "methodId": "regional-balance-v1",
+        "sourceIds": ["public-grid-source"],
+        "confidence": 78,
+        "coverage": 80,
+        "valueKind": "estimated",
+    }
+
+
+def _generator(**overrides: object) -> dict:
+    row = {
+        "id": "plant-us-ca-solar",
+        "name": "California Solar One",
+        "country": "US",
+        "geographyId": "US-CA",
+        "coordinates": [-119.5, 36.5],
+        "technologies": ["solar"],
+        "operatingCapacityMw": 120.0,
+        "plannedCapacityMw": 30.0,
+        "unitCount": 2,
+        "sourceIds": ["public-plant-registry"],
+    }
+    row.update(overrides)
+    return row
+
+
+def test_global_builder_publishes_compact_energy_and_sharded_generators() -> None:
+    countries = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "id": "US",
+            "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {"id": "US", "name": "United States", "country": "US"},
+        }],
+    }
+    admin1 = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "id": "US-CA",
+            "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {
+                "id": "US-CA", "name": "California", "country": "US",
+                "parentId": "US",
+            },
+        }],
+    }
+    forecasts = {"US-CA": [_energy_forecast(year) for year in range(2026, 2032)]}
+    plants = [_generator()]
+
+    artifacts = build_global_snapshot_artifacts(
+        countries=countries,
+        admin1=admin1,
+        regions={"type": "FeatureCollection", "features": []},
+        registry={"sources": [], "assets": []},
+        generated_at="2026-06-30T00:00:00Z",
+        regional_energy=forecasts,
+        power_plants=plants,
+        population_records=[{
+            "geographyId": "US-CA", "year": 2030, "population": 39_000_000,
+            "sourceYear": 2025, "valueKind": "estimated", "confidence": 82,
+            "methodId": "worldpop-projection-v1", "sourceIds": ["worldpop-global2"],
+        }],
+    )
+
+    compact = json.loads(artifacts["admin1.geojson"])["features"][0]["properties"]
+    assert compact["population"] == 39_000_000
+    assert compact["populationYear"] == 2030
+    assert compact["populationSourceYear"] == 2025
+    assert compact["scores"]["powerBalance"] == 72
+    assert compact["powerBalanceYear"] == 2030
+    assert "regionalEnergy" not in compact
+    assert "generators" not in compact
+    assert "methodId" not in compact
+    energy = json.loads(artifacts["regional-energy.json"])
+    assert list(energy) == ["US-CA"]
+    assert [row["year"] for row in energy["US-CA"]] == list(range(2026, 2032))
+    overview = json.loads(artifacts["generator-overview.geojson"])
+    assert overview["features"][0]["properties"] == {
+        "geographyId": "US-CA",
+        "country": "US",
+        "count": 1,
+        "capacityMw": 150.0,
+        "operatingCapacityMw": 120.0,
+        "plannedCapacityMw": 30.0,
+        "technologyMixMw": {"solar": 150.0},
+        "dominantTechnology": "solar",
+    }
+    index = json.loads(artifacts["generators/index.json"])
+    assert index["countries"]["US"]["path"] == "generators/US.geojson"
+    assert index["countries"]["US"]["featureCount"] == 1
+    assert len(index["countries"]["US"]["checksum"]) == 64
+    shard = json.loads(artifacts["generators/US.geojson"])
+    assert shard["features"][0]["properties"]["sourceIds"] == ["public-plant-registry"]
+    assert index["totals"]["featureCount"] == len(shard["features"])
+    assert index["totals"]["capacityMw"] == 150.0
+
+
+def test_generator_artifacts_reject_unknown_assignments_and_duplicate_ids() -> None:
+    countries = {
+        "type": "FeatureCollection",
+        "features": [{
+            "id": "US", "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {"id": "US"},
+        }],
+    }
+    admin1 = {
+        "type": "FeatureCollection",
+        "features": [{"id": "US-CA", "properties": {"id": "US-CA", "country": "US"}}],
+    }
+    with pytest.raises(ValueError, match="unknown country"):
+        build_generator_artifacts(countries, admin1, [_generator(country="ZZ")])
+    with pytest.raises(ValueError, match="unknown ADM1"):
+        build_generator_artifacts(countries, admin1, [_generator(geographyId="US-NOPE")])
+    with pytest.raises(ValueError, match="duplicate generator id"):
+        build_generator_artifacts(countries, admin1, [_generator(), _generator()])
+    with pytest.raises(ValueError, match="source IDs"):
+        build_generator_artifacts(countries, admin1, [_generator(sourceIds=[])])
+    with pytest.raises(ValueError, match="finite"):
+        build_generator_artifacts(
+            countries, admin1, [_generator(operatingCapacityMw=float("nan"))]
+        )
+
+
+def test_global_builder_rejects_unprovenanced_or_unknown_regional_energy() -> None:
+    countries = {
+        "type": "FeatureCollection",
+        "features": [{
+            "id": "US", "geometry": {"type": "Polygon", "coordinates": []},
+            "properties": {"id": "US"},
+        }],
+    }
+    admin1 = {
+        "type": "FeatureCollection",
+        "features": [{"id": "US-CA", "properties": {"id": "US-CA", "country": "US"}}],
+    }
+    common = {
+        "countries": countries,
+        "admin1": admin1,
+        "regions": {"type": "FeatureCollection", "features": []},
+        "registry": {"sources": [], "assets": []},
+        "generated_at": "2026-06-30T00:00:00Z",
+    }
+    with pytest.raises(ValueError, match="unknown ADM1"):
+        build_global_snapshot_artifacts(
+            **common,
+            regional_energy={"US-NOPE": [_energy_forecast(year) for year in range(2026, 2032)]},
+        )
+    rows = [_energy_forecast(year) for year in range(2026, 2032)]
+    rows[0]["sourceIds"] = []
+    with pytest.raises(ValueError, match="source IDs"):
+        build_global_snapshot_artifacts(**common, regional_energy={"US-CA": rows})
+
+
+def test_generator_artifacts_are_deterministic_and_reconcile_capacity() -> None:
+    countries = {"type": "FeatureCollection", "features": [{"id": "US", "properties": {"id": "US"}}]}
+    admin1 = {
+        "type": "FeatureCollection",
+        "features": [
+            {"id": "US-CA", "properties": {"id": "US-CA", "country": "US"}},
+            {"id": "US-TX", "properties": {"id": "US-TX", "country": "US"}},
+        ],
+    }
+    plants = [
+        _generator(),
+        _generator(
+            id="plant-us-tx-wind", geographyId="US-TX", coordinates=[-99.0, 31.0],
+            technologies=["wind"], operatingCapacityMw=200.0, plannedCapacityMw=0.0,
+        ),
+    ]
+    forward = build_generator_artifacts(countries, admin1, plants)
+    reverse = build_generator_artifacts(countries, admin1, list(reversed(plants)))
+
+    assert forward == reverse
+    overview = json.loads(forward["generator-overview.geojson"])
+    shard = json.loads(forward["generators/US.geojson"])
+    assert sum(feature["properties"]["capacityMw"] for feature in overview["features"]) == 350.0
+    assert sum(
+        feature["properties"]["operatingCapacityMw"]
+        + feature["properties"]["plannedCapacityMw"]
+        for feature in shard["features"]
+    ) == 350.0

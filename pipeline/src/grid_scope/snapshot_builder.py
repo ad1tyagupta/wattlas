@@ -5,6 +5,7 @@ from math import log1p
 from typing import Any
 
 from grid_scope.canonicalize import assign_asset_geography
+from grid_scope.generator_artifacts import build_generator_artifacts
 from grid_scope.scoring import lifecycle_timing_index, score_infrastructure_demand
 from shapely.geometry import mapping, shape
 from shapely.ops import unary_union
@@ -169,6 +170,7 @@ def _empty_scores() -> dict[str, int | None]:
         "infrastructureDemand": None,
         "siteAttractiveness": None,
         "systemRisk": None,
+        "powerBalance": None,
     }
 
 
@@ -351,6 +353,9 @@ def build_global_snapshot_artifacts(
     regions: dict[str, Any],
     registry: dict[str, Any],
     generated_at: str,
+    regional_energy: dict[str, list[dict[str, Any]]] | None = None,
+    power_plants: list[dict[str, Any]] | None = None,
+    population_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, bytes]:
     admin1 = admin1 or {"type": "FeatureCollection", "features": []}
     region_features = [
@@ -454,6 +459,96 @@ def build_global_snapshot_artifacts(
         for feature in region_features
     ]
 
+    known_admin1_ids = {
+        str((feature.get("properties") or {}).get("id") or feature.get("id") or "").strip()
+        for feature in admin1_features
+    }
+    population_by_region: dict[str, dict[str, Any]] = {}
+    seen_population_keys: set[tuple[str, int]] = set()
+    for raw in population_records or []:
+        row = dict(raw)
+        region_id = str(row.get("geographyId") or "").strip()
+        if region_id not in known_admin1_ids:
+            raise ValueError(f"population contains unknown ADM1: {region_id}")
+        year = row.get("year")
+        if isinstance(year, bool) or not isinstance(year, int) or not 2026 <= year <= 2031:
+            raise ValueError(f"population for {region_id} has invalid year")
+        key = (region_id, year)
+        if key in seen_population_keys:
+            raise ValueError(f"duplicate population geography/year: {region_id}/{year}")
+        seen_population_keys.add(key)
+        value = row.get("population")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"population for {region_id} must be a nonnegative integer")
+        source_ids = row.get("sourceIds")
+        if (
+            not isinstance(source_ids, list)
+            or not source_ids
+            or any(not isinstance(item, str) or not item.strip() for item in source_ids)
+            or not str(row.get("methodId") or "").strip()
+        ):
+            raise ValueError(f"population for {region_id} requires method and source IDs")
+        if year == 2030:
+            population_by_region[region_id] = row
+    energy_by_region: dict[str, list[dict[str, Any]]] = {}
+    for raw_region_id, raw_rows in sorted((regional_energy or {}).items()):
+        region_id = str(raw_region_id).strip()
+        if region_id not in known_admin1_ids:
+            raise ValueError(f"regional energy contains unknown ADM1: {region_id}")
+        if not isinstance(raw_rows, list):
+            raise ValueError(f"regional energy for {region_id} must be a list")
+        rows = [dict(row) for row in raw_rows]
+        years = [row.get("year") for row in rows]
+        if years != list(range(2026, 2032)):
+            raise ValueError(
+                f"regional energy for {region_id} requires ordered 2026-2031 records"
+            )
+        if any(
+            row.get("geographyId") not in (None, region_id)
+            for row in rows
+        ):
+            raise ValueError(f"regional energy geography ID mismatch for {region_id}")
+        for row in rows:
+            if not isinstance(row.get("methodId"), str) or not row["methodId"].strip():
+                raise ValueError(f"regional energy for {region_id} requires a method ID")
+            source_ids = row.get("sourceIds")
+            if (
+                not isinstance(source_ids, list)
+                or not source_ids
+                or any(not isinstance(value, str) or not value.strip() for value in source_ids)
+            ):
+                raise ValueError(f"regional energy for {region_id} requires source IDs")
+            row["sourceIds"] = sorted({value.strip() for value in source_ids})
+        energy_by_region[region_id] = rows
+
+    for feature in enriched_admin1:
+        properties = feature["properties"]
+        region_id = properties["id"]
+        population = population_by_region.get(region_id)
+        if population:
+            properties["population"] = population["population"]
+            properties["populationYear"] = population["year"]
+            properties["populationSourceYear"] = population.get("sourceYear")
+            properties["populationValueKind"] = population.get("valueKind")
+            properties["populationConfidence"] = population.get("confidence")
+        rows = energy_by_region.get(region_id)
+        properties["scores"].setdefault("powerBalance", None)
+        for scores in properties.get("scoresByYear", {}).values():
+            scores.setdefault("powerBalance", None)
+        if rows:
+            summary = next(row for row in rows if row["year"] == 2030)
+            power_balance = summary.get("powerBalance") or {}
+            score = power_balance.get("score")
+            properties["scores"]["powerBalance"] = score
+            properties.setdefault("scoresByYear", {}).setdefault("2030", _empty_scores())[
+                "powerBalance"
+            ] = score
+            properties["powerBalanceYear"] = 2030
+            properties["powerBalanceCoverage"] = power_balance.get(
+                "coverage", summary.get("coverage")
+            )
+            properties["powerBalanceValueKind"] = summary.get("valueKind")
+
     asset_features = [
         {
             "type": "Feature",
@@ -483,10 +578,22 @@ def build_global_snapshot_artifacts(
         "metadata": countries.get("metadata", {}),
         "features": country_features,
     }
-    return {
+    generator_artifacts = build_generator_artifacts(
+        countries, admin1, power_plants or []
+    )
+    artifacts = {
         "countries.geojson": json.dumps(country_collection, separators=(",", ":"), ensure_ascii=False).encode(),
         "admin1.geojson": json.dumps({"type": "FeatureCollection", "metadata": {key: value for key, value in admin1.get("metadata", {}).items() if key != "indiaCountryGeometry"}, "features": enriched_admin1}, separators=(",", ":"), ensure_ascii=False).encode(),
         "regions.geojson": json.dumps({"type": "FeatureCollection", "features": enriched_regions}, separators=(",", ":"), ensure_ascii=False).encode(),
         "assets.geojson": json.dumps({"type": "FeatureCollection", "features": asset_features}, separators=(",", ":"), ensure_ascii=False).encode(),
+        "regional-energy.json": json.dumps(
+            energy_by_region,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        ).encode(),
         "evidence.json": json.dumps({"sources": registry["sources"], "claims": claims}, separators=(",", ":"), ensure_ascii=False).encode(),
     }
+    artifacts.update(generator_artifacts)
+    return artifacts
