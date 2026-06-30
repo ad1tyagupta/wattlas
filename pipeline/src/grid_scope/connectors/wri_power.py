@@ -278,7 +278,6 @@ class WriPowerConnector:
         release_updated_at = (
             payload_updated_at
             or response.headers.get("last-modified")
-            or checked_at.date().isoformat()
         )
         records = parse_wri_power(payload, updated_at=release_updated_at)
         if len(records) < self.minimum_records:

@@ -788,5 +788,7 @@ def test_power_connectors_capture_release_checksum_and_attribution() -> None:
     osm_body = json.loads(osm_result.payload.body)
     assert len(wri_body["upstreamChecksumSha256"]) == 64
     assert wri_body["sourceUrl"] == "https://example.test/wri.json"
+    assert all(record["updatedAt"] is None for record in wri_body["records"])
     assert osm_body["licence"] == "ODbL-1.0"
     assert osm_body["attribution"] == "© OpenStreetMap contributors"
+    assert all(record["updatedAt"] is None for record in osm_body["records"])

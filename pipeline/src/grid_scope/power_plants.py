@@ -73,6 +73,15 @@ _LOCATION_FIELDS = {
     "locationPrecision",
 }
 _PRECISION_RANK = {"region_centroid": 0, "city_centroid": 1, "exact": 2}
+_PUBLIC_SOURCE_PRECEDENCE = {
+    "official_power": 4,
+    "gem_power": 3,
+    "gem-global-integrated-power-tracker": 3,
+    "wri_power": 2,
+    "wri-global-power-plant-database": 2,
+    "osm_power": 1,
+    "openstreetmap-power": 1,
+}
 _RECORD_ANCHOR_PRIORITY = {
     "gemunit": 0,
     "gemplant": 1,
@@ -837,20 +846,28 @@ def _field_value_kind(record: dict[str, Any], field: str) -> str | None:
     return record.get("valueKind")
 
 
-def _field_preference(record: dict[str, Any], field: str) -> tuple[int, int, int, str]:
+def _public_source_rank(record: dict[str, Any]) -> int:
+    return max(
+        (_PUBLIC_SOURCE_PRECEDENCE.get(str(source_id), 0) for source_id in record.get("sourceIds", [])),
+        default=0,
+    )
+
+
+def _field_preference(record: dict[str, Any], field: str) -> tuple[int, int, int, int, str]:
     value_kind = _field_value_kind(record, field)
     value_rank = _VALUE_KIND_RANK.get(str(value_kind), 0) if field in _FIELD_KIND_NAMES else 0
     source_rank = SOURCE_RANK.get(record.get("sourceType"), 0)
     precision_rank = _PRECISION_RANK.get(record.get("locationPrecision"), -1)
-    return value_rank, source_rank, precision_rank, _stable_json(record)
+    return value_rank, source_rank, _public_source_rank(record), precision_rank, _stable_json(record)
 
 
-def _location_preference(record: dict[str, Any]) -> tuple[int, int, str]:
+def _location_preference(record: dict[str, Any]) -> tuple[int, int, int, str]:
     precision = record.get("locationPrecision")
     precision_rank = _PRECISION_RANK.get(precision, -1) if record.get("coordinates") else -1
     return (
         precision_rank,
         SOURCE_RANK.get(record.get("sourceType"), 0),
+        _public_source_rank(record),
         _stable_json(record),
     )
 

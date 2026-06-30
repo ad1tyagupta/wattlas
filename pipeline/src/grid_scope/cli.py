@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import json
 import os
 from pathlib import Path
@@ -27,6 +27,11 @@ from grid_scope.connectors.base import ConnectorResult, FetchPayload
 from grid_scope.connectors.curated import CuratedConnector
 from grid_scope.connectors.entsoe import EntsoeConnector
 from grid_scope.connectors.ember import normalize_ember_yearly_csv
+from grid_scope.connectors.eia import (
+    EiaV2Connector,
+    build_eia_route_query,
+    normalize_eia_state,
+)
 from grid_scope.connectors.eurostat import EurostatConnector, parse_population
 from grid_scope.connectors.gisco import GiscoConnector
 from grid_scope.connectors.global_assets import load_asset_registry
@@ -43,6 +48,8 @@ from grid_scope.models import ConnectorState
 from grid_scope.population import load_population_artifact
 from grid_scope.power_balance import (
     build_regional_energy_forecasts,
+    calculate_power_balance,
+    derive_observed_capacity_factors,
     load_generation_assumptions,
 )
 from grid_scope.power_plants import canonicalize_power_plants
@@ -80,7 +87,26 @@ _QUALITY_COUNT_FIELDS = (
     "canonicalPowerPlants",
     "canonicalPowerUnits",
     "generatorRegions",
+    "regionalEnergyRegions",
+    "powerSourceRecords",
+    "publishedPowerPlants",
 )
+
+_US_STATE_CODES = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+    "District of Columbia": "DC", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI",
+    "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
+    "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
+    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
+    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI",
+    "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX",
+    "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+}
 
 
 def _read_json(path: Path) -> dict:
@@ -128,26 +154,50 @@ def load_refresh_model_artifacts(
     if population_fingerprint != population.get("buildFingerprint"):
         raise ValueError("demand weights do not match the population release")
     records = weights.get("records")
-    if not isinstance(records, list):
-        raise ValueError("regional demand weights require a records array")
+    population_records = population.get("records")
+    if not isinstance(population_records, list) or not population_records:
+        raise ValueError("ADM1 population artifact requires non-empty records")
+    if not isinstance(records, list) or not records:
+        raise ValueError("regional demand weights require non-empty records")
+    population_keys = {
+        (str(row.get("geographyId") or "").strip(), row.get("year"))
+        for row in population_records if isinstance(row, Mapping)
+    }
+    weight_keys = {
+        (str(row.get("geographyId") or "").strip(), row.get("year"))
+        for row in records if isinstance(row, Mapping)
+    }
+    if not weight_keys or not weight_keys.issubset(population_keys):
+        raise ValueError("regional demand weights are not linked to population records")
     return {"population": population, "demandWeights": weights}
 
 
-def _source_observation_date(body: bytes | None) -> str | None:
+def _source_observation_date(
+    body: bytes | None, *, allow_update_dates: bool = True
+) -> str | None:
     if not body:
         return None
     try:
         payload = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    candidates: list[str] = []
+    observation_candidates: list[str] = []
+    update_candidates: list[str] = []
 
     def visit(value: object) -> None:
         if isinstance(value, Mapping):
             for key in ("observationDate", "updatedAt", "updated_at"):
                 candidate = value.get(key)
                 if isinstance(candidate, str) and candidate.strip():
-                    candidates.append(candidate.strip()[:10])
+                    raw = candidate.strip()
+                    try:
+                        parsed = date.fromisoformat(raw) if len(raw) == 10 else datetime.fromisoformat(
+                            raw.replace("Z", "+00:00")
+                        ).date()
+                    except ValueError:
+                        continue
+                    target = observation_candidates if key == "observationDate" else update_candidates
+                    target.append(parsed.isoformat())
             for nested in value.values():
                 visit(nested)
         elif isinstance(value, list):
@@ -155,7 +205,245 @@ def _source_observation_date(body: bytes | None) -> str | None:
                 visit(nested)
 
     visit(payload)
+    candidates = observation_candidates or (update_candidates if allow_update_dates else [])
     return max(candidates) if candidates else None
+
+
+def run_refresh_stage_sequence(
+    callbacks: Mapping[str, Callable[[], None]],
+) -> None:
+    """Execute real refresh boundaries in the single approved dependency order."""
+
+    missing = [step for step in REFRESH_STEPS if step not in callbacks]
+    extras = sorted(set(callbacks) - set(REFRESH_STEPS))
+    if missing or extras:
+        raise ValueError(
+            f"refresh stage callbacks mismatch; missing={missing}, extras={extras}"
+        )
+    for step in REFRESH_STEPS:
+        callbacks[step]()
+
+
+def _local_records_with_lkg(
+    build_current: Callable[[], list[dict[str, Any]]],
+    *,
+    source_id: str,
+    store: RawCaptureStore,
+    now: datetime,
+    configured: bool,
+) -> tuple[list[dict[str, Any]], ConnectorResult]:
+    """Persist normalized records and fall back only to this source's last good build."""
+
+    def cached_records() -> list[dict[str, Any]] | None:
+        previous = store.latest_capture(source_id)
+        if previous is None:
+            return None
+        payload = json.loads(previous.path.read_bytes())
+        rows = payload.get("records") if isinstance(payload, Mapping) else None
+        if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) for row in rows):
+            raise ValueError(f"invalid cached {source_id} normalized release")
+        return rows
+
+    if not configured:
+        previous_rows = cached_records()
+        if previous_rows is None:
+            return [], ConnectorResult(
+                source_id=source_id, state=ConnectorState.NOT_CONFIGURED,
+                payload=None, message=f"Optional {source_id} source is not configured.",
+            )
+        return previous_rows, ConnectorResult(
+            source_id=source_id, state=ConnectorState.CACHED, payload=None,
+            message="Using source-specific last successful normalized release.",
+        )
+    try:
+        records = build_current()
+        if not isinstance(records, list) or not records or any(not isinstance(row, dict) for row in records):
+            raise ValueError(f"{source_id} normalization requires a non-empty records list")
+        body = json.dumps({"records": records}, sort_keys=True, separators=(",", ":")).encode()
+        store.save(source_id, body, "application/json")
+        return records, ConnectorResult(
+            source_id=source_id, state=ConnectorState.CURRENT,
+            payload=FetchPayload(source_id, now, "application/json", body),
+        )
+    except Exception as error:
+        previous_rows = cached_records()
+        if previous_rows is None:
+            raise
+        return previous_rows, ConnectorResult(
+            source_id=source_id, state=ConnectorState.CACHED, payload=None,
+            message=f"Using source-specific last successful release: {error}",
+        )
+
+
+def _generator_artifacts_reconcile(
+    artifacts: Mapping[str, bytes], *, expected_plants: int
+) -> bool:
+    """Reconcile published generator index, shards, and ADM1 overview from bytes."""
+
+    try:
+        index = json.loads(artifacts["generators/index.json"])
+        overview = json.loads(artifacts["generator-overview.geojson"])
+        countries = index["countries"]
+        total = index["totals"]["featureCount"]
+        if isinstance(total, bool) or total != expected_plants:
+            return False
+        shard_total = 0
+        by_region: dict[str, int] = {}
+        for entry in countries.values():
+            shard = json.loads(artifacts[entry["path"]])
+            features = shard.get("features")
+            if not isinstance(features, list) or entry.get("featureCount") != len(features):
+                return False
+            shard_total += len(features)
+            for feature in features:
+                region_id = str((feature.get("properties") or {}).get("geographyId") or "")
+                by_region[region_id] = by_region.get(region_id, 0) + 1
+        overview_counts = {
+            str((feature.get("properties") or {}).get("geographyId") or ""):
+            (feature.get("properties") or {}).get("count")
+            for feature in overview.get("features", [])
+        }
+        return shard_total == expected_plants and overview_counts == by_region
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def build_forward_demand_increments(
+    registry: Mapping[str, Any], *, active_admin1: set[str]
+) -> list[dict[str, Any]]:
+    """Convert sourced future ADM1 data/water loads from average MW to annual GWh."""
+
+    increments: list[dict[str, Any]] = []
+    for asset in registry.get("assets", []):
+        region_id = str(asset.get("geographyId") or "").strip()
+        year = asset.get("targetYear")
+        demand = asset.get("demandMw")
+        if (
+            region_id not in active_admin1
+            or asset.get("category") not in {"data_centre", "water_infrastructure"}
+            or asset.get("lifecycle") not in {
+                "announced", "planning_filed", "permitted", "under_construction"
+            }
+            or not isinstance(year, int) or not 2026 <= year <= 2031
+            or not isinstance(demand, Mapping)
+        ):
+            continue
+        source_ids = sorted({str(value).strip() for value in asset.get("sourceIds", []) if str(value).strip()})
+        if not source_ids:
+            continue
+        increment_id = str(asset.get("id") or "").strip()
+        if not increment_id:
+            raise ValueError("forward demand asset requires an ID")
+        increments.append({
+            "incrementId": f"{increment_id}:{year}",
+            "geographyId": region_id,
+            "targetYear": year,
+            "demandGwh": {
+                part: round(float(demand[part]) * 8.76, 6)
+                for part in ("low", "central", "high")
+            },
+            "sourceIds": source_ids,
+        })
+    return sorted(increments, key=lambda row: row["incrementId"])
+
+
+def _eia_state_mapping(admin1_payload: Mapping[str, Any]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for feature in admin1_payload.get("features", []):
+        properties = feature.get("properties") or {}
+        if properties.get("country") != "US":
+            continue
+        code = _US_STATE_CODES.get(str(properties.get("name") or "").strip())
+        region_id = str(properties.get("id") or feature.get("id") or "").strip()
+        if code and region_id:
+            mapping[code] = region_id
+    return dict(sorted(mapping.items()))
+
+
+def _fetch_eia_observations(
+    client: httpx.Client,
+    *,
+    now: datetime,
+    store: RawCaptureStore,
+    admin1_payload: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], ConnectorResult]:
+    """Fetch and merge the public EIA annual state routes when configured."""
+
+    base_url = os.getenv("EIA_API_V2_URL") or None
+    api_key = os.getenv("EIA_API_KEY") or None
+    state_mapping = _eia_state_mapping(admin1_payload)
+    configured = bool(base_url and state_mapping)
+
+    def build() -> list[dict[str, Any]]:
+        connector = EiaV2Connector(base_url=base_url, api_key=api_key)
+        rows: list[dict[str, Any]] = []
+        for route_id in ("sales", "generation", "capability"):
+            query = build_eia_route_query(route_id, state_codes=state_mapping)
+            query.update({"start": "2021", "end": str(now.year)})
+            result = connector.fetch(
+                route_id=route_id, params=query, now=now, client=client
+            )
+            if result.state != ConnectorState.CURRENT or result.payload is None:
+                raise RuntimeError(result.message or f"EIA {route_id} fetch failed")
+            payload = json.loads(result.payload.body)
+            rows.extend(normalize_eia_state(
+                payload,
+                route_id=route_id,
+                state_mapping=state_mapping,
+                active_geography_ids=set(state_mapping.values()),
+                retrieved_at=now.date().isoformat(),
+            ))
+        return merge_regional_observations(rows)
+
+    return _local_records_with_lkg(
+        build,
+        source_id="eia_state_observations",
+        store=store,
+        now=now,
+        configured=configured,
+    )
+
+
+def _official_observed_capacity_factors(
+    observations: Iterable[Mapping[str, Any]],
+    plants: Iterable[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    capacities: dict[tuple[str, str], float] = {}
+    for plant in plants:
+        if plant.get("lifecycle") != "operational" or plant.get("capacityMw") is None:
+            continue
+        region_id = str(plant.get("geographyId") or "").strip()
+        technology = str(plant.get("technology") or "").strip()
+        raw_capacity = plant["capacityMw"]
+        capacity = (
+            float(raw_capacity.get("central"))
+            if isinstance(raw_capacity, Mapping) else float(raw_capacity)
+        )
+        capacities[(region_id, technology)] = capacities.get((region_id, technology), 0.0) + capacity
+    grouped: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for observation in observations:
+        mix = observation.get("generationMixGwh")
+        if not isinstance(mix, Mapping):
+            continue
+        for technology, generation in mix.items():
+            capacity = capacities.get((str(observation.get("geographyId") or ""), str(technology)))
+            if not capacity or float(generation) < 0 or float(generation) > capacity * 8.76:
+                continue
+            key = (
+                str(observation.get("countryIso3") or "").upper(),
+                str(technology), int(observation.get("year")),
+            )
+            row = grouped.setdefault(key, {
+                "countryIso3": key[0], "technology": key[1], "year": key[2],
+                "annualGenerationGwh": 0.0, "capacityMw": 0.0, "sourceIds": set(),
+            })
+            row["annualGenerationGwh"] += float(generation)
+            row["capacityMw"] += capacity
+            row["sourceIds"].update(observation.get("sourceIds") or [])
+    inputs = [
+        {**row, "sourceIds": sorted(row["sourceIds"])} for row in grouped.values()
+    ]
+    return derive_observed_capacity_factors(inputs) if inputs else {}
 
 
 def build_connector_status(
@@ -176,7 +464,10 @@ def build_connector_status(
         "lastSuccessAt": (
             checked_at if result.state == ConnectorState.CURRENT else last_success_at
         ),
-        "observationDate": _source_observation_date(body),
+        "observationDate": _source_observation_date(
+            body,
+            allow_update_dates=result.source_id not in {"wri_power", "osm_power"},
+        ),
         "message": result.message,
     }
 
@@ -195,9 +486,9 @@ def validate_refresh_quality(
         "generatorArtifactsReconciled"
     ):
         raise ValueError("refresh reconciliation failed")
-    for field in ("powerSourceRecords", "canonicalPowerPlants", "canonicalPowerUnits"):
+    for field in _QUALITY_COUNT_FIELDS:
         value = coverage.get(field)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"invalid refresh coverage count: {field}")
     if previous_manifest is None:
         return
@@ -428,12 +719,16 @@ def build_regional_energy_model(
     power_records: Iterable[Mapping[str, Any]],
     assumptions: Mapping[str, Any],
     method_config: Mapping[str, Any],
+    demand_increments: Iterable[Mapping[str, Any]] = (),
+    attach_scores: bool = True,
+    before_supply: Callable[[], None] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
     """Build country-controlled ADM1 residual demand, then supply and balance."""
 
     weights = [dict(row) for row in demand_weights.get("records", [])]
     controls = [dict(row) for row in country_controls if row.get("demandGwh") is not None]
     official = [dict(row) for row in official_observations]
+    increments = [dict(row) for row in demand_increments]
     if not weights or not controls:
         return {}, True
     latest_controls: dict[str, dict[str, Any]] = {}
@@ -485,8 +780,18 @@ def build_regional_energy_model(
             actual = sum(float(row["demandGwh"]["central"]) for row in allocated)
             reconciled = reconciled and abs(actual - expected) <= max(1e-6, abs(expected) * 1e-6)
             for row in allocated:
+                matching = next((
+                    observation for observation in official
+                    if observation.get("geographyId") == row["geographyId"]
+                    and int(observation.get("year", 0)) == year
+                ), None)
+                if matching is not None and matching.get("peakDemandMw") is not None:
+                    row["peakDemandMw"] = matching["peakDemandMw"]
                 demand_by_region.setdefault(row["geographyId"], []).append(row)
+    if before_supply is not None:
+        before_supply()
     plants = [dict(row) for row in power_records]
+    observed_capacity_factors = _official_observed_capacity_factors(official, plants)
     forecasts: dict[str, list[dict[str, Any]]] = {}
     for region_id, rows in sorted(demand_by_region.items()):
         if [row["year"] for row in rows] != list(range(2026, 2032)):
@@ -513,8 +818,79 @@ def build_regional_energy_model(
             assumptions=assumptions,
             net_interchange_by_year=net_interchange,
             observed_unmet_by_year=observed_unmet,
+            observed_capacity_factors=observed_capacity_factors,
+            demand_increments=[
+                row for row in increments if row.get("geographyId") == region_id
+            ],
         )
-        _attach_power_balance_scores(regional)
+        observations_by_year = {
+            int(row["year"]): row for row in official
+            if row.get("geographyId") == region_id
+        }
+        for forecast in regional:
+            observation = observations_by_year.get(int(forecast["year"]))
+            if observation is None:
+                continue
+            metrics = forecast["metrics"]
+            supply = {
+                "localGenerationGwh": metrics.get("localGenerationGwh"),
+                "installedCapacityMw": metrics.get("installedCapacityMw"),
+                "dependableCapacityMw": metrics.get("dependableCapacityMw"),
+            }
+            if observation.get("localGenerationGwh") is not None:
+                supply["localGenerationGwh"] = observation["localGenerationGwh"]
+            if observation.get("installedCapacityMw") is not None:
+                supply["installedCapacityMw"] = observation["installedCapacityMw"]
+            if observation.get("dependableCapacityMw") is not None:
+                supply["dependableCapacityMw"] = observation["dependableCapacityMw"]
+            rebuilt = calculate_power_balance(
+                demand_gwh=metrics["demandGwh"],
+                supply=supply,
+                peak_demand_mw=(
+                    observation.get("peakDemandMw")
+                    if observation.get("peakDemandMw") is not None
+                    else metrics["peakDemandMw"]
+                ),
+                net_interchange_gwh=(
+                    {
+                        "netInterchangeGwh": observation["netInterchangeGwh"],
+                        "sourceIds": observation.get("sourceIds"),
+                        "methodId": observation.get("methodId"),
+                        "valueKind": observation.get("valueKind"),
+                    }
+                    if observation.get("netInterchangeGwh") is not None else None
+                ),
+                observed_unmet_demand_gwh=(
+                    {
+                        "observedUnmetDemandGwh": observation["observedUnmetDemandGwh"],
+                        "sourceIds": observation.get("sourceIds"),
+                        "methodId": observation.get("methodId"),
+                        "valueKind": observation.get("valueKind"),
+                    }
+                    if observation.get("observedUnmetDemandGwh") is not None else None
+                ),
+            )
+            if observation.get("generationMixGwh"):
+                rebuilt["generationMixGwh"] = dict(observation["generationMixGwh"])
+            official_fields = [
+                field for field in (
+                    "localGenerationGwh", "peakDemandMw", "installedCapacityMw",
+                    "dependableCapacityMw", "generationMixGwh",
+                ) if observation.get(field) not in (None, {})
+            ]
+            lineage = rebuilt.setdefault("metricLineage", {})
+            for field in official_fields:
+                lineage[field] = {
+                    "sourceIds": sorted(set(observation.get("sourceIds") or [])),
+                    "methodId": observation.get("methodId"),
+                    "valueKind": observation.get("valueKind"),
+                }
+            forecast["metrics"] = rebuilt
+            forecast["sourceIds"] = sorted(
+                set(forecast["sourceIds"]) | set(observation.get("sourceIds") or [])
+            )
+        if attach_scores:
+            _attach_power_balance_scores(regional)
         forecasts[region_id] = regional
     return forecasts, reconciled
 
@@ -563,7 +939,15 @@ def refresh() -> Path:
     snapshot_id = generated_at.replace(":", "-")
     store = RawCaptureStore(RAW_DIR, WAREHOUSE_PATH)
     source_bodies: dict[str, bytes] = {}
+    completed_stages: list[str] = []
 
+    def stage(name: str) -> None:
+        expected = REFRESH_STEPS[len(completed_stages)]
+        if name != expected:
+            raise RuntimeError(f"refresh stage order violation: {name} before {expected}")
+        completed_stages.append(name)
+
+    stage("boundaries")
     with httpx.Client(timeout=90, follow_redirects=True) as client:
         countries_body, countries_status = _network_result(
             lambda: UnGeodataConnector(UN_GEODATA_URL).fetch(client, now=now),
@@ -573,6 +957,30 @@ def refresh() -> Path:
         gisco_body, gisco_status = _network_result(
             lambda: GiscoConnector().fetch(client, now=now), "gisco", store
         )
+
+    global_admin1_result = CuratedConnector(
+        GLOBAL_ADMIN1_PATH, source_id="geoboundaries_adm1"
+    ).fetch(now=now)
+    assert global_admin1_result.payload is not None
+    store.save(
+        global_admin1_result.source_id,
+        global_admin1_result.payload.body,
+        global_admin1_result.payload.media_type,
+    )
+    admin1_payload = json.loads(global_admin1_result.payload.body)
+    population_path = Path(os.getenv(
+        "ADM1_POPULATION_ARTIFACT_PATH",
+        str(CURATED_PATH.parent / "admin1-population.json"),
+    ))
+    weights_path = Path(os.getenv(
+        "REGIONAL_DEMAND_WEIGHTS_PATH",
+        str(CURATED_PATH.parent / "regional-demand-weights.json"),
+    ))
+    stage("population")
+    model_artifacts = load_refresh_model_artifacts(population_path, weights_path)
+
+    stage("plant_sources")
+    with httpx.Client(timeout=90, follow_redirects=True) as client:
         eurostat_body, eurostat_status = _network_result(
             lambda: EurostatConnector().fetch(client, now=now), "eurostat", store
         )
@@ -608,6 +1016,13 @@ def refresh() -> Path:
         "wri_power": wri_body,
         "osm_power": osm_power_body,
     })
+    power_source_records, power_source_counts = collect_power_source_records(source_bodies)
+
+    stage("plant_canonicalization")
+    canonical_power = canonicalize_power_plants(
+        power_source_records,
+        geographies=admin1_payload.get("features", []),
+    )
 
     curated_result = CuratedConnector(CURATED_PATH).fetch(now=now)
     assert curated_result.payload is not None
@@ -624,10 +1039,7 @@ def refresh() -> Path:
     source_registry_result = CuratedConnector(
         SOURCE_REGISTRY_PATH, source_id="source_registry"
     ).fetch(now=now)
-    global_admin1_result = CuratedConnector(
-        GLOBAL_ADMIN1_PATH, source_id="geoboundaries_adm1"
-    ).fetch(now=now)
-    for result in (global_assets_result, source_registry_result, global_admin1_result):
+    for result in (global_assets_result, source_registry_result):
         assert result.payload is not None
         store.save(result.source_id, result.payload.body, result.payload.media_type)
 
@@ -646,28 +1058,6 @@ def refresh() -> Path:
     registry["modelNote"] = json.loads(GLOBAL_ASSETS_PATH.read_text()).get("modelNote")
     store.save_canonical_assets(registry["assets"])
 
-    admin1_payload = json.loads(global_admin1_result.payload.body)
-    population_path = Path(
-        os.getenv(
-            "ADM1_POPULATION_ARTIFACT_PATH",
-            str(CURATED_PATH.parent / "admin1-population.json"),
-        )
-    )
-    weights_path = Path(
-        os.getenv(
-            "REGIONAL_DEMAND_WEIGHTS_PATH",
-            str(CURATED_PATH.parent / "regional-demand-weights.json"),
-        )
-    )
-    model_artifacts: dict[str, dict[str, Any]] | None = None
-    if population_path.exists() and weights_path.exists():
-        model_artifacts = load_refresh_model_artifacts(population_path, weights_path)
-
-    power_source_records, power_source_counts = collect_power_source_records(source_bodies)
-    canonical_power = canonicalize_power_plants(
-        power_source_records,
-        geographies=admin1_payload.get("features", []),
-    )
     active_admin1 = {
         str((feature.get("properties") or {}).get("id") or feature.get("id") or "").strip()
         for feature in admin1_payload.get("features", [])
@@ -689,34 +1079,28 @@ def refresh() -> Path:
         and plant.get("coordinates") is not None
     ]
 
+    stage("country_electricity_controls")
     ember_path_value = os.getenv("EMBER_YEARLY_PATH")
-    country_controls = (
-        normalize_ember_yearly_csv(Path(ember_path_value)) if ember_path_value else []
-    )
-    country_control_status = _records_result(
-        country_controls,
-        source_id="country_electricity_controls",
-        now=now,
+    country_controls, country_control_status = _local_records_with_lkg(
+        lambda: normalize_ember_yearly_csv(Path(ember_path_value or "")),
+        source_id="country_electricity_controls", store=store, now=now,
         configured=bool(ember_path_value),
     )
-    if country_control_status.payload is not None:
-        store.save(
-            country_control_status.source_id,
-            country_control_status.payload.body,
-            country_control_status.payload.media_type,
-        )
+    stage("official_adm1_observations")
     official_observations: list[dict[str, Any]] = []
     observed_path_value = os.getenv(
         "REGIONAL_ELECTRICITY_OBSERVED_PATH",
         str(CURATED_PATH.parent / "regional-electricity-observed.csv"),
     )
     observed_path = Path(observed_path_value)
+    has_records = False
     if observed_path.exists() and observed_path.stat().st_size > 0:
         with observed_path.open(encoding="utf-8-sig") as source:
             has_records = sum(1 for _ in source) > 1
+    def load_curated_official() -> list[dict[str, Any]]:
         if has_records:
             identity_mapping = {region_id: region_id for region_id in active_admin1}
-            official_observations = merge_regional_observations(
+            return merge_regional_observations(
                 load_curated_regional_observations(
                     observed_path,
                     region_mapping=identity_mapping,
@@ -727,22 +1111,27 @@ def refresh() -> Path:
                     },
                 )
             )
-    official_regional_status = _records_result(
-        official_observations,
+        return []
+    curated_official, curated_regional_status = _local_records_with_lkg(
+        load_curated_official,
         source_id="official_adm1_electricity",
-        now=now,
-        configured=observed_path.exists(),
+        store=store, now=now, configured=has_records,
     )
-    if official_regional_status.payload is not None:
-        store.save(
-            official_regional_status.source_id,
-            official_regional_status.payload.body,
-            official_regional_status.payload.media_type,
+    with httpx.Client(timeout=90, follow_redirects=True) as eia_client:
+        eia_observations, eia_status = _fetch_eia_observations(
+            eia_client, now=now, store=store, admin1_payload=admin1_payload
         )
+    official_observations = merge_regional_observations([
+        *curated_official, *eia_observations,
+    ])
+    official_regional_status = _records_result(
+        official_observations, source_id="official_adm1_electricity_merged",
+        now=now, configured=bool(official_observations),
+    )
+    stage("modelled_adm1_residual_demand")
     regional_energy: dict[str, list[dict[str, Any]]] = {}
     country_demand_reconciled = True
-    if model_artifacts is not None:
-        forecast_power_records = [
+    forecast_power_records = [
             {
                 **record,
                 "targetYear": (
@@ -752,18 +1141,28 @@ def refresh() -> Path:
             }
             for record in canonical_power["records"]
         ]
-        regional_energy, country_demand_reconciled = build_regional_energy_model(
+    demand_increments = build_forward_demand_increments(
+        registry, active_admin1=active_admin1
+    )
+    regional_energy, country_demand_reconciled = build_regional_energy_model(
             demand_weights=model_artifacts["demandWeights"],
             country_controls=country_controls,
             official_observations=official_observations,
             power_records=forecast_power_records,
+            demand_increments=demand_increments,
+            attach_scores=False,
+            before_supply=lambda: stage("supply_balance_forecast"),
             assumptions=load_generation_assumptions(
                 CURATED_PATH.parent / "generation-assumptions.json"
             ),
             method_config=load_regional_demand_methods(
                 CURATED_PATH.parent / "regional-demand-methods.json"
             ),
-        )
+    )
+    stage("scores")
+    for rows in regional_energy.values():
+        _attach_power_balance_scores(rows)
+    stage("artifacts")
     artifacts = build_global_snapshot_artifacts(
         countries=countries,
         admin1=admin1_payload,
@@ -774,7 +1173,6 @@ def refresh() -> Path:
         power_plants=publishable_plants,
         population_records=(
             model_artifacts["population"].get("records", [])
-            if model_artifacts is not None else []
         ),
     )
 
@@ -793,6 +1191,8 @@ def refresh() -> Path:
         wri_status,
         osm_power_status,
         country_control_status,
+        curated_regional_status,
+        eia_status,
         official_regional_status,
     ]
     country_count = len(json.loads(artifacts["countries.geojson"])["features"])
@@ -833,14 +1233,14 @@ def refresh() -> Path:
         },
         "quality": {
             "countryDemandReconciled": country_demand_reconciled,
-            "generatorArtifactsReconciled": True,
+            "generatorArtifactsReconciled": _generator_artifacts_reconcile(
+                artifacts, expected_plants=len(publishable_plants)
+            ),
             "populationBuildFingerprint": (
                 model_artifacts["population"].get("buildFingerprint")
-                if model_artifacts is not None else None
             ),
             "demandWeightsBuildFingerprint": (
                 model_artifacts["demandWeights"].get("buildFingerprint")
-                if model_artifacts is not None else None
             ),
         },
         "boundaryDisclaimer": json.loads(artifacts["countries.geojson"]).get("metadata", {}).get("disclaimer"),
@@ -857,12 +1257,21 @@ def refresh() -> Path:
             if country_control_status.payload is not None else b""
         ),
         "official_adm1_electricity": (
+            curated_regional_status.payload.body
+            if curated_regional_status.payload is not None else b""
+        ),
+        "eia_state_observations": (
+            eia_status.payload.body if eia_status.payload is not None else b""
+        ),
+        "official_adm1_electricity_merged": (
             official_regional_status.payload.body
             if official_regional_status.payload is not None else b""
         ),
     }
     for result in statuses:
         previous_capture = store.latest_capture(result.source_id)
+        if not body_by_source.get(result.source_id) and previous_capture is not None:
+            body_by_source[result.source_id] = previous_capture.path.read_bytes()
         last_success = (
             previous_capture.retrieved_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
             if previous_capture is not None else None
@@ -875,7 +1284,11 @@ def refresh() -> Path:
         ))
     latest_path = PUBLISH_DIR / "latest.json"
     previous_manifest = _read_json(latest_path) if latest_path.exists() else None
+    stage("validation")
     validate_refresh_quality(manifest, previous_manifest)
+    stage("atomic_publish")
+    if tuple(completed_stages) != REFRESH_STEPS:
+        raise RuntimeError("refresh did not execute every required stage")
     return SnapshotPublisher(PUBLISH_DIR).publish(snapshot_id, artifacts, manifest)
 
 

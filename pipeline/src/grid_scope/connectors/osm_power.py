@@ -219,7 +219,9 @@ def _record_preference(record: dict[str, Any]) -> tuple[int, int, str]:
     )
 
 
-def parse_qlever_power(payload: dict[str, Any], *, observed_at: str) -> list[dict[str, Any]]:
+def parse_qlever_power(
+    payload: dict[str, Any], *, observed_at: str | None
+) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for binding in payload.get("results", {}).get("bindings", []):
         element_url = _value(binding, "element")
@@ -323,7 +325,7 @@ class OsmPowerConnector:
         )
         response.raise_for_status()
         records = parse_qlever_power(
-            response.json(), observed_at=checked_at.isoformat().replace("+00:00", "Z")
+            response.json(), observed_at=None
         )
         if len(records) < self.minimum_records:
             raise ValueError(
