@@ -25,10 +25,12 @@ class RawCaptureStore:
     def __init__(self, raw_dir: Path, database_path: Path) -> None:
         self.raw_dir = raw_dir
         self.database_path = database_path
-        if self.raw_dir.is_symlink():
-            raise ValueError("raw capture directory cannot be a symlink")
+        self._assert_no_symlink_ancestors(self.raw_dir)
+        self._assert_no_symlink_ancestors(self.database_path)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._assert_no_symlink_ancestors(self.raw_dir)
+        self._assert_no_symlink_ancestors(self.database_path)
         with duckdb.connect(str(self.database_path)) as connection:
             connection.execute(
                 """
@@ -51,6 +53,19 @@ class RawCaptureStore:
                 )
                 """
             )
+
+    @staticmethod
+    def _assert_no_symlink_ancestors(path: Path) -> None:
+        absolute = path.absolute()
+        for component in (absolute, *absolute.parents):
+            if component.is_symlink():
+                raise ValueError(f"symlink ancestor is not allowed: {component}")
+
+    def _assert_store_paths(self, *paths: Path) -> None:
+        self._assert_no_symlink_ancestors(self.raw_dir)
+        self._assert_no_symlink_ancestors(self.database_path)
+        for path in paths:
+            self._assert_no_symlink_ancestors(path)
 
     @staticmethod
     def _source_id(value: str) -> str:
@@ -87,9 +102,11 @@ class RawCaptureStore:
         path = Path(raw_path).absolute()
         if path != expected_path:
             return None
-        for candidate in (path, expected_dir, self.raw_dir.absolute()):
-            if candidate.is_symlink():
-                return None
+        self._assert_store_paths()
+        try:
+            self._assert_no_symlink_ancestors(path)
+        except ValueError:
+            return None
         if not path.exists() or not path.is_file() or path.is_symlink():
             return None
         try:
@@ -112,17 +129,16 @@ class RawCaptureStore:
         extension = self._extension(media_type)
         checksum = sha256(body).hexdigest()
         source_dir = self.raw_dir / source_id
-        if source_dir.is_symlink():
-            raise ValueError("raw capture source directory cannot be a symlink")
-        source_dir.mkdir(parents=True, exist_ok=True)
         path = source_dir / f"{checksum}.{extension}"
-        if path.is_symlink():
-            raise ValueError("raw capture file cannot be a symlink")
+        self._assert_store_paths(source_dir, path)
+        source_dir.mkdir(parents=True, exist_ok=True)
+        self._assert_store_paths(source_dir, path)
         if path.exists():
             if not path.is_file() or self._file_checksum(path) != checksum:
                 raise ValueError("existing raw capture does not match its content address")
         else:
             path.write_bytes(body)
+        self._assert_store_paths(source_dir, path)
         with duckdb.connect(str(self.database_path)) as connection:
             connection.execute(
                 """
@@ -142,6 +158,7 @@ class RawCaptureStore:
 
     def latest_capture(self, source_id: str) -> StoredCapture | None:
         source_id = self._source_id(source_id)
+        self._assert_store_paths(self.raw_dir / source_id)
         with duckdb.connect(str(self.database_path)) as connection:
             rows = connection.execute(
                 """
@@ -153,6 +170,7 @@ class RawCaptureStore:
                 """,
                 [source_id],
             ).fetchall()
+        self._assert_store_paths(self.raw_dir / source_id)
         for row in rows:
             capture = self._validated_capture(row, source_id)
             if capture is not None:
@@ -160,6 +178,7 @@ class RawCaptureStore:
         return None
 
     def save_canonical_assets(self, assets: list[dict]) -> None:
+        self._assert_store_paths()
         with duckdb.connect(str(self.database_path)) as connection:
             for asset in assets:
                 connection.execute(
@@ -173,6 +192,7 @@ class RawCaptureStore:
                 )
 
     def load_canonical_assets(self) -> list[dict]:
+        self._assert_store_paths()
         with duckdb.connect(str(self.database_path)) as connection:
             rows = connection.execute(
                 "SELECT payload FROM canonical_assets ORDER BY asset_id"

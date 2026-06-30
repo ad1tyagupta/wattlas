@@ -115,6 +115,31 @@ def test_latest_capture_rejects_tamper_symlink_and_source_path_escape(tmp_path) 
         store.save("../escape", b"bad", "application/json")
 
 
+def test_capture_store_rejects_symlinked_path_ancestors_at_initialization(tmp_path) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    os.symlink(real_parent, linked_parent)
+    with pytest.raises(ValueError, match="symlink ancestor"):
+        RawCaptureStore(
+            linked_parent / "raw", linked_parent / "warehouse" / "scope.duckdb"
+        )
+
+
+def test_capture_store_rechecks_ancestors_after_parent_is_replaced(tmp_path) -> None:
+    parent = tmp_path / "capture-root"
+    store = RawCaptureStore(parent / "raw", parent / "warehouse.duckdb")
+    store.save("gisco", b'{"valid":true}', "application/json")
+    relocated = tmp_path / "relocated-root"
+    parent.rename(relocated)
+    os.symlink(relocated, parent)
+
+    with pytest.raises(ValueError, match="symlink ancestor"):
+        store.save("gisco", b'{"next":true}', "application/json")
+    with pytest.raises(ValueError, match="symlink ancestor"):
+        store.latest_capture("gisco")
+
+
 def test_gisco_filter_keeps_only_level_two() -> None:
     collection = {
         "type": "FeatureCollection",
