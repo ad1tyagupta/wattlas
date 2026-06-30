@@ -22,10 +22,10 @@ const ramps: Record<LensKey, Array<[number, string]>> = {
     [80, "#D66F5F"],
   ],
   powerBalance: [
-    [0, "#9E4E45"],
-    [45, "#A4864E"],
-    [65, "#4D8879"],
-    [80, "#72D9BD"],
+    [0, "#4D8879"],
+    [35, "#71817D"],
+    [55, "#A4864E"],
+    [75, "#D66F5F"],
   ],
 };
 
@@ -55,8 +55,16 @@ export function countryBorderWidthExpression(selectedId: string | null): Express
     "case",
     ["==", ["get", "id"], selectedId ?? ""],
     3.2,
-    1.25,
+    1.6,
   ] as ExpressionSpecification;
+}
+
+export function admin1LineWidthExpression(): ExpressionSpecification {
+  return ["interpolate", ["linear"], ["zoom"], 1, 0.35, 3, 0.8, 6, 1.25] as ExpressionSpecification;
+}
+
+export function admin1LineOpacityExpression(): ExpressionSpecification {
+  return ["interpolate", ["linear"], ["zoom"], 1, 0.28, 3, 0.65, 6, 0.9] as ExpressionSpecification;
 }
 
 export function assetColor(category: Exclude<InfrastructureCategory, "combined">): string {

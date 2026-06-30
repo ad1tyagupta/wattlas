@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef } from "react";
 import maplibregl, { type GeoJSONSource, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 
 import { baseMapStyle } from "@/components/map/map-style";
-import { assetColor, assetStrokeColorExpression, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
+import { admin1LineOpacityExpression, admin1LineWidthExpression, assetColor, assetStrokeColorExpression, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
 import type {
   AssetCollection,
   GeographyCollection,
@@ -69,6 +69,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
   const regionsRef = useRef(preparedRegions);
   const selectedIdRef = useRef(selectedId);
   const lensRef = useRef(lens);
+  const hoveredAdmin1Ref = useRef<string | number | null>(null);
 
   useEffect(() => {
     onSelectRef.current = onSelect;
@@ -129,11 +130,38 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
         id: "admin1-line",
         type: "line",
         source: "admin1",
-        minzoom: 2.2,
         paint: {
-          "line-color": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], "#E1EBE8", "#38514C"],
-          "line-width": ["case", ["==", ["get", "id"], selectedIdRef.current ?? ""], 2.1, 0.55],
-          "line-opacity": 0.72,
+          "line-color": "#49635E",
+          "line-width": admin1LineWidthExpression(),
+          "line-opacity": admin1LineOpacityExpression(),
+        },
+      });
+      map.addLayer({
+        id: "admin1-outline",
+        type: "line",
+        source: "admin1",
+        paint: {
+          "line-color": "#F1F6F4",
+          "line-width": ["case", ["any", ["==", ["get", "id"], selectedIdRef.current ?? ""], ["boolean", ["feature-state", "hover"], false]], 2.6, 0],
+          "line-opacity": 0.96,
+        },
+      });
+      map.addLayer({
+        id: "admin1-label",
+        type: "symbol",
+        source: "admin1",
+        minzoom: 3,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 10, 6, 12],
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#D7E2DF",
+          "text-halo-color": "#0B1715",
+          "text-halo-width": 1.25,
         },
       });
       map.addLayer({
@@ -222,6 +250,17 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
       }
+      map.on("mousemove", "admin1-fill", (event) => {
+        const id = event.features?.[0]?.id;
+        if (id === hoveredAdmin1Ref.current) return;
+        if (hoveredAdmin1Ref.current !== null) map.setFeatureState({ source: "admin1", id: hoveredAdmin1Ref.current }, { hover: false });
+        hoveredAdmin1Ref.current = id ?? null;
+        if (id !== undefined) map.setFeatureState({ source: "admin1", id }, { hover: true });
+      });
+      map.on("mouseleave", "admin1-fill", () => {
+        if (hoveredAdmin1Ref.current !== null) map.setFeatureState({ source: "admin1", id: hoveredAdmin1Ref.current }, { hover: false });
+        hoveredAdmin1Ref.current = null;
+      });
       const selectGeography = (event: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
         const properties = event.features?.[0]?.properties;
         const id = properties?.id;
@@ -276,8 +315,8 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
     if (map.getLayer("regions-line")) {
       map.setPaintProperty("regions-line", "line-width", ["case", ["==", ["get", "id"], selectedId ?? ""], 2.2, 0.5]);
     }
-    if (map.getLayer("admin1-line")) {
-      map.setPaintProperty("admin1-line", "line-width", ["case", ["==", ["get", "id"], selectedId ?? ""], 2.1, 0.55]);
+    if (map.getLayer("admin1-outline")) {
+      map.setPaintProperty("admin1-outline", "line-width", ["case", ["any", ["==", ["get", "id"], selectedId ?? ""], ["boolean", ["feature-state", "hover"], false]], 2.6, 0]);
     }
   }, [selectedId]);
 

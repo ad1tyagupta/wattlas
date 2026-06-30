@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mapCalls = vi.hoisted(() => ({
   sources: [] as Array<[string, Record<string, unknown>]>,
   layers: [] as Array<Record<string, unknown>>,
+  handlers: [] as Array<[string, unknown, unknown?]>,
+  featureStates: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("maplibre-gl", () => ({
@@ -16,9 +18,11 @@ vi.mock("maplibre-gl", () => ({
       getLayer() { return undefined; }
       getSource() { return undefined; }
       isStyleLoaded() { return false; }
-      on(event: string, layerOrHandler: unknown) {
+      on(event: string, layerOrHandler: unknown, handler?: unknown) {
+        mapCalls.handlers.push([event, layerOrHandler, handler]);
         if (event === "load" && typeof layerOrHandler === "function") layerOrHandler();
       }
+      setFeatureState(target: Record<string, unknown>, state: Record<string, unknown>) { mapCalls.featureStates.push({ target, state }); }
       remove() {}
       setPaintProperty() {}
     },
@@ -33,6 +37,8 @@ describe("GlobalMap", () => {
   beforeEach(() => {
     mapCalls.sources.length = 0;
     mapCalls.layers.length = 0;
+    mapCalls.handlers.length = 0;
+    mapCalls.featureStates.length = 0;
   });
 
   it("opens at world scale and reports global coverage", () => {
@@ -97,7 +103,34 @@ describe("GlobalMap", () => {
     expect(mapCalls.sources.map(([id]) => id)).toContain("admin1");
     const adm1Line = mapCalls.layers.find((layer) => layer.id === "admin1-line");
     const nuts2Line = mapCalls.layers.find((layer) => layer.id === "regions-line");
-    expect(adm1Line?.minzoom).toBeLessThan(nuts2Line?.minzoom as number);
-    expect(mapCalls.layers.find((layer) => layer.id === "countries-line")?.paint).toMatchObject({ "line-opacity": 0.94 });
+    expect(adm1Line?.minzoom).toBeUndefined();
+    expect(adm1Line?.paint).toMatchObject({
+      "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.35, 3, 0.8, 6, 1.25],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 1, 0.28, 3, 0.65, 6, 0.9],
+    });
+    expect(nuts2Line?.minzoom).toBeGreaterThan(3);
+    expect(mapCalls.layers.find((layer) => layer.id === "countries-line")?.paint).toMatchObject({ "line-opacity": 0.94, "line-width": ["case", ["==", ["get", "id"], ""], 3.2, 1.6] });
+  });
+
+  it("adds collision-aware ADM1 labels and visible selected or hovered outlines", () => {
+    render(
+      <GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="powerBalance" year={2030} selectedId="ADM1-X" onSelect={() => undefined} coverage={{ countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} />,
+    );
+    const labels = mapCalls.layers.find((layer) => layer.id === "admin1-label");
+    expect(labels).toMatchObject({ type: "symbol", source: "admin1", minzoom: 3, layout: { "text-field": ["get", "name"], "text-allow-overlap": false, "text-ignore-placement": false } });
+    const outline = mapCalls.layers.find((layer) => layer.id === "admin1-outline");
+    expect(JSON.stringify(outline?.paint)).toContain("feature-state");
+    expect(JSON.stringify(outline?.paint)).toContain("ADM1-X");
+  });
+
+  it("keeps unavailable ADM1 and country-only exceptions selectable without inventing subdivisions", () => {
+    const onSelect = vi.fn();
+    render(
+      <GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="powerBalance" year={2030} selectedId={null} onSelect={onSelect} coverage={{ countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} />,
+    );
+    expect(mapCalls.layers.find((layer) => layer.id === "admin1-fill")?.paint).toMatchObject({ "fill-opacity": ["case", ["==", ["get", "activeScore"], null], 0.04, 0.34] });
+    expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "admin1-fill")).toBe(true);
+    expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "countries-fill")).toBe(true);
+    expect(mapCalls.sources.find(([id]) => id === "admin1")?.[1]).toMatchObject({ data: { features: [] } });
   });
 });
