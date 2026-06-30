@@ -88,7 +88,9 @@ def _technology_mix(
             str(technology): _capacity(value, label=f"{technology} capacity")
             for technology, value in supplied.items()
         }
-        if not math.isclose(sum(mix.values()), capacity_mw, abs_tol=1e-6):
+        if not math.isclose(
+            math.fsum(mix.values()), capacity_mw, rel_tol=0.0, abs_tol=1e-6
+        ):
             raise ValueError(f"generator {plant.get('id')} technology capacity does not reconcile")
         return dict(sorted(mix.items()))
     share = capacity_mw / len(technologies)
@@ -182,8 +184,8 @@ def build_generator_artifacts(
         artifacts[path] = body
         longitudes = [row["coordinates"][0] for row in rows]
         latitudes = [row["coordinates"][1] for row in rows]
-        capacity = sum(row["capacityMw"] for row in rows)
-        total_capacity += capacity
+        capacity = math.fsum(row["capacityMw"] for row in rows)
+        total_capacity = math.fsum((total_capacity, capacity))
         index_countries[country] = {
             "bbox": [min(longitudes), min(latitudes), max(longitudes), max(latitudes)],
             "path": path,
@@ -195,14 +197,16 @@ def build_generator_artifacts(
 
     overview_features = []
     for geography_id in sorted(by_region):
-        rows = by_region[geography_id]
-        operating = sum(row["operatingCapacityMw"] for row in rows)
-        planned = sum(row["plannedCapacityMw"] for row in rows)
-        mix: dict[str, float] = defaultdict(float)
-        for row in rows:
-            for technology, capacity in row["technologyMixMw"].items():
-                mix[technology] += capacity
-        ordered_mix = dict(sorted(mix.items()))
+        rows = sorted(by_region[geography_id], key=lambda item: item["id"])
+        operating = math.fsum(row["operatingCapacityMw"] for row in rows)
+        planned = math.fsum(row["plannedCapacityMw"] for row in rows)
+        technologies = sorted({technology for row in rows for technology in row["technologyMixMw"]})
+        ordered_mix = {
+            technology: math.fsum(
+                row["technologyMixMw"].get(technology, 0.0) for row in rows
+            )
+            for technology in technologies
+        }
         dominant = min(
             ordered_mix,
             key=lambda technology: (-ordered_mix[technology], technology),
@@ -213,15 +217,15 @@ def build_generator_artifacts(
             "geometry": {
                 "type": "Point",
                 "coordinates": [
-                    sum(row["coordinates"][0] for row in rows) / len(rows),
-                    sum(row["coordinates"][1] for row in rows) / len(rows),
+                    math.fsum(row["coordinates"][0] for row in rows) / len(rows),
+                    math.fsum(row["coordinates"][1] for row in rows) / len(rows),
                 ],
             },
             "properties": {
                 "geographyId": geography_id,
                 "country": admin1_country[geography_id],
                 "count": len(rows),
-                "capacityMw": operating + planned,
+                "capacityMw": math.fsum((operating, planned)),
                 "operatingCapacityMw": operating,
                 "plannedCapacityMw": planned,
                 "technologyMixMw": ordered_mix,

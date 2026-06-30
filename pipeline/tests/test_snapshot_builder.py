@@ -1,4 +1,5 @@
 import json
+import math
 
 import pytest
 
@@ -377,10 +378,18 @@ def test_generator_artifacts_are_deterministic_and_reconcile_capacity() -> None:
         ],
     }
     plants = [
-        _generator(),
+        _generator(operatingCapacityMw=10_000_000_000_000_000.0, plannedCapacityMw=0.0),
         _generator(
             id="plant-us-tx-wind", geographyId="US-TX", coordinates=[-99.0, 31.0],
-            technologies=["wind"], operatingCapacityMw=200.0, plannedCapacityMw=0.0,
+            technologies=["wind"], operatingCapacityMw=1.0, plannedCapacityMw=0.0,
+        ),
+        _generator(
+            id="plant-us-ca-solar-small", coordinates=[-120.0, 37.0],
+            operatingCapacityMw=1.0, plannedCapacityMw=0.0,
+        ),
+        _generator(
+            id="plant-us-ca-solar-small-2", coordinates=[-121.0, 38.0],
+            operatingCapacityMw=1.0, plannedCapacityMw=0.0,
         ),
     ]
     forward = build_generator_artifacts(countries, admin1, plants)
@@ -389,9 +398,13 @@ def test_generator_artifacts_are_deterministic_and_reconcile_capacity() -> None:
     assert forward == reverse
     overview = json.loads(forward["generator-overview.geojson"])
     shard = json.loads(forward["generators/US.geojson"])
-    assert sum(feature["properties"]["capacityMw"] for feature in overview["features"]) == 350.0
-    assert sum(
+    expected_capacity = math.fsum(plant["operatingCapacityMw"] for plant in plants)
+    assert math.fsum(
+        feature["properties"]["capacityMw"] for feature in overview["features"]
+    ) == expected_capacity
+    assert math.fsum(
         feature["properties"]["operatingCapacityMw"]
         + feature["properties"]["plannedCapacityMw"]
         for feature in shard["features"]
-    ) == 350.0
+    ) == expected_capacity
+    assert forward["generator-overview.geojson"] == reverse["generator-overview.geojson"]

@@ -89,6 +89,7 @@ class SnapshotPublisher:
         }
         admin1 = json.loads(artifacts["admin1.geojson"])
         admin1_ids: set[str] = set()
+        admin1_country: dict[str, str] = {}
         for feature in admin1.get("features", []):
             properties = feature.get("properties") or {}
             if properties.get("country") not in country_ids or properties.get("parentId") not in country_ids:
@@ -97,6 +98,7 @@ class SnapshotPublisher:
                 )
             region_id = properties.get("id") or feature.get("id")
             admin1_ids.add(region_id)
+            admin1_country[region_id] = properties.get("country")
             if "regionalEnergy" in properties or "generators" in properties:
                 raise ValueError("admin1.geojson must not embed heavy regional or generator records")
         assets = json.loads(artifacts["assets.geojson"])
@@ -125,22 +127,43 @@ class SnapshotPublisher:
                 raise ValueError(f"regional-energy.json has invalid time series for {geography_id}")
 
         overview = json.loads(artifacts["generator-overview.geojson"])
+        overview_by_region: dict[str, dict[str, object]] = {}
         for feature in overview.get("features", []):
             properties = feature.get("properties") or {}
-            if properties.get("geographyId") not in admin1_ids:
+            geography_id = properties.get("geographyId")
+            if geography_id not in admin1_ids:
                 raise ValueError("generator overview contains unknown ADM1")
+            if feature.get("id") != geography_id or geography_id in overview_by_region:
+                raise ValueError("generator overview contains duplicate or mismatched ADM1 IDs")
             SnapshotPublisher._validate_point(feature, label="generator overview")
             SnapshotPublisher._nonnegative_number(
                 properties.get("capacityMw"), label="generator overview capacity"
             )
+            overview_by_region[geography_id] = feature
 
         index = json.loads(artifacts["generators/index.json"])
         entries = index.get("countries") if isinstance(index, dict) else None
         if not isinstance(entries, dict):
             raise ValueError("generator index countries must be an object")
+        for country in entries:
+            if country not in country_ids:
+                raise ValueError(f"generator index contains unknown country: {country}")
+        listed_paths = [
+            entry.get("path")
+            for entry in entries.values()
+            if isinstance(entry, dict)
+        ]
+        actual_paths = {
+            filename
+            for filename in artifacts
+            if filename.startswith("generators/") and filename.endswith(".geojson")
+        }
+        if len(listed_paths) != len(set(listed_paths)) or set(listed_paths) != actual_paths:
+            raise ValueError("generator shard paths must exactly match generators/index.json")
         shard_ids: set[str] = set()
         indexed_count = 0
         indexed_capacity = 0.0
+        regional_generators: dict[str, list[dict[str, object]]] = {}
         for country, entry in entries.items():
             if country not in country_ids:
                 raise ValueError(f"generator index contains unknown country: {country}")
@@ -172,28 +195,48 @@ class SnapshotPublisher:
                     raise ValueError(f"generator shard contains wrong country: {country}")
                 if properties.get("geographyId") not in admin1_ids:
                     raise ValueError("generator shard contains unknown ADM1")
+                if admin1_country[properties["geographyId"]] != country:
+                    raise ValueError("generator shard ADM1 does not belong to its country")
                 SnapshotPublisher._validate_point(feature, label="generator shard")
-                raw_capacity = properties.get("capacityMw")
-                if raw_capacity is None:
-                    raw_capacity = (
-                        SnapshotPublisher._nonnegative_number(
-                            properties.get("operatingCapacityMw", 0),
-                            label="generator operating capacity",
-                        )
-                        + SnapshotPublisher._nonnegative_number(
-                            properties.get("plannedCapacityMw", 0),
-                            label="generator planned capacity",
-                        )
-                    )
-                shard_capacity += SnapshotPublisher._nonnegative_number(
-                    raw_capacity, label="generator capacity"
+                operating_capacity = SnapshotPublisher._nonnegative_number(
+                    properties.get("operatingCapacityMw", 0),
+                    label="generator operating capacity",
                 )
+                planned_capacity = SnapshotPublisher._nonnegative_number(
+                    properties.get("plannedCapacityMw", 0),
+                    label="generator planned capacity",
+                )
+                expected_capacity = math.fsum((operating_capacity, planned_capacity))
+                capacity = SnapshotPublisher._nonnegative_number(
+                    properties.get("capacityMw", expected_capacity),
+                    label="generator capacity",
+                )
+                if not math.isclose(
+                    capacity, expected_capacity, rel_tol=0.0, abs_tol=1e-6
+                ):
+                    raise ValueError("generator capacity does not reconcile to lifecycle capacity")
+                technology_mix = SnapshotPublisher._technology_mix(
+                    properties.get("technologyMixMw"), capacity=capacity
+                )
+                shard_capacity = math.fsum((shard_capacity, capacity))
+                coordinates = (feature.get("geometry") or {}).get("coordinates")
+                regional_generators.setdefault(properties["geographyId"], []).append({
+                    "id": identifier,
+                    "country": country,
+                    "coordinates": coordinates,
+                    "capacityMw": capacity,
+                    "operatingCapacityMw": operating_capacity,
+                    "plannedCapacityMw": planned_capacity,
+                    "technologyMixMw": technology_mix,
+                })
             entry_capacity = SnapshotPublisher._nonnegative_number(
                 entry.get("capacityMw", shard_capacity), label="generator index capacity"
             )
-            if not math.isclose(entry_capacity, shard_capacity, abs_tol=1e-6):
+            if not math.isclose(
+                entry_capacity, shard_capacity, rel_tol=0.0, abs_tol=1e-6
+            ):
                 raise ValueError(f"generator index capacity mismatch for {country}")
-            indexed_capacity += shard_capacity
+            indexed_capacity = math.fsum((indexed_capacity, shard_capacity))
         totals = index.get("totals") or {}
         if totals.get("featureCount") != indexed_count:
             raise ValueError("generator index total feature count does not reconcile")
@@ -202,9 +245,87 @@ class SnapshotPublisher:
                 totals.get("capacityMw"), label="generator total capacity"
             ),
             indexed_capacity,
+            rel_tol=0.0,
             abs_tol=1e-6,
         ):
             raise ValueError("generator index total capacity does not reconcile")
+
+        if set(overview_by_region) != set(regional_generators):
+            raise ValueError("generator overview ADM1 set does not reconcile to indexed shards")
+        for geography_id, rows in regional_generators.items():
+            rows.sort(key=lambda row: str(row["id"]))
+            expected_country = str(rows[0]["country"])
+            operating = math.fsum(float(row["operatingCapacityMw"]) for row in rows)
+            planned = math.fsum(float(row["plannedCapacityMw"]) for row in rows)
+            capacity = math.fsum((operating, planned))
+            technologies = sorted({
+                technology
+                for row in rows
+                for technology in row["technologyMixMw"]
+            })
+            mix = {
+                technology: math.fsum(
+                    float(row["technologyMixMw"].get(technology, 0.0))
+                    for row in rows
+                )
+                for technology in technologies
+            }
+            dominant = min(mix, key=lambda technology: (-mix[technology], technology))
+            feature = overview_by_region[geography_id]
+            properties = feature.get("properties") or {}
+            overview_mix = SnapshotPublisher._technology_mix(
+                properties.get("technologyMixMw"),
+                capacity=SnapshotPublisher._nonnegative_number(
+                    properties.get("capacityMw"), label="generator overview capacity"
+                ),
+            )
+            expected_values = {
+                "capacityMw": capacity,
+                "operatingCapacityMw": operating,
+                "plannedCapacityMw": planned,
+            }
+            if (
+                properties.get("country") != expected_country
+                or properties.get("count") != len(rows)
+                or properties.get("dominantTechnology") != dominant
+                or set(overview_mix) != set(mix)
+                or any(
+                    not math.isclose(
+                        SnapshotPublisher._nonnegative_number(
+                            properties.get(field), label=f"generator overview {field}"
+                        ),
+                        expected,
+                        rel_tol=0.0,
+                        abs_tol=1e-6,
+                    )
+                    for field, expected in expected_values.items()
+                )
+                or any(
+                    not math.isclose(
+                        SnapshotPublisher._nonnegative_number(
+                            overview_mix.get(technology),
+                            label="generator overview technology mix",
+                        ),
+                        expected,
+                        rel_tol=0.0,
+                        abs_tol=1e-6,
+                    )
+                    for technology, expected in mix.items()
+                )
+            ):
+                raise ValueError(f"generator overview does not reconcile for ADM1 {geography_id}")
+            coordinates = feature["geometry"]["coordinates"]
+            expected_longitude = math.fsum(float(row["coordinates"][0]) for row in rows) / len(rows)
+            expected_latitude = math.fsum(float(row["coordinates"][1]) for row in rows) / len(rows)
+            if not (
+                math.isclose(
+                    float(coordinates[0]), expected_longitude, rel_tol=0.0, abs_tol=1e-9
+                )
+                and math.isclose(
+                    float(coordinates[1]), expected_latitude, rel_tol=0.0, abs_tol=1e-9
+                )
+            ):
+                raise ValueError(f"generator overview centroid does not reconcile for ADM1 {geography_id}")
 
         guards = manifest.get("guards", {}) if isinstance(manifest, dict) else {}
         if not isinstance(guards, dict):
@@ -264,3 +385,20 @@ class SnapshotPublisher:
             or not -90 <= float(value[1]) <= float(value[3]) <= 90
         ):
             raise ValueError(f"generator index contains invalid bbox for {country}")
+
+    @staticmethod
+    def _technology_mix(value: object, *, capacity: float) -> dict[str, float]:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("generator technology mix must be a nonempty object")
+        mix = {
+            str(technology): SnapshotPublisher._nonnegative_number(
+                amount, label="generator technology capacity"
+            )
+            for technology, amount in value.items()
+            if str(technology).strip()
+        }
+        if len(mix) != len(value) or not math.isclose(
+            math.fsum(mix.values()), capacity, rel_tol=0.0, abs_tol=1e-6
+        ):
+            raise ValueError("generator technology mix does not reconcile to capacity")
+        return mix
