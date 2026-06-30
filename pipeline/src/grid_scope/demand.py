@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from grid_scope.models import DemandRange
 
 
@@ -14,8 +16,10 @@ WATER_INTENSITY_KWH_M3 = {
 
 
 def _require_nonnegative(value: float | None, label: str) -> None:
-    if value is not None and value < 0:
-        raise ValueError(f"{label} must be nonnegative")
+    if value is not None and (
+        isinstance(value, bool) or not math.isfinite(value) or value < 0
+    ):
+        raise ValueError(f"{label} must be a finite nonnegative number")
 
 
 def data_centre_demand(
@@ -78,4 +82,16 @@ def combine_demand(*ranges: DemandRange | None) -> DemandRange | None:
         low=round(sum(item.low for item in present), 6),
         central=round(sum(item.central for item in present), 6),
         high=round(sum(item.high for item in present), 6),
+    )
+
+
+def annual_energy_from_average_mw(demand_mw: DemandRange) -> DemandRange:
+    """Convert an average electrical-demand range in MW to annual GWh."""
+
+    for part in ("low", "central", "high"):
+        _require_nonnegative(getattr(demand_mw, part), f"average demand {part}")
+    return DemandRange(
+        low=round(demand_mw.low * 8.76, 6),
+        central=round(demand_mw.central * 8.76, 6),
+        high=round(demand_mw.high * 8.76, 6),
     )

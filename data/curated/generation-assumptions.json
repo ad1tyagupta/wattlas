@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "wattlas-generation-assumptions-v1",
+  "methodId": "regional-power-supply-v1",
+  "publicDataOnly": true,
+  "observedFactorAdequacy": {
+    "minimumYears": 2,
+    "minimumCapacityMw": 100
+  },
+  "lifecycleDeliveryFactors": {
+    "announced": 0.35,
+    "planning_filed": 0.55,
+    "permitted": 0.75,
+    "under_construction": 0.9,
+    "operational": 1.0
+  },
+  "sources": [
+    {
+      "id": "nrel-atb-2024",
+      "url": "https://atb.nrel.gov/electricity/2024/",
+      "licence": "CC-BY-4.0"
+    },
+    {
+      "id": "ember-yearly-electricity-data",
+      "url": "https://ember-energy.org/data/yearly-electricity-data/",
+      "licence": "CC-BY-4.0"
+    }
+  ],
+  "technologies": {
+    "solar": {
+      "capacityFactor": {"low": 0.12, "central": 0.2, "high": 0.3},
+      "capacityCredit": {"low": 0.05, "central": 0.18, "high": 0.35},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Global planning range; prefer adequate observed country and technology generation."
+    },
+    "wind": {
+      "capacityFactor": {"low": 0.22, "central": 0.35, "high": 0.5},
+      "capacityCredit": {"low": 0.08, "central": 0.22, "high": 0.4},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Blended onshore and offshore planning range."
+    },
+    "hydro": {
+      "capacityFactor": {"low": 0.25, "central": 0.42, "high": 0.6},
+      "capacityCredit": {"low": 0.35, "central": 0.6, "high": 0.85},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Broad range reflects hydrology and storage differences."
+    },
+    "nuclear": {
+      "capacityFactor": {"low": 0.75, "central": 0.88, "high": 0.95},
+      "capacityCredit": {"low": 0.8, "central": 0.9, "high": 0.95},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Utility-scale nuclear fleet planning range."
+    },
+    "gas": {
+      "capacityFactor": {"low": 0.2, "central": 0.48, "high": 0.75},
+      "capacityCredit": {"low": 0.75, "central": 0.88, "high": 0.95},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Dispatch varies with market role; dependable credit reflects availability."
+    },
+    "coal": {
+      "capacityFactor": {"low": 0.35, "central": 0.55, "high": 0.75},
+      "capacityCredit": {"low": 0.7, "central": 0.82, "high": 0.9},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Global thermal fleet planning range."
+    },
+    "oil": {
+      "capacityFactor": {"low": 0.05, "central": 0.18, "high": 0.45},
+      "capacityCredit": {"low": 0.65, "central": 0.8, "high": 0.9},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Often peaking or island-system generation."
+    },
+    "biomass": {
+      "capacityFactor": {"low": 0.45, "central": 0.65, "high": 0.82},
+      "capacityCredit": {"low": 0.65, "central": 0.8, "high": 0.9},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Dispatchable generation subject to feedstock availability."
+    },
+    "geothermal": {
+      "capacityFactor": {"low": 0.65, "central": 0.82, "high": 0.93},
+      "capacityCredit": {"low": 0.75, "central": 0.88, "high": 0.95},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Firm generation range subject to resource conditions."
+    },
+    "other": {
+      "capacityFactor": {"low": 0.15, "central": 0.4, "high": 0.7},
+      "capacityCredit": {"low": 0.2, "central": 0.5, "high": 0.8},
+      "sourceIds": ["nrel-atb-2024"],
+      "methodNote": "Conservative fallback where technology is not classified."
+    }
+  }
+}

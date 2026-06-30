@@ -1,0 +1,526 @@
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+import math
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
+
+from grid_scope.connectors.licensing import require_redistributable_licence
+from grid_scope.models import PowerBalanceMetrics, RegionalEnergyForecast
+from grid_scope.regional_demand import TARGET_YEARS, add_forward_demand_increments
+
+
+SCHEMA_VERSION = "wattlas-generation-assumptions-v1"
+SUPPLY_METHOD_ID = "regional-power-supply-v1"
+BALANCE_METHOD_ID = "regional-power-balance-v1"
+TECHNOLOGIES = {
+    "solar", "wind", "hydro", "nuclear", "gas", "coal", "oil",
+    "biomass", "geothermal", "other",
+}
+RANGE_PARTS = ("low", "central", "high")
+EXCLUDED_LIFECYCLES = {"cancelled", "paused", "retired", "decommissioned", "shelved"}
+FUTURE_LIFECYCLES = {"announced", "planning_filed", "permitted", "under_construction"}
+
+
+def _number(value: object, *, label: str, nonnegative: bool = True) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a finite number")
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} must be a finite number") from error
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite")
+    if nonnegative and result < 0:
+        raise ValueError(f"{label} must be nonnegative")
+    return result
+
+
+def _year(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} year must be an integer")
+    return value
+
+
+def _range(
+    value: object,
+    *,
+    label: str,
+    nonnegative: bool = True,
+) -> dict[str, float]:
+    if isinstance(value, Mapping):
+        if not all(part in value for part in RANGE_PARTS):
+            raise ValueError(f"{label} requires low, central, and high")
+        result = {
+            part: _number(value[part], label=f"{label} {part}", nonnegative=nonnegative)
+            for part in RANGE_PARTS
+        }
+    else:
+        number = _number(value, label=label, nonnegative=nonnegative)
+        result = {part: number for part in RANGE_PARTS}
+    if not result["low"] <= result["central"] <= result["high"]:
+        raise ValueError(f"{label} range must be ordered low <= central <= high")
+    return result
+
+
+def _source_ids(value: object, *, label: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} requires public source IDs")
+    result: set[str] = set()
+    for source_id in value:
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError(f"{label} requires nonblank public source IDs")
+        result.add(source_id.strip())
+    return sorted(result)
+
+
+def load_generation_assumptions(path: Path | str) -> dict[str, Any]:
+    """Load and validate the public, versioned supply-estimation assumptions."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError("unsupported generation assumptions schema")
+    if payload.get("publicDataOnly") is not True:
+        raise ValueError("generation assumptions must be restricted to public data")
+    if not isinstance(payload.get("methodId"), str) or not payload["methodId"].strip():
+        raise ValueError("generation assumptions require a method ID")
+
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("generation assumptions require public sources")
+    known_sources: set[str] = set()
+    for source in sources:
+        if not isinstance(source, Mapping):
+            raise ValueError("generation assumption sources must be objects")
+        source_id = str(source.get("id") or "").strip()
+        url = str(source.get("url") or "").strip()
+        licence = str(source.get("licence") or "").strip()
+        parsed = urlparse(url)
+        if not source_id or source_id in known_sources:
+            raise ValueError("generation assumption source IDs must be unique and nonblank")
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("generation assumptions require a public HTTP source URL")
+        if not licence:
+            raise ValueError("generation assumption sources require a licence")
+        require_redistributable_licence(
+            licence, label=f"generation assumption source {source_id}"
+        )
+        known_sources.add(source_id)
+
+    adequacy = payload.get("observedFactorAdequacy")
+    if not isinstance(adequacy, Mapping):
+        raise ValueError("generation assumptions require observed-factor adequacy thresholds")
+    minimum_years = _number(adequacy.get("minimumYears"), label="minimum observed years")
+    minimum_capacity = _number(adequacy.get("minimumCapacityMw"), label="minimum observed capacity")
+    if minimum_years < 1 or not minimum_years.is_integer():
+        raise ValueError("minimum observed years must be a positive integer")
+
+    factors = payload.get("lifecycleDeliveryFactors")
+    if not isinstance(factors, Mapping):
+        raise ValueError("generation assumptions require lifecycle delivery factors")
+    required_lifecycles = FUTURE_LIFECYCLES | {"operational"}
+    if set(factors) != required_lifecycles:
+        raise ValueError("generation assumptions have incomplete lifecycle delivery factors")
+    for lifecycle, value in factors.items():
+        factor = _number(value, label=f"{lifecycle} delivery factor")
+        if factor > 1:
+            raise ValueError("lifecycle delivery factors must be within 0-1")
+
+    technologies = payload.get("technologies")
+    if not isinstance(technologies, Mapping) or set(technologies) != TECHNOLOGIES:
+        raise ValueError("generation assumptions require every supported technology")
+    for technology, raw in technologies.items():
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{technology} assumptions must be an object")
+        for field in ("capacityFactor", "capacityCredit"):
+            values = _range(raw.get(field), label=f"{technology} {field}")
+            if values["high"] > 1:
+                raise ValueError(f"{technology} {field} must be within 0-1")
+        ids = _source_ids(raw.get("sourceIds"), label=f"{technology} assumptions")
+        if not set(ids).issubset(known_sources):
+            raise ValueError(f"{technology} assumptions reference an unknown source")
+        if not isinstance(raw.get("methodNote"), str) or not raw["methodNote"].strip():
+            raise ValueError(f"{technology} assumptions require a method note")
+    return deepcopy(payload)
+
+
+def _observed_factor(
+    *,
+    country: str,
+    technology: str,
+    observed: Mapping[str, Mapping[str, Any]],
+    assumptions: Mapping[str, Any],
+) -> tuple[dict[str, float], list[str]] | None:
+    raw = observed.get(f"{country}:{technology}")
+    if raw is None:
+        return None
+    factor = _range(raw.get("capacityFactor"), label="observed capacity factor")
+    if factor["high"] > 1:
+        raise ValueError("observed capacity factor must be within 0-1")
+    years = _number(raw.get("years"), label="observed capacity-factor years")
+    capacity = _number(raw.get("capacityMw"), label="observed capacity-factor capacity")
+    source_ids = _source_ids(raw.get("sourceIds"), label="observed capacity factor")
+    adequate = assumptions["observedFactorAdequacy"]
+    if years < float(adequate["minimumYears"]) or capacity < float(adequate["minimumCapacityMw"]):
+        return None
+    return factor, source_ids
+
+
+def derive_observed_capacity_factors(
+    observations: Iterable[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Derive country/technology factors from public annual generation and capacity."""
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, int]] = set()
+    for raw in observations:
+        country = str(raw.get("countryIso3") or "").strip().upper()
+        technology = str(raw.get("technology") or "").strip()
+        if len(country) != 3 or not country.isalpha():
+            raise ValueError("observed capacity factors require an ISO3 country")
+        if technology not in TECHNOLOGIES:
+            raise ValueError(f"unsupported observed generation technology: {technology}")
+        year = _year(raw.get("year"), label="observed capacity-factor")
+        key = f"{country}:{technology}"
+        if (key, year) in seen:
+            raise ValueError(f"duplicate observed capacity-factor input: {key} {year}")
+        seen.add((key, year))
+        generation = _range(
+            raw.get("annualGenerationGwh"), label=f"observed generation for {key} {year}"
+        )["central"]
+        capacity = _range(
+            raw.get("capacityMw"), label=f"observed capacity for {key} {year}"
+        )["central"]
+        if capacity <= 0:
+            raise ValueError("observed capacity-factor capacity must be positive")
+        factor = generation / (capacity * 8.76)
+        if not math.isfinite(factor) or factor < 0 or factor > 1:
+            raise ValueError("derived observed capacity factor must be within 0-1")
+        grouped.setdefault(key, []).append({
+            "year": year,
+            "generation": generation,
+            "capacity": capacity,
+            "factor": factor,
+            "sourceIds": _source_ids(
+                raw.get("sourceIds"), label=f"observed capacity-factor input {key} {year}"
+            ),
+        })
+
+    result: dict[str, dict[str, Any]] = {}
+    for key in sorted(grouped):
+        rows = sorted(grouped[key], key=lambda row: row["year"])
+        total_capacity = math.fsum(row["capacity"] for row in rows)
+        factors = [row["factor"] for row in rows]
+        result[key] = {
+            "capacityFactor": {
+                "low": min(factors),
+                "central": math.fsum(row["generation"] for row in rows)
+                / (total_capacity * 8.76),
+                "high": max(factors),
+            },
+            "years": len(rows),
+            "capacityMw": total_capacity / len(rows),
+            "observationYears": [row["year"] for row in rows],
+            "sourceIds": sorted({
+                source_id for row in rows for source_id in row["sourceIds"]
+            }),
+            "methodId": "observed-country-technology-capacity-factor-v1",
+        }
+    return result
+
+
+def _delivery_factor(plant: Mapping[str, Any], year: int, assumptions: Mapping[str, Any]) -> float:
+    lifecycle = str(plant.get("lifecycle") or "").strip()
+    raw_status = str(plant.get("rawStatus") or "").strip().lower()
+    if lifecycle in EXCLUDED_LIFECYCLES or raw_status in EXCLUDED_LIFECYCLES:
+        return 0.0
+    retirement = plant.get("retirementYear")
+    if retirement is not None and year > _year(retirement, label="retirement"):
+        return 0.0
+    if lifecycle == "operational":
+        commissioning = plant.get("commissioningYear")
+        if commissioning is not None and year < _year(commissioning, label="commissioning"):
+            return 0.0
+        return 1.0
+    if lifecycle not in FUTURE_LIFECYCLES:
+        raise ValueError(f"unsupported generation lifecycle: {lifecycle}")
+    expected = plant.get("targetYear")
+    if expected is None:
+        expected = plant.get("commissioningYear")
+    if expected is None:
+        return 0.0
+    if year < _year(expected, label="expected delivery"):
+        return 0.0
+    return float(assumptions["lifecycleDeliveryFactors"][lifecycle])
+
+
+def calculate_supply(
+    plants: Iterable[Mapping[str, Any]],
+    *,
+    year: int,
+    assumptions: Mapping[str, Any],
+    observed_capacity_factors: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Calculate local annual generation and dependable capacity for one year."""
+
+    target_year = _year(year, label="supply")
+    technologies = assumptions.get("technologies")
+    if not isinstance(technologies, Mapping) or not isinstance(
+        assumptions.get("lifecycleDeliveryFactors"), Mapping
+    ):
+        raise ValueError("validated generation assumptions are required")
+    raw_assumption_sources = assumptions.get("sources")
+    if not isinstance(raw_assumption_sources, list) or not raw_assumption_sources:
+        raise ValueError("validated generation assumptions require public sources")
+    assumption_source_ids = sorted({
+        str(source.get("id") or "").strip()
+        for source in raw_assumption_sources
+        if isinstance(source, Mapping) and str(source.get("id") or "").strip()
+    })
+    if len(assumption_source_ids) != len(raw_assumption_sources):
+        raise ValueError("validated generation assumptions have invalid source IDs")
+    observed = observed_capacity_factors or {}
+    generation = {part: [] for part in RANGE_PARTS}
+    dependable = {part: [] for part in RANGE_PARTS}
+    installed: list[float] = []
+    components: list[dict[str, Any]] = []
+    all_sources: set[str] = set()
+    confidences: list[float] = []
+    eligible_count = 0
+
+    normalized = sorted((dict(plant) for plant in plants), key=lambda row: str(row.get("id") or ""))
+    seen_ids: set[str] = set()
+    for plant in normalized:
+        asset_id = str(plant.get("id") or "").strip()
+        if not asset_id or asset_id in seen_ids:
+            raise ValueError("generation plants require unique nonblank IDs")
+        seen_ids.add(asset_id)
+        sources = _source_ids(plant.get("sourceIds"), label=f"generation plant {asset_id}")
+        factor = _delivery_factor(plant, target_year, assumptions)
+        if factor == 0:
+            continue
+        eligible_count += 1
+        all_sources.update(sources)
+        technology = str(plant.get("technology") or "").strip()
+        if technology not in technologies:
+            raise ValueError(f"unsupported generation technology: {technology}")
+        capacity_raw = plant.get("capacityMw")
+        reported_generation_raw = plant.get("annualGenerationGwh")
+        if capacity_raw is None and reported_generation_raw is None:
+            continue
+        capacity = (
+            _range(capacity_raw, label=f"capacity for {asset_id}")
+            if capacity_raw is not None else {part: 0.0 for part in RANGE_PARTS}
+        )
+        installed.append(capacity["central"] * factor)
+        technology_assumption = technologies[technology]
+
+        if reported_generation_raw is not None:
+            annual = _range(reported_generation_raw, label=f"reported generation for {asset_id}")
+            annual = {part: annual[part] * factor for part in RANGE_PARTS}
+            generation_kind = "reported"
+            factor_method = "reported_annual_generation"
+            generation_sources = sources
+            confidence = 92.0
+        else:
+            country = str(plant.get("countryIso3") or plant.get("country") or "").strip().upper()
+            preferred = _observed_factor(
+                country=country,
+                technology=technology,
+                observed=observed,
+                assumptions=assumptions,
+            )
+            if preferred is None:
+                capacity_factor = _range(
+                    technology_assumption["capacityFactor"],
+                    label=f"{technology} capacity factor",
+                )
+                generation_sources = sorted(set(sources) | set(technology_assumption["sourceIds"]))
+                factor_method = "global_technology_fallback"
+                confidence = 55.0
+            else:
+                capacity_factor, factor_sources = preferred
+                generation_sources = sorted(set(sources) | set(factor_sources))
+                factor_method = "country_technology_observed"
+                confidence = 82.0
+            annual = {
+                part: capacity[part] * 8.76 * capacity_factor[part] * factor
+                for part in RANGE_PARTS
+            }
+            generation_kind = "estimated"
+
+        reported_dependable = plant.get("dependableCapacityMw")
+        if reported_dependable is not None:
+            dependable_range = _range(
+                reported_dependable, label=f"reported dependable capacity for {asset_id}"
+            )
+            dependable_range = {part: dependable_range[part] * factor for part in RANGE_PARTS}
+            dependable_method = "reported_dependable_capacity"
+            dependable_sources = sources
+        else:
+            credit = _range(
+                technology_assumption["capacityCredit"],
+                label=f"{technology} capacity credit",
+            )
+            dependable_range = {
+                part: capacity[part] * credit[part] * factor for part in RANGE_PARTS
+            }
+            dependable_method = "technology_capacity_credit"
+            dependable_sources = sorted(set(sources) | set(technology_assumption["sourceIds"]))
+
+        for part in RANGE_PARTS:
+            generation[part].append(annual[part])
+            dependable[part].append(dependable_range[part])
+        all_sources.update(generation_sources)
+        all_sources.update(dependable_sources)
+        confidences.append(confidence)
+        components.append({
+            "assetId": asset_id,
+            "technology": technology,
+            "lifecycle": plant["lifecycle"],
+            "deliveryFactor": factor,
+            "annualGenerationGwh": annual,
+            "dependableCapacityMw": dependable_range,
+            "valueKind": generation_kind,
+            "factorMethod": factor_method,
+            "dependableMethod": dependable_method,
+            "sourceIds": sorted(set(generation_sources) | set(dependable_sources)),
+        })
+
+    return {
+        "year": target_year,
+        "installedCapacityMw": math.fsum(installed),
+        "localGenerationGwh": {part: math.fsum(generation[part]) for part in RANGE_PARTS},
+        "dependableCapacityMw": {part: math.fsum(dependable[part]) for part in RANGE_PARTS},
+        "generationComponents": components,
+        "methodId": str(assumptions.get("methodId") or SUPPLY_METHOD_ID),
+        "sourceIds": sorted(all_sources) or assumption_source_ids,
+        "confidence": min(confidences) if confidences else 0.0,
+        "coverage": 100.0 * len(components) / eligible_count if eligible_count else 0.0,
+        "valueKind": (
+            "unavailable" if not components
+            else "estimated" if any(row["valueKind"] == "estimated" for row in components)
+            else "reported"
+        ),
+    }
+
+
+def calculate_power_balance(
+    *,
+    demand_gwh: object,
+    supply: Mapping[str, Any],
+    peak_demand_mw: object,
+    net_interchange_gwh: object | None = None,
+    observed_unmet_demand_gwh: object | None = None,
+) -> dict[str, Any]:
+    """Keep local generation gap, known net balance, and observed unmet demand distinct."""
+
+    demand = _range(demand_gwh, label="demand")
+    generation = _range(supply.get("localGenerationGwh"), label="local generation")
+    dependable = _range(supply.get("dependableCapacityMw"), label="dependable capacity")
+    peak = _range(peak_demand_mw, label="peak demand")
+    installed = _number(supply.get("installedCapacityMw"), label="installed capacity")
+    local_gap = {
+        "low": demand["low"] - generation["high"],
+        "central": demand["central"] - generation["central"],
+        "high": demand["high"] - generation["low"],
+    }
+    net_balance = None
+    if net_interchange_gwh is not None:
+        interchange = _range(net_interchange_gwh, label="net interchange", nonnegative=False)
+        net_balance = {
+            "low": generation["low"] + interchange["low"] - demand["high"],
+            "central": generation["central"] + interchange["central"] - demand["central"],
+            "high": generation["high"] + interchange["high"] - demand["low"],
+        }
+    unmet = (
+        None
+        if observed_unmet_demand_gwh is None
+        else _number(observed_unmet_demand_gwh, label="observed unmet demand")
+    )
+    metrics = PowerBalanceMetrics(
+        demand_gwh=demand,
+        local_generation_gwh=generation,
+        local_generation_gap_gwh=local_gap,
+        net_balance_gwh=net_balance,
+        observed_unmet_demand_gwh=unmet,
+        installed_capacity_mw=installed,
+        dependable_capacity_mw=dependable,
+        peak_demand_mw=peak,
+    )
+    return metrics.model_dump(by_alias=True)
+
+
+def build_regional_energy_forecasts(
+    *,
+    geography_id: str,
+    demand_forecasts: Iterable[Mapping[str, Any]],
+    plants: Iterable[Mapping[str, Any]],
+    assumptions: Mapping[str, Any],
+    demand_increments: Iterable[Mapping[str, Any]] = (),
+    observed_capacity_factors: Mapping[str, Mapping[str, Any]] | None = None,
+    net_interchange_by_year: Mapping[int, object] | None = None,
+    observed_unmet_by_year: Mapping[int, object] | None = None,
+) -> list[dict[str, Any]]:
+    """Build deterministic 2026-2031 balance records, applying each demand increment once."""
+
+    region_id = geography_id.strip()
+    if not region_id:
+        raise ValueError("regional energy forecasts require a geography ID")
+    demand_rows = add_forward_demand_increments(demand_forecasts, demand_increments)
+    selected = [
+        row
+        for row in demand_rows
+        if str(row.get("geographyId") or "").strip() == region_id
+    ]
+    years = [row.get("year") for row in selected]
+    if years != list(TARGET_YEARS):
+        raise ValueError(
+            "regional energy forecasts require exactly one ordered record for 2026-2031"
+        )
+    plant_rows = [dict(row) for row in plants]
+    output: list[dict[str, Any]] = []
+    interchange = net_interchange_by_year or {}
+    observed_unmet = observed_unmet_by_year or {}
+    for demand in selected:
+        year = int(demand["year"])
+        source_ids = _source_ids(demand.get("sourceIds"), label=f"demand forecast {year}")
+        supply = calculate_supply(
+            plant_rows,
+            year=year,
+            assumptions=assumptions,
+            observed_capacity_factors=observed_capacity_factors,
+        )
+        peak = demand.get("peakDemandMw")
+        if peak is None:
+            annual = _range(demand.get("demandGwh"), label=f"demand forecast {year}")
+            peak = {part: annual[part] / 8.76 for part in RANGE_PARTS}
+        metrics = calculate_power_balance(
+            demand_gwh=demand.get("demandGwh"),
+            supply=supply,
+            peak_demand_mw=peak,
+            net_interchange_gwh=interchange.get(year),
+            observed_unmet_demand_gwh=observed_unmet.get(year),
+        )
+        combined_sources = sorted(set(source_ids) | set(supply["sourceIds"]))
+        forecast = RegionalEnergyForecast(
+            year=year,
+            metrics=metrics,
+            method_id=BALANCE_METHOD_ID,
+            source_ids=combined_sources,
+            confidence=min(
+                _number(demand.get("confidence", 50), label="demand confidence"),
+                supply["confidence"],
+            ),
+            coverage=min(
+                _number(demand.get("coverage", 0), label="demand coverage"),
+                supply["coverage"],
+            ),
+            value_kind="estimated",
+        ).model_dump(by_alias=True, mode="json")
+        forecast["geographyId"] = region_id
+        forecast["appliedIncrementIds"] = sorted(demand.get("appliedIncrementIds") or [])
+        output.append(forecast)
+    return output
