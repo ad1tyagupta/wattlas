@@ -12,7 +12,7 @@ import { GlobalMap } from "@/components/map/global-map";
 import { DataStatusDrawer } from "@/components/status/data-status-drawer";
 import { geographyFeatureCollectionSchema } from "@/lib/snapshot/schema";
 import { loadGeneratorIndex, loadGeneratorOverview } from "@/lib/snapshot/generators";
-import type { AssetFeature, GenerationTechnology, GeneratorIndex, GeneratorOverviewCollection, GeographyCollection, GeographyFeature, LensKey, RegionFeature, SnapshotData } from "@/lib/snapshot/types";
+import type { AssetFeature, GenerationTechnology, GeneratorFeature, GeneratorIndex, GeneratorOverviewCollection, GeographyCollection, GeographyFeature, LensKey, RegionFeature, SnapshotData } from "@/lib/snapshot/types";
 
 type Props = { snapshot: SnapshotData };
 
@@ -21,6 +21,7 @@ export function OpportunityRadar({ snapshot }: Props) {
   const [year, setYear] = useState(2030);
   const initialId = snapshot.countries.features.find((feature) => feature.properties.scores.infrastructureDemand != null)?.properties.id ?? snapshot.countries.features[0]?.properties.id ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(initialId);
+  const [selectedGenerator, setSelectedGenerator] = useState<GeneratorFeature | null>(null);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [statusOpen, setStatusOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
@@ -72,8 +73,8 @@ export function OpportunityRadar({ snapshot }: Props) {
     <main className="radar-shell">
       <CommandBar manifest={snapshot.manifest} onOpenStatus={() => setStatusOpen(true)} />
       <LayerRail activeLens={lens} onChange={setLens} infrastructure={infrastructure} onInfrastructureChange={setInfrastructure} technologies={technologies} onTechnologiesChange={setTechnologies} lifecycles={lifecycles} onLifecyclesChange={setLifecycles} />
-      <GlobalMap countries={snapshot.countries} admin1={admin1} regions={snapshot.regions} assets={snapshot.assets} coverage={snapshot.manifest.coverage} lens={lens} year={year} selectedId={selectedId} onSelect={setSelectedId} onSelectGenerator={(generator) => setSelectedId(generator.properties.id)} infrastructure={infrastructure} technologies={technologies} lifecycles={lifecycles} generatorOverview={generatorOverview} generatorIndex={generatorIndex} snapshotRoot={snapshot.manifest.snapshotId ? `snapshots/${snapshot.manifest.snapshotId}` : null} />
-      <EntityInspector geography={selectedGeography} asset={selectedAsset} lens={lens} year={year} onOpenEvidence={() => setEvidenceOpen(true)} onAddComparison={addComparison} />
+      <GlobalMap countries={snapshot.countries} admin1={admin1} regions={snapshot.regions} assets={snapshot.assets} coverage={snapshot.manifest.coverage} lens={lens} year={year} selectedId={selectedId} onSelect={(id) => { setSelectedGenerator(null); setSelectedId(id); }} onSelectGenerator={(generator) => { setSelectedGenerator(generator); setSelectedId(null); }} infrastructure={infrastructure} technologies={technologies} lifecycles={lifecycles} generatorOverview={generatorOverview} generatorIndex={generatorIndex} snapshotRoot={snapshot.manifest.snapshotId ? `snapshots/${snapshot.manifest.snapshotId}` : null} />
+      <EntityInspector geography={selectedGeography} asset={selectedAsset} generator={selectedGenerator} lens={lens} year={year} onOpenEvidence={() => setEvidenceOpen(true)} onAddComparison={addComparison} />
       <Timeline years={snapshot.manifest.activeYears} activeYear={year} onChange={setYear} />
       <DataStatusDrawer manifest={snapshot.manifest} open={statusOpen} onClose={() => setStatusOpen(false)} />
       <EvidenceDossier region={selectedGeography as RegionFeature | null} evidence={snapshot.evidence} open={evidenceOpen && !selectedAsset} onClose={() => setEvidenceOpen(false)} />

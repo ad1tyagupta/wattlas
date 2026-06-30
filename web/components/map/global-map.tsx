@@ -3,12 +3,12 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useEffect, useMemo, useRef } from "react";
-import maplibregl, { type GeoJSONSource, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
+import maplibregl, { type ExpressionSpecification, type GeoJSONSource, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 
 import { baseMapStyle } from "@/components/map/map-style";
 import type { InfrastructureVisibility } from "@/components/controls/layer-rail";
 import { generatorColorExpression, generatorTechnologyExpression } from "@/lib/map/generator-colors";
-import { countriesInBounds, createGeneratorShardController, filterGenerators, generatorSelection, type MapBounds } from "@/lib/map/generator-shards";
+import { countriesInBounds, createGeneratorShardController, filterGeneratorOverview, filterGenerators, generatorSelection, type MapBounds } from "@/lib/map/generator-shards";
 import { admin1LineOpacityExpression, admin1LineWidthExpression, assetColor, assetStrokeColorExpression, countryBorderWidthExpression, mapColorExpression } from "@/lib/map/expressions";
 import type {
   AssetCollection,
@@ -85,13 +85,14 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
   const onSelectRef = useRef(onSelect);
   const onSelectGeneratorRef = useRef(onSelectGenerator);
   const infrastructureRef = useRef(infrastructure);
-  const generatorOverviewRef = useRef(generatorOverview);
   const generatorControllerRef = useRef<ReturnType<typeof createGeneratorShardController> | null>(null);
   const activeGeneratorsRef = useRef<GeneratorCollection>(EMPTY_GENERATORS);
   const generatorFiltersRef = useRef({ technologies, lifecycles });
   const preparedCountries = useMemo(() => activeCountries(countries, lens, year), [countries, lens, year]);
   const preparedAdmin1 = useMemo(() => activeCountries(admin1, lens, year), [admin1, lens, year]);
   const preparedRegions = useMemo(() => activeRegions(regions, lens, year), [regions, lens, year]);
+  const preparedGeneratorOverview = useMemo(() => filterGeneratorOverview(generatorOverview ?? EMPTY_OVERVIEW, technologies, lifecycles), [generatorOverview, lifecycles, technologies]);
+  const generatorOverviewRef = useRef(preparedGeneratorOverview);
   const countriesRef = useRef(preparedCountries);
   const admin1Ref = useRef(preparedAdmin1);
   const regionsRef = useRef(preparedRegions);
@@ -109,8 +110,8 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
     lensRef.current = lens;
     generatorFiltersRef.current = { technologies, lifecycles };
     infrastructureRef.current = infrastructure;
-    generatorOverviewRef.current = generatorOverview;
-  }, [generatorOverview, infrastructure, lens, lifecycles, onSelect, onSelectGenerator, preparedAdmin1, preparedCountries, preparedRegions, selectedId, technologies]);
+    generatorOverviewRef.current = preparedGeneratorOverview;
+  }, [infrastructure, lens, lifecycles, onSelect, onSelectGenerator, preparedAdmin1, preparedCountries, preparedGeneratorOverview, preparedRegions, selectedId, technologies]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -144,16 +145,16 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       map.addSource("generators", {
         type: "geojson", data: EMPTY_GENERATORS, cluster: true, clusterRadius: 44, clusterMaxZoom: 8,
         clusterProperties: {
-          solar: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "solar"], 1, 0]],
-          wind: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "wind"], 1, 0]],
-          hydro: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "hydro"], 1, 0]],
-          nuclear: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "nuclear"], 1, 0]],
-          gas: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "gas"], 1, 0]],
-          coal: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "coal"], 1, 0]],
-          oil: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "oil"], 1, 0]],
-          biomass: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "biomass"], 1, 0]],
-          geothermal: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "geothermal"], 1, 0]],
-          other: ["+", ["case", ["==", ["at", 0, ["get", "technologies"]], "other"], 1, 0]],
+          solar: ["+", ["case", ["in", "solar", ["get", "technologies"]], 1, 0]],
+          wind: ["+", ["case", ["in", "wind", ["get", "technologies"]], 1, 0]],
+          hydro: ["+", ["case", ["in", "hydro", ["get", "technologies"]], 1, 0]],
+          nuclear: ["+", ["case", ["in", "nuclear", ["get", "technologies"]], 1, 0]],
+          gas: ["+", ["case", ["in", "gas", ["get", "technologies"]], 1, 0]],
+          coal: ["+", ["case", ["in", "coal", ["get", "technologies"]], 1, 0]],
+          oil: ["+", ["case", ["in", "oil", ["get", "technologies"]], 1, 0]],
+          biomass: ["+", ["case", ["in", "biomass", ["get", "technologies"]], 1, 0]],
+          geothermal: ["+", ["case", ["in", "geothermal", ["get", "technologies"]], 1, 0]],
+          other: ["+", ["case", ["in", "other", ["get", "technologies"]], 1, 0]],
         },
       });
       map.addLayer({
@@ -257,10 +258,12 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
           "circle-stroke-width": 2,
         },
       });
-      map.addLayer({ id: "generator-overview-markers", type: "circle", source: "generator-overview", maxzoom: 3, paint: { "circle-color": generatorColorExpression(), "circle-radius": ["step", ["get", "count"], 5, 10, 8, 50, 11], "circle-stroke-color": "#07100F", "circle-stroke-width": 1.5, "circle-opacity": 0.9 } });
-      map.addLayer({ id: "generator-clusters", type: "circle", source: "generators", minzoom: 3, filter: ["has", "point_count"], paint: { "circle-color": "#84918E", "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24], "circle-stroke-color": "#E8EFED", "circle-stroke-width": 1.5 } });
-      map.addLayer({ id: "generator-cluster-count", type: "symbol", source: "generators", minzoom: 3, filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 10 }, paint: { "text-color": "#07100F" } });
-      map.addLayer({ id: "generator-assets", type: "circle", source: "generators", minzoom: 3, filter: ["!", ["has", "point_count"]], paint: { "circle-color": generatorTechnologyExpression(), "circle-radius": 5, "circle-stroke-color": "#F1F6F4", "circle-stroke-width": 1.5, "circle-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.82, 1] } });
+      map.addLayer({ id: "generator-overview-markers", type: "circle", source: "generator-overview", maxzoom: 3, paint: { "circle-color": ["case", ["boolean", ["get", "isMixed"], false], "#84918E", generatorColorExpression("displayTechnology")], "circle-radius": ["step", ["get", "count"], 5, 10, 8, 50, 11], "circle-stroke-color": "#07100F", "circle-stroke-width": 1.5, "circle-opacity": 0.9 } });
+      map.addLayer({ id: "generator-overview-composition", type: "symbol", source: "generator-overview", minzoom: 1.8, maxzoom: 3, layout: { "text-field": ["get", "compositionLabel"], "text-size": 9, "text-offset": [0, 1.4], "text-optional": true }, paint: { "text-color": "#D7E2DF", "text-halo-color": "#07100F", "text-halo-width": 1 } });
+      const technologyKindCount = ["+", ...(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"].map((technology) => ["case", [">", ["get", technology], 0], 1, 0]))] as unknown as ExpressionSpecification;
+      map.addLayer({ id: "generator-clusters", type: "circle", source: "generators", minzoom: 3, filter: ["has", "point_count"], paint: { "circle-color": ["case", [">", technologyKindCount, 1], "#84918E", ["case", [">", ["get", "solar"], 0], "#E7B84B", [">", ["get", "wind"], 0], "#55C7D9", [">", ["get", "hydro"], 0], "#4E8EDB", [">", ["get", "nuclear"], 0], "#A98AE8", [">", ["get", "gas"], 0], "#E07A5F", [">", ["get", "coal"], 0], "#6F7782", [">", ["get", "oil"], 0], "#B88762", [">", ["get", "biomass"], 0], "#78B77A", [">", ["get", "geothermal"], 0], "#D98255", "#9AA6A4"]], "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24], "circle-stroke-color": "#E8EFED", "circle-stroke-width": 1.5 } });
+      map.addLayer({ id: "generator-cluster-count", type: "symbol", source: "generators", minzoom: 3, filter: ["has", "point_count"], layout: { "text-field": ["concat", ["get", "point_count_abbreviated"], " · composition S", ["get", "solar"], " W", ["get", "wind"], " H", ["get", "hydro"], " N", ["get", "nuclear"], " G", ["get", "gas"], " C", ["get", "coal"], " O", ["get", "oil"], " B", ["get", "biomass"], " T", ["get", "geothermal"], " X", ["get", "other"]], "text-size": 9, "text-offset": [0, 2] }, paint: { "text-color": "#D7E2DF", "text-halo-color": "#07100F", "text-halo-width": 1 } });
+      map.addLayer({ id: "generator-assets", type: "symbol", source: "generators", minzoom: 3, filter: ["!", ["has", "point_count"]], layout: { "text-field": "■", "text-size": 13, "text-allow-overlap": true }, paint: { "text-color": generatorTechnologyExpression(), "text-halo-color": "#F1F6F4", "text-halo-width": 1, "text-opacity": ["case", ["==", ["get", "lifecycle"], "operational"], 0.82, 1] } });
       map.addLayer({
         id: "asset-cluster-count",
         type: "symbol",
@@ -364,8 +367,8 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
   useEffect(() => {
     const map = mapRef.current;
     if (!map?.isStyleLoaded()) return;
-    (map.getSource("generator-overview") as GeoJSONSource | undefined)?.setData(generatorOverview ?? EMPTY_OVERVIEW);
-  }, [generatorOverview]);
+    (map.getSource("generator-overview") as GeoJSONSource | undefined)?.setData(preparedGeneratorOverview);
+  }, [preparedGeneratorOverview]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -449,6 +452,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
         <small>{coverage.countries} countries · {coverage.assets} infrastructure assets</small>
       </div>
       <div ref={containerRef} className="map-container" data-testid="global-map" />
+      <div className="map-composition-key" aria-label="Generator cluster composition">Cluster labels show technology counts; mixed clusters are neutral. World lifecycle filtering is exact where aggregate counts exist; otherwise aggregates remain visible as unavailable detail.</div>
       <div className="data-attribution">
         <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">Infrastructure © OpenStreetMap contributors · ODbL</a>
         <span> · </span><a href="https://www.geoboundaries.org/" target="_blank" rel="noreferrer">Regions © geoBoundaries · CC BY 4.0</a>

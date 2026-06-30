@@ -223,6 +223,19 @@ button {
   border-radius: 50%;
 }
 
+.map-composition-key {
+  position: absolute;
+  left: 12px;
+  bottom: 34px;
+  z-index: 4;
+  max-width: 390px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  background: rgb(7 16 15 / 82%);
+  color: var(--muted);
+  font: 8px/1.35 var(--font-plex-mono), monospace;
+}
+
 .rail-heading,
 .section-heading,
 .inspector-kicker {

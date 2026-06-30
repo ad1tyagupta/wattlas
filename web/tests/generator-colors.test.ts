@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { GENERATOR_COLORS, generatorColor, generatorColorExpression } from "@/lib/map/generator-colors";
-import { countriesInBounds, createGeneratorShardController, filterGenerators, generatorSelection } from "@/lib/map/generator-shards";
-import type { GeneratorCollection, GeneratorIndex } from "@/lib/snapshot/types";
+import { countriesInBounds, createGeneratorShardController, filterGeneratorOverview, filterGenerators, generatorSelection } from "@/lib/map/generator-shards";
+import type { GeneratorCollection, GeneratorIndex, GeneratorOverviewCollection } from "@/lib/snapshot/types";
 
 describe("generator semantics", () => {
   it("uses the approved technology palette", () => {
@@ -38,6 +38,24 @@ describe("generator semantics", () => {
     expect(selected?.properties.technologies).toEqual(["wind"]);
   });
 
+  it("filters overview technology mix and marks mixed composition honestly", () => {
+    const overview = overviewCollection({ solar: 60, wind: 40 }, { operational: 2 });
+    const filtered = filterGeneratorOverview(overview, new Set(["solar", "wind"]), new Set(["operational"]));
+    expect(filtered.features[0].properties).toMatchObject({
+      dominantTechnology: "solar", displayTechnology: "mixed", isMixed: true,
+      filteredCapacityMw: 100, compositionLabel: "Solar 60% · Wind 40%", lifecycleFilterExact: true,
+    });
+    expect(filterGeneratorOverview(overview, new Set(["hydro"]), new Set(["operational"])).features).toHaveLength(0);
+    expect(filterGeneratorOverview(overview, new Set(["solar"]), new Set(["retired"])).features).toHaveLength(0);
+  });
+
+  it("retains lifecycle aggregates without counts and labels the filter as inexact", () => {
+    const overview = overviewCollection({ solar: 100 });
+    const filtered = filterGeneratorOverview(overview, new Set(["solar"]), new Set(["operational"]));
+    expect(filtered.features[0].properties).toMatchObject({ lifecycleFilterExact: false, filterDisclosure: "Lifecycle detail unavailable at world zoom" });
+    expect(filterGeneratorOverview(overview, new Set(["solar"]), new Set()).features).toHaveLength(0);
+  });
+
   it("fetches each immutable shard once, combines visible cached shards, and drops only rendered data", async () => {
     const index = { countries: {
       US: { bbox: [-125, 24, -66, 49], path: "generators/US.geojson", featureCount: 1, checksum: "a".repeat(64), bytes: 1, capacityMw: 1 },
@@ -57,4 +75,7 @@ describe("generator semantics", () => {
 function collection(features: GeneratorCollection["features"]): GeneratorCollection { return { type: "FeatureCollection", features }; }
 function feature(id: string, lifecycle: string, technology: "solar" | "wind"): GeneratorCollection["features"][number] {
   return { type: "Feature", id, geometry: { type: "Point", coordinates: [0, 0] }, properties: { id, category: "power_generation", country: "US", geographyId: "US-X", lifecycle, technologies: [technology], capacityMw: 1, operatingCapacityMw: 1, plannedCapacityMw: 0, technologyMixMw: { [technology]: 1 }, sourceIds: ["source"] } };
+}
+function overviewCollection(technologyMixMw: Record<string, number>, lifecycleCounts?: Record<string, number>): GeneratorOverviewCollection {
+  return { type: "FeatureCollection", features: [{ type: "Feature", id: "US-X", geometry: { type: "Point", coordinates: [0, 0] }, properties: { geographyId: "US-X", country: "US", count: 2, capacityMw: 100, operatingCapacityMw: 100, plannedCapacityMw: 0, technologyMixMw, dominantTechnology: "solar", lifecycleCounts } }] } as GeneratorOverviewCollection;
 }

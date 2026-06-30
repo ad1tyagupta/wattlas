@@ -215,6 +215,9 @@ export type GeneratorOverviewCollection = GeoJSON.FeatureCollection<GeoJSON.Poin
   geographyId: string; country: string; count: number; capacityMw: number;
   operatingCapacityMw: number; plannedCapacityMw: number;
   technologyMixMw: Partial<Record<GenerationTechnology, number>>; dominantTechnology: GenerationTechnology;
+  lifecycleCounts?: Partial<Record<string, number>>;
+  filteredCapacityMw?: number; displayTechnology?: GenerationTechnology | "mixed"; isMixed?: boolean;
+  compositionLabel?: string; lifecycleFilterExact?: boolean; filterDisclosure?: string;
 }>;
 export type GeneratorIndex = {
   countries: Record<string, { bbox: [number, number, number, number]; path: string; featureCount: number; checksum: string; bytes: number; capacityMw: number }>;

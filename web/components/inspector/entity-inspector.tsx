@@ -1,5 +1,5 @@
 import { formatPopulation } from "@/lib/format";
-import type { AssetFeature, GeographyFeature, LensKey, RegionFeature } from "@/lib/snapshot/types";
+import type { AssetFeature, GeneratorFeature, GeographyFeature, LensKey, RegionFeature } from "@/lib/snapshot/types";
 
 const lensLabels: Record<LensKey, string> = {
   infrastructureDemand: "Infrastructure Demand",
@@ -11,6 +11,7 @@ const lensLabels: Record<LensKey, string> = {
 type Props = {
   geography: GeographyFeature | RegionFeature | null;
   asset: AssetFeature | null;
+  generator?: GeneratorFeature | null;
   lens: LensKey;
   year: number;
   onOpenEvidence: () => void;
@@ -32,7 +33,23 @@ function formatAddress(address: AssetFeature["properties"]["address"]): string {
   return [street, address.city, address.state, address.postcode, address.country].filter(Boolean).join(", ") || "Full address unavailable";
 }
 
-export function EntityInspector({ geography, asset, lens, year, onOpenEvidence, onAddComparison }: Props) {
+export function EntityInspector({ geography, asset, generator, lens, year, onOpenEvidence, onAddComparison }: Props) {
+  if (generator) {
+    const properties = generator.properties;
+    const name = typeof properties.name === "string" ? properties.name : properties.id;
+    const sourceUrl = typeof properties.sourceUrl === "string" ? properties.sourceUrl : null;
+    return <aside className="region-inspector facility-inspector generator-inspector">
+      <div className="inspector-kicker">Selected power generator · {properties.country}</div>
+      <h1>{name}</h1>
+      <p className="region-meta">{properties.technologies.map(humanize).join(" · ")}</p>
+      <div className="facility-facts">
+        <span>Capacity<strong>{properties.capacityMw} MW</strong></span>
+        <span>Lifecycle<strong>{properties.lifecycle ? humanize(properties.lifecycle) : "Unavailable"}</strong></span>
+        <span>Region<strong>{properties.geographyId}</strong></span>
+      </div>
+      <div className="inspector-actions single-action">{sourceUrl ? <a className="primary-action" href={sourceUrl} target="_blank" rel="noreferrer">Open source record</a> : <button className="secondary-action" type="button" disabled>Source record unavailable</button>}</div>
+    </aside>;
+  }
   if (asset) {
     const properties = asset.properties;
     return (

@@ -182,11 +182,13 @@ describe("power balance snapshot contracts", () => {
     const parsedShard = generatorCountryShardSchema.parse({ type: "FeatureCollection", features: [feature] });
     expect(parsedShard.features[0].properties.technologies).toEqual(["solar"]);
     expect(parsedShard.features[0].properties.category).toBe("power_generation");
-    expect(generatorOverviewSchema.parse({ type: "FeatureCollection", features: [{
+    const parsedOverview = generatorOverviewSchema.parse({ type: "FeatureCollection", features: [{
       type: "Feature", id: "US-CA", geometry: { type: "Point", coordinates: [-119.5, 36.5] },
       properties: { geographyId: "US-CA", country: "US", count: 1, capacityMw: 120,
-        operatingCapacityMw: 120, plannedCapacityMw: 0, technologyMixMw: { solar: 120 }, dominantTechnology: "solar" },
-    }] }).features[0].properties.dominantTechnology).toBe("solar");
+        operatingCapacityMw: 120, plannedCapacityMw: 0, technologyMixMw: { solar: 120 }, dominantTechnology: "solar", lifecycleCounts: { operational: 1 } },
+    }] });
+    expect(parsedOverview.features[0].properties.dominantTechnology).toBe("solar");
+    expect(parsedOverview.features[0].properties.lifecycleCounts).toEqual({ operational: 1 });
     expect(generatorIndexSchema.parse({ countries: { US: { bbox: [-120, 30, -110, 40], path: "generators/US.geojson", featureCount: 1, checksum: "a".repeat(64), bytes: 512, capacityMw: 120 } }, totals: { featureCount: 1, capacityMw: 120 } }).countries.US.bytes).toBe(512);
   });
 

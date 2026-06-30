@@ -447,6 +447,7 @@ export const generatorOverviewSchema = z.object({
       capacityMw: z.number().nonnegative(), operatingCapacityMw: z.number().nonnegative(),
       plannedCapacityMw: z.number().nonnegative(), technologyMixMw: technologyMixSchema,
       dominantTechnology: generationTechnologySchema,
+      lifecycleCounts: z.record(z.string().min(1), z.number().int().nonnegative()).optional(),
     }).refine((value) => capacitiesMatch(value.capacityMw, value.operatingCapacityMw + value.plannedCapacityMw))
       .refine((value) => capacitiesMatch(value.capacityMw, Object.values(value.technologyMixMw).reduce((a, b) => a + b, 0))),
   }).refine((feature) => feature.id === feature.properties.geographyId, { message: "Generator overview ID must match its ADM1" })),

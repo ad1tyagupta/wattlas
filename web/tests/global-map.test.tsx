@@ -94,10 +94,17 @@ describe("GlobalMap", () => {
       <GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined} coverage={{ countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} generatorOverview={{ type: "FeatureCollection", features: [] }} />,
     );
     expect(mapCalls.sources.find(([id]) => id === "generators")?.[1]).toMatchObject({ cluster: true, clusterRadius: 44, clusterProperties: expect.objectContaining({ solar: expect.any(Array), wind: expect.any(Array) }) });
+    expect(JSON.stringify(mapCalls.sources.find(([id]) => id === "generators")?.[1])).toContain('["in","solar",["get","technologies"]]');
     expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-markers")).toMatchObject({ maxzoom: 3 });
-    expect(mapCalls.layers.find((layer) => layer.id === "generator-clusters")?.paint).toMatchObject({ "circle-color": "#84918E" });
-    expect(mapCalls.layers.find((layer) => layer.id === "generator-assets")?.paint).toMatchObject({ "circle-stroke-width": 1.5 });
+    const clusterPaint = JSON.stringify(mapCalls.layers.find((layer) => layer.id === "generator-clusters")?.paint);
+    expect(clusterPaint).toContain("#84918E");
+    expect(clusterPaint).toContain("solar");
+    expect(clusterPaint).toContain("wind");
+    expect(JSON.stringify(mapCalls.layers.find((layer) => layer.id === "generator-cluster-count")?.layout)).toContain("composition");
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-composition")).toMatchObject({ type: "symbol", source: "generator-overview" });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-assets")).toMatchObject({ type: "symbol", layout: { "text-field": "■" } });
     expect(mapCalls.layers.find((layer) => layer.id === "water-assets")).toMatchObject({ type: "symbol", layout: { "text-field": "◆" } });
+    expect(mapCalls.layers.find((layer) => layer.id === "data-centre-assets")).toMatchObject({ type: "circle" });
     expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "generator-assets")).toBe(true);
   });
 

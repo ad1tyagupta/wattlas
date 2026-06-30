@@ -1,5 +1,5 @@
 import { loadGeneratorCountry } from "@/lib/snapshot/generators";
-import type { GenerationTechnology, GeneratorCollection, GeneratorFeature, GeneratorIndex, LayerResult } from "@/lib/snapshot/types";
+import type { GenerationTechnology, GeneratorCollection, GeneratorFeature, GeneratorIndex, GeneratorOverviewCollection, LayerResult } from "@/lib/snapshot/types";
 
 export type MapBounds = [west: number, south: number, east: number, north: number];
 type CountryLoader = (root: string, index: GeneratorIndex, country: string, options?: { signal?: AbortSignal }) => Promise<LayerResult<GeneratorCollection>>;
@@ -21,6 +21,42 @@ export function filterGenerators(data: GeneratorCollection, technologies: Readon
   return {
     type: "FeatureCollection",
     features: data.features.filter(({ properties }) => properties.technologies.some((technology) => technologies.has(technology)) && (!properties.lifecycle || lifecycles.has(properties.lifecycle))),
+  };
+}
+
+const technologyLabel = (technology: GenerationTechnology) => technology.charAt(0).toUpperCase() + technology.slice(1);
+
+export function filterGeneratorOverview(data: GeneratorOverviewCollection, technologies: ReadonlySet<GenerationTechnology>, lifecycles: ReadonlySet<string>): GeneratorOverviewCollection {
+  if (lifecycles.size === 0) return { type: "FeatureCollection", features: [] };
+  return {
+    type: "FeatureCollection",
+    features: data.features.flatMap((feature) => {
+      const mix = Object.entries(feature.properties.technologyMixMw)
+        .filter((entry): entry is [GenerationTechnology, number] => technologies.has(entry[0] as GenerationTechnology) && typeof entry[1] === "number" && entry[1] > 0)
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+      if (!mix.length) return [];
+      const lifecycleCounts = feature.properties.lifecycleCounts;
+      const selectedLifecycleCount = lifecycleCounts ? Object.entries(lifecycleCounts).reduce((sum, [state, count]) => sum + (lifecycles.has(state) ? (count ?? 0) : 0), 0) : null;
+      if (selectedLifecycleCount === 0) return [];
+      const filteredCapacityMw = mix.reduce((sum, [, capacity]) => sum + capacity, 0);
+      const isMixed = mix.length > 1;
+      const compositionLabel = mix.map(([technology, capacity]) => `${technologyLabel(technology)} ${Math.round(capacity / filteredCapacityMw * 100)}%`).join(" · ");
+      const lifecycleFilterExact = lifecycleCounts !== undefined && selectedLifecycleCount === feature.properties.count;
+      return [{
+        ...feature,
+        properties: {
+          ...feature.properties,
+          technologyMixMw: Object.fromEntries(mix),
+          dominantTechnology: mix[0][0],
+          displayTechnology: isMixed ? "mixed" : mix[0][0],
+          isMixed,
+          filteredCapacityMw,
+          compositionLabel,
+          lifecycleFilterExact,
+          filterDisclosure: lifecycleFilterExact ? "Technology and lifecycle filters applied at aggregate resolution" : "Lifecycle detail unavailable at world zoom",
+        },
+      }];
+    }),
   };
 }
 

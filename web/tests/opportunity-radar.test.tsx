@@ -7,10 +7,17 @@ import type { SnapshotData } from "@/lib/snapshot/types";
 afterEach(cleanup);
 
 vi.mock("@/components/map/global-map", () => ({
-  GlobalMap: ({ lens, onSelect }: { lens: string; onSelect: (id: string) => void }) => <div data-testid="global-map">Map lens: {lens}<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button></div>,
+  GlobalMap: ({ lens, onSelect, onSelectGenerator }: { lens: string; onSelect: (id: string) => void; onSelectGenerator: (feature: import("@/lib/snapshot/types").GeneratorFeature) => void }) => <div data-testid="global-map">Map lens: {lens}<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button><button type="button" onClick={() => onSelectGenerator(generator)}>Select generator</button></div>,
 }));
 
-const snapshot = {
+const generator = { type: "Feature", id: "generator-1", geometry: { type: "Point", coordinates: [8, 50] }, properties: { id: "generator-1", name: "Rhine Solar", category: "power_generation", country: "DE", geographyId: "DE-X", lifecycle: "operational", technologies: ["solar"], capacityMw: 80, operatingCapacityMw: 80, plannedCapacityMw: 0, technologyMixMw: { solar: 80 }, sourceIds: ["registry"] } } as import("@/lib/snapshot/types").GeneratorFeature;
+
+const connectors: SnapshotData["manifest"]["connectors"] = [
+  { id: "gisco", state: "current", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: "2026-06-27T04:12:00Z", message: null },
+  { id: "entsoe", state: "not_configured", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: null, message: "Token missing" },
+];
+
+const snapshot: SnapshotData = {
   manifest: {
     snapshotId: "2026-06-27T04-12-00Z",
     generatedAt: "2026-06-27T04:12:00Z",
@@ -19,10 +26,7 @@ const snapshot = {
     artifacts: { countries: "countries.geojson", admin1: "admin1.geojson", regions: "regions.geojson", assets: "assets.geojson", evidence: "evidence.json" },
     coverage: { countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 14, dataCentres: 8, waterInfrastructure: 6 },
     boundaryDisclaimer: "UN boundary disclaimer",
-    connectors: [
-      { id: "gisco", state: "current" as const, checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: "2026-06-27T04:12:00Z", message: null },
-      { id: "entsoe", state: "not_configured" as const, checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: null, message: "Token missing" },
-    ],
+    connectors,
   },
   admin1: { type: "FeatureCollection", features: [{
     type: "Feature", id: "IN-ASSAM", geometry: { type: "Polygon", coordinates: [] },
@@ -34,7 +38,7 @@ const snapshot = {
       contributions: [], contributionsByYear: { "2030": [] }, sourceIds: [], assetCount: 1,
       assetSummary: { total: 1, operational: 1, planned: 0, dataCentres: 1, waterInfrastructure: 0, officialVerified: 0, communityMapped: 1 },
     },
-  }] },
+  }] } as SnapshotData["admin1"],
   countries: {
     type: "FeatureCollection",
     features: [
@@ -44,8 +48,11 @@ const snapshot = {
         geometry: { type: "Polygon", coordinates: [] },
         properties: {
           id: "DE71", name: "Darmstadt", country: "DE", scoreYear: 2030,
+          level: "country", parentId: null, peerLevel: "country",
           scores: { infrastructureDemand: 78, siteAttractiveness: 54, systemRisk: 68 },
           scoresByYear: { "2030": { infrastructureDemand: 78, siteAttractiveness: 54, systemRisk: 68 } },
+          categoryScoresByYear: {}, demandMwByYear: {}, assetCount: 0,
+          assetSummary: { total: 0, operational: 0, planned: 0, dataCentres: 0, waterInfrastructure: 0, officialVerified: 0, communityMapped: 0 },
           confidence: 72, coverage: 100, valueKind: "estimated", updatedAt: "2026-06-27T04:12:00Z",
           contributions: [], contributionsByYear: { "2030": [] }, sourceIds: ["source-1"], population: 4_100_000, clusterId: "frankfurt",
         },
@@ -62,9 +69,9 @@ const snapshot = {
       sourceType: "community_mapped", sourceUrl: "https://www.openstreetmap.org/node/101", externalIds: { osm: "node/101" },
       lastObservedAt: "2026-06-27T12:00:00Z", confidence: 86,
     },
-  }] },
+  }] } as SnapshotData["assets"],
   evidence: { sources: [], claims: [] },
-} as unknown as SnapshotData;
+};
 
 describe("OpportunityRadar", () => {
   it("renders daily freshness, lenses, year, and source truth", () => {
@@ -101,6 +108,14 @@ describe("OpportunityRadar", () => {
 
     expect(screen.getByRole("heading", { name: "Assam" })).toBeInTheDocument();
     expect(screen.getByText("1 facilities")).toBeInTheDocument();
+  });
+
+  it("preserves a typed generator selection at the app boundary and shows an action", () => {
+    render(<OpportunityRadar snapshot={snapshot} />);
+    fireEvent.click(screen.getByRole("button", { name: "Select generator" }));
+    expect(screen.getByRole("heading", { name: "Rhine Solar" })).toBeInTheDocument();
+    expect(screen.getByText("80 MW")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Source record unavailable" })).toBeVisible();
   });
 
   it("offers independent infrastructure layers and accessible generator filters", () => {
