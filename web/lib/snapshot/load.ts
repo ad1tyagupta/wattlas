@@ -7,10 +7,20 @@ import {
   geographyFeatureCollectionSchema,
   manifestSchema,
 } from "@/lib/snapshot/schema";
-import type { SnapshotData } from "@/lib/snapshot/types";
+import type { SnapshotData, SnapshotManifest } from "@/lib/snapshot/types";
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+/** The deliberately small snapshot subset serialized into the initial RSC payload. */
+export function serverSnapshotArtifactPaths(manifest: SnapshotManifest) {
+  return {
+    countries: manifest.artifacts.countries,
+    regions: manifest.artifacts.regions,
+    assets: manifest.artifacts.assets,
+    evidence: manifest.artifacts.evidence,
+  } as const;
 }
 
 export async function loadSnapshot(): Promise<SnapshotData> {
@@ -19,11 +29,12 @@ export async function loadSnapshot(): Promise<SnapshotData> {
     await readJson(path.join(publicData, "latest.json")),
   );
 
+  const serverArtifacts = serverSnapshotArtifactPaths(manifest);
   const [countriesRaw, regionsRaw, assetsRaw, evidenceRaw] = await Promise.all([
-    readJson(path.join(publicData, manifest.artifacts.countries)),
-    readJson(path.join(publicData, manifest.artifacts.regions)),
-    readJson(path.join(publicData, manifest.artifacts.assets)),
-    readJson(path.join(publicData, manifest.artifacts.evidence)),
+    readJson(path.join(publicData, serverArtifacts.countries)),
+    readJson(path.join(publicData, serverArtifacts.regions)),
+    readJson(path.join(publicData, serverArtifacts.assets)),
+    readJson(path.join(publicData, serverArtifacts.evidence)),
   ]);
 
   const countries = geographyFeatureCollectionSchema.parse(countriesRaw);

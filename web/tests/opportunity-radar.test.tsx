@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpportunityRadar } from "@/components/opportunity-radar";
+import type { SnapshotData } from "@/lib/snapshot/types";
 
 afterEach(cleanup);
 
@@ -19,8 +20,8 @@ const snapshot = {
     coverage: { countries: 246, regions: 334, admin1Regions: 3229, countriesWithAdmin1: 197, assets: 14, dataCentres: 8, waterInfrastructure: 6 },
     boundaryDisclaimer: "UN boundary disclaimer",
     connectors: [
-      { id: "gisco", state: "current", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: "2026-06-27T04:12:00Z", message: null },
-      { id: "entsoe", state: "not_configured", checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: null, message: "Token missing" },
+      { id: "gisco", state: "current" as const, checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: "2026-06-27T04:12:00Z", message: null },
+      { id: "entsoe", state: "not_configured" as const, checkedAt: "2026-06-27T04:12:00Z", lastSuccessAt: null, message: "Token missing" },
     ],
   },
   admin1: { type: "FeatureCollection", features: [{
@@ -63,7 +64,7 @@ const snapshot = {
     },
   }] },
   evidence: { sources: [], claims: [] },
-};
+} as unknown as SnapshotData;
 
 describe("OpportunityRadar", () => {
   it("renders daily freshness, lenses, year, and source truth", () => {

@@ -1,11 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assetPropertiesSchema,
+  generatorCountryShardSchema,
+  generatorIndexSchema,
+  generatorOverviewSchema,
   geographyPropertiesSchema,
   manifestSchema,
+  regionalEnergySchema,
 } from "@/lib/snapshot/schema";
-import { loadSnapshot } from "@/lib/snapshot/load";
+import { loadSnapshot, serverSnapshotArtifactPaths } from "@/lib/snapshot/load";
+import {
+  clearSnapshotLayerCache,
+  loadAdmin1,
+  loadGeneratorCountry,
+  loadGeneratorIndex,
+  loadGeneratorOverview,
+  loadRegionalEnergy,
+} from "@/lib/snapshot/generators";
 
 const validManifest = {
   snapshotId: "2026-06-27T04-12-00Z",
@@ -18,6 +30,9 @@ const validManifest = {
     regions: "regions.geojson",
     assets: "assets.geojson",
     evidence: "evidence.json",
+    regionalEnergy: "regional-energy.json",
+    generatorOverview: "generator-overview.geojson",
+    generatorIndex: "generators/index.json",
   },
   coverage: {
     countries: 246,
@@ -45,6 +60,14 @@ describe("snapshot manifest", () => {
     expect(manifestSchema.parse(validManifest).activeYears).toHaveLength(6);
   });
 
+  it("keeps ADM1, regional energy, and generator layers out of the server payload", () => {
+    const manifest = manifestSchema.parse(validManifest);
+    expect(serverSnapshotArtifactPaths(manifest)).toEqual({
+      countries: "countries.geojson", regions: "regions.geojson",
+      assets: "assets.geojson", evidence: "evidence.json",
+    });
+  });
+
   it("rejects an invalid connector state", () => {
     expect(() =>
       manifestSchema.parse({
@@ -58,6 +81,137 @@ describe("snapshot manifest", () => {
     expect(() =>
       manifestSchema.parse({ ...validManifest, activeYears: [2026, 2027, 2028] }),
     ).toThrow();
+  });
+});
+
+describe("power balance snapshot contracts", () => {
+  const range = { low: 90, central: 100, high: 115 };
+  const forecast = {
+    geographyId: "US-CA", year: 2030,
+    metrics: {
+      demandGwh: range, localGenerationGwh: { low: 70, central: 80, high: 90 },
+      localGenerationGapGwh: { low: 0, central: 20, high: 45 },
+      netBalanceGwh: { low: -35, central: -10, high: 10 },
+      observedUnmetDemandGwh: 3, installedCapacityMw: 25,
+      dependableCapacityMw: { low: 10, central: 12, high: 15 }, peakDemandMw: range,
+    },
+    powerBalance: { score: 58, coverage: 80, status: "rankable", contributions: [] },
+    methodId: "regional-power-balance-v1", sourceIds: ["public-source"],
+    confidence: 70, coverage: 80, valueKind: "estimated", appliedIncrementIds: [], metricLineage: {},
+  };
+
+  it("accepts signed balances while keeping local gap and observed unmet distinct", () => {
+    const parsed = regionalEnergySchema.parse({ "US-CA": Array.from({ length: 6 }, (_, i) => ({ ...forecast, year: 2026 + i })) });
+    expect(parsed["US-CA"][4].metrics.netBalanceGwh?.central).toBe(-10);
+    expect(parsed["US-CA"][4].metrics.localGenerationGapGwh?.central).toBe(20);
+    expect(parsed["US-CA"][4].metrics.observedUnmetDemandGwh).toBe(3);
+  });
+
+  it("accepts the compact Task 9 forecast shape without contribution internals", () => {
+    const compact = { ...forecast, powerBalance: { score: 58, coverage: 80, status: "rankable" } };
+    const parsed = regionalEnergySchema.parse({ "US-CA": Array.from({ length: 6 }, (_, i) => ({ ...compact, year: 2026 + i })) });
+    expect(parsed["US-CA"][0].powerBalance?.contributions).toEqual([]);
+  });
+
+  it("rejects unordered ranges and dates outside the forecast horizon", () => {
+    expect(() => regionalEnergySchema.parse({ "US-CA": [{ ...forecast, year: 2032 }] })).toThrow();
+    expect(() => regionalEnergySchema.parse({ "US-CA": [{ ...forecast, metrics: { ...forecast.metrics, netBalanceGwh: { low: 2, central: 1, high: 3 } } }] })).toThrow();
+  });
+
+  it("accepts power generation technology, overview, and checksummed shard index", () => {
+    const feature = {
+      type: "Feature", id: "plant-1", geometry: { type: "Point", coordinates: [-119.5, 36.5] },
+      properties: { id: "plant-1", country: "US", geographyId: "US-CA",
+        technologies: ["solar"], capacityMw: 120,
+        operatingCapacityMw: 120, plannedCapacityMw: 0, technologyMixMw: { solar: 120 },
+        commissioningYear: 2024, retirementYear: null, targetYear: null, sourceIds: ["public-source"] },
+    } as const;
+    const parsedShard = generatorCountryShardSchema.parse({ type: "FeatureCollection", features: [feature] });
+    expect(parsedShard.features[0].properties.technologies).toEqual(["solar"]);
+    expect(parsedShard.features[0].properties.category).toBe("power_generation");
+    expect(generatorOverviewSchema.parse({ type: "FeatureCollection", features: [{
+      type: "Feature", id: "US-CA", geometry: { type: "Point", coordinates: [-119.5, 36.5] },
+      properties: { geographyId: "US-CA", country: "US", count: 1, capacityMw: 120,
+        operatingCapacityMw: 120, plannedCapacityMw: 0, technologyMixMw: { solar: 120 }, dominantTechnology: "solar" },
+    }] }).features[0].properties.dominantTechnology).toBe("solar");
+    expect(generatorIndexSchema.parse({ countries: { US: { bbox: [-120, 30, -110, 40], path: "generators/US.geojson", featureCount: 1, checksum: "a".repeat(64), bytes: 512, capacityMw: 120 } }, totals: { featureCount: 1, capacityMw: 120 } }).countries.US.bytes).toBe(512);
+  });
+
+  it("rejects invalid generator technologies, capacities, dates, and index paths", () => {
+    const base = { type: "Feature", id: "plant-1", geometry: { type: "Point", coordinates: [1, 1] }, properties: {
+      id: "plant-1", country: "US", geographyId: "US-CA", category: "power_generation", lifecycle: "operational",
+      technologies: ["fusion"], capacityMw: -1, operatingCapacityMw: 0, plannedCapacityMw: 0,
+      technologyMixMw: { solar: 0 }, commissioningYear: 1700, sourceIds: ["source"] } };
+    expect(() => generatorCountryShardSchema.parse({ type: "FeatureCollection", features: [base] })).toThrow();
+    expect(() => generatorIndexSchema.parse({ countries: { US: { bbox: [0, 0, 1, 1], path: "../US.geojson", featureCount: 1, checksum: "bad", bytes: -1, capacityMw: 1 } }, totals: { featureCount: 1, capacityMw: 1 } })).toThrow();
+  });
+});
+
+describe("lazy snapshot layers", () => {
+  afterEach(() => { clearSnapshotLayerCache(); vi.unstubAllGlobals(); });
+
+  it("caches successful immutable paths and validates country shards", async () => {
+    const payload = { type: "FeatureCollection", features: [] };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => payload });
+    vi.stubGlobal("fetch", fetcher);
+    const index = generatorIndexSchema.parse({ countries: { US: { bbox: [0, 0, 1, 1], path: "generators/US.geojson", featureCount: 0, checksum: "a".repeat(64), bytes: 2, capacityMw: 0 } }, totals: { featureCount: 0, capacityMw: 0 } });
+    const [first, second] = await Promise.all([loadGeneratorCountry("snapshots/id", index, "US"), loadGeneratorCountry("snapshots/id", index, "US")]);
+    expect(first.ok && first.data).toEqual(payload);
+    expect(second.ok).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("evicts rejected and aborted requests and returns a recoverable layer error", async () => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new DOMException("stale", "AbortError"))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ type: "FeatureCollection", features: [] }) });
+    vi.stubGlobal("fetch", fetcher);
+    const first = await loadGeneratorOverview("snapshots/id/generator-overview.geojson", { signal: new AbortController().signal });
+    const second = await loadGeneratorOverview("snapshots/id/generator-overview.geojson");
+    expect(first).toMatchObject({ ok: false, error: { recoverable: true, kind: "aborted" } });
+    expect(second.ok).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets one observer abort without cancelling another observer's shared request", async () => {
+    let resolveResponse!: (value: { ok: true; json: () => Promise<unknown> }) => void;
+    const fetcher = vi.fn(() => new Promise((resolve) => { resolveResponse = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const controller = new AbortController();
+    const aborted = loadGeneratorOverview("snapshots/id/generator-overview.geojson", { signal: controller.signal });
+    const successful = loadGeneratorOverview("snapshots/id/generator-overview.geojson");
+    controller.abort();
+    resolveResponse({ ok: true, json: async () => ({ type: "FeatureCollection", features: [] }) });
+    expect(await aborted).toMatchObject({ ok: false, error: { kind: "aborted" } });
+    expect((await successful).ok).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("evicts a pending layer after its only observer aborts", async () => {
+    const fetcher = vi.fn()
+      .mockImplementationOnce((_path: string, options: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new DOMException("stale", "AbortError")), { once: true });
+      }))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ type: "FeatureCollection", features: [] }) });
+    vi.stubGlobal("fetch", fetcher);
+    const controller = new AbortController();
+    const stale = loadGeneratorOverview("snapshots/id/generator-overview.geojson", { signal: controller.signal });
+    controller.abort();
+    expect(await stale).toMatchObject({ ok: false, error: { kind: "aborted" } });
+    expect((await loadGeneratorOverview("snapshots/id/generator-overview.geojson")).ok).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("validates every lazy ADM1, energy, overview, and index response", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ malformed: true }) });
+    vi.stubGlobal("fetch", fetcher);
+    const results = await Promise.all([
+      loadAdmin1("snapshots/id/admin1.geojson"),
+      loadRegionalEnergy("snapshots/id/regional-energy.json"),
+      loadGeneratorOverview("snapshots/id/generator-overview.geojson"),
+      loadGeneratorIndex("snapshots/id/generators/index.json"),
+    ]);
+    expect(results.every((result) => !result.ok && result.error.kind === "invalid")).toBe(true);
   });
 });
 

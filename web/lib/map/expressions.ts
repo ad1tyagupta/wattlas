@@ -21,6 +21,12 @@ const ramps: Record<LensKey, Array<[number, string]>> = {
     [65, "#A85E51"],
     [80, "#D66F5F"],
   ],
+  powerBalance: [
+    [0, "#9E4E45"],
+    [45, "#A4864E"],
+    [65, "#4D8879"],
+    [80, "#72D9BD"],
+  ],
 };
 
 export function scoreColor(score: number | null, lens: LensKey): string {

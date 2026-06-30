@@ -1,11 +1,18 @@
 export type LensKey =
   | "infrastructureDemand"
   | "siteAttractiveness"
-  | "systemRisk";
+  | "systemRisk"
+  | "powerBalance";
 
-export type LensScores = Record<LensKey, number | null>;
+export type LensScores = {
+  infrastructureDemand: number | null;
+  siteAttractiveness: number | null;
+  systemRisk: number | null;
+  powerBalance?: number | null;
+};
 
 export type InfrastructureCategory = "combined" | "data_centre" | "water_infrastructure";
+export type GenerationTechnology = "solar" | "wind" | "hydro" | "nuclear" | "gas" | "coal" | "oil" | "biomass" | "geothermal" | "other";
 export type GeographyLevel = "country" | "admin_1" | "admin_2";
 export type DemandRange = { low: number; central: number; high: number };
 
@@ -36,6 +43,13 @@ export type RegionProperties = {
   contributionsByYear: Record<string, ScoreContribution[]>;
   sourceIds: string[];
   population?: number | null;
+  populationYear?: number;
+  populationSourceYear?: number | null;
+  populationValueKind?: RegionProperties["valueKind"];
+  populationConfidence?: number;
+  powerBalanceYear?: number;
+  powerBalanceCoverage?: number | null;
+  powerBalanceValueKind?: RegionProperties["valueKind"];
   clusterId?: string | null;
 };
 
@@ -130,7 +144,10 @@ export type SnapshotManifest = {
   generatedAt: string;
   modelVersion: string;
   activeYears: number[];
-  artifacts: { countries: string; admin1: string; regions: string; assets: string; evidence: string };
+  artifacts: {
+    countries: string; admin1: string; regions: string; assets: string; evidence: string;
+    regionalEnergy?: string; generatorOverview?: string; generatorIndex?: string;
+  };
   coverage: {
     countries: number;
     regions: number;
@@ -139,10 +156,54 @@ export type SnapshotManifest = {
     assets: number;
     dataCentres: number;
     waterInfrastructure: number;
+    powerSourceRecords?: number;
+    canonicalPowerPlants?: number;
+    publishedPowerPlants?: number;
+    generatorRegions?: number;
+    regionalEnergyRegions?: number;
   };
   boundaryDisclaimer: string | null;
   connectors: ConnectorStatus[];
 };
+
+export type MetricRange = { low: number; central: number; high: number };
+export type RegionalEnergyForecast = {
+  geographyId?: string; year: number;
+  metrics: {
+    demandGwh: MetricRange; localGenerationGwh: MetricRange | null;
+    localGenerationGapGwh: MetricRange | null; netBalanceGwh: MetricRange | null;
+    observedUnmetDemandGwh: number | null; installedCapacityMw: number | null;
+    dependableCapacityMw: MetricRange | null; peakDemandMw: MetricRange;
+  };
+  powerBalance?: { score: number | null; coverage: number; status: "rankable" | "not_yet_rankable"; contributions: Array<Omit<ScoreContribution, "points"> & { points: number | null }> };
+  methodId: string; sourceIds: string[]; confidence: number; coverage: number;
+  valueKind: RegionProperties["valueKind"]; appliedIncrementIds: string[];
+  metricLineage: Record<string, { sourceIds: string[]; methodId: string; valueKind: RegionProperties["valueKind"]; [key: string]: unknown }>;
+};
+export type RegionalEnergyData = Record<string, RegionalEnergyForecast[]>;
+
+export type GeneratorProperties = {
+  id: string; category: "power_generation"; country: string; geographyId: string;
+  lifecycle?: string; technologies: GenerationTechnology[]; capacityMw: number;
+  operatingCapacityMw: number; plannedCapacityMw: number;
+  technologyMixMw: Partial<Record<GenerationTechnology, number>>; sourceIds: string[];
+  commissioningYear?: number | null; retirementYear?: number | null; targetYear?: number | null;
+  [key: string]: unknown;
+};
+export type GeneratorFeature = GeoJSON.Feature<GeoJSON.Point, GeneratorProperties> & { id: string };
+export type GeneratorCollection = GeoJSON.FeatureCollection<GeoJSON.Point, GeneratorProperties>;
+export type GeneratorOverviewCollection = GeoJSON.FeatureCollection<GeoJSON.Point, {
+  geographyId: string; country: string; count: number; capacityMw: number;
+  operatingCapacityMw: number; plannedCapacityMw: number;
+  technologyMixMw: Partial<Record<GenerationTechnology, number>>; dominantTechnology: GenerationTechnology;
+}>;
+export type GeneratorIndex = {
+  countries: Record<string, { bbox: [number, number, number, number]; path: string; featureCount: number; checksum: string; bytes: number; capacityMw: number }>;
+  totals: { featureCount: number; capacityMw: number };
+};
+
+export type LayerError = { kind: "aborted" | "network" | "http" | "invalid" | "missing"; message: string; recoverable: true; path: string };
+export type LayerResult<T> = { ok: true; data: T } | { ok: false; error: LayerError };
 
 export type EvidenceSource = {
   id: string;

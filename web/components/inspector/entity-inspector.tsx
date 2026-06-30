@@ -5,6 +5,7 @@ const lensLabels: Record<LensKey, string> = {
   infrastructureDemand: "Infrastructure Demand",
   siteAttractiveness: "Site Attractiveness",
   systemRisk: "System Risk",
+  powerBalance: "Power Balance",
 };
 
 type Props = {

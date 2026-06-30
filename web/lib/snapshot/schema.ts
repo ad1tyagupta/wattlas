@@ -27,7 +27,11 @@ export const lifecycleStateSchema = z.enum([
 ]);
 
 export const geographyLevelSchema = z.enum(["country", "admin_1", "admin_2"]);
-export const assetCategorySchema = z.enum(["data_centre", "water_infrastructure"]);
+export const assetCategorySchema = z.enum(["data_centre", "water_infrastructure", "power_generation"]);
+export const generationTechnologySchema = z.enum([
+  "solar", "wind", "hydro", "nuclear", "gas", "coal", "oil",
+  "biomass", "geothermal", "other",
+]);
 export const assetSubtypeSchema = z.enum([
   "hyperscale", "colocation", "cloud", "ai_hpc", "other_data_centre",
   "desalination", "wastewater", "water_reuse", "pipeline_pumping", "reservoir",
@@ -56,6 +60,7 @@ export const lensScoresSchema = z.object({
   infrastructureDemand: scoreSchema,
   siteAttractiveness: scoreSchema,
   systemRisk: scoreSchema,
+  powerBalance: scoreSchema.default(null),
 });
 
 export const categoryScoresSchema = z.object({
@@ -98,6 +103,9 @@ export const manifestSchema = z.object({
     regions: z.string(),
     assets: z.string(),
     evidence: z.string(),
+    regionalEnergy: z.string().optional(),
+    generatorOverview: z.string().optional(),
+    generatorIndex: z.string().optional(),
   }),
   coverage: z.object({
     countries: z.number().int().nonnegative(),
@@ -107,6 +115,11 @@ export const manifestSchema = z.object({
     assets: z.number().int().nonnegative(),
     dataCentres: z.number().int().nonnegative(),
     waterInfrastructure: z.number().int().nonnegative(),
+    powerSourceRecords: z.number().int().nonnegative().optional(),
+    canonicalPowerPlants: z.number().int().nonnegative().optional(),
+    publishedPowerPlants: z.number().int().nonnegative().optional(),
+    generatorRegions: z.number().int().nonnegative().optional(),
+    regionalEnergyRegions: z.number().int().nonnegative().optional(),
   }),
   boundaryDisclaimer: z.string().nullable(),
   connectors: z.array(connectorStatusSchema),
@@ -127,6 +140,13 @@ export const regionPropertiesSchema = z.object({
   contributionsByYear: z.record(z.string(), z.array(scoreContributionSchema)),
   sourceIds: z.array(z.string()),
   population: z.number().int().nonnegative().nullable().optional(),
+  populationYear: z.number().int().min(2026).max(2031).optional(),
+  populationSourceYear: z.number().int().min(1900).max(2031).nullable().optional(),
+  populationValueKind: valueKindSchema.optional(),
+  populationConfidence: z.number().min(0).max(100).optional(),
+  powerBalanceYear: z.number().int().min(2026).max(2031).optional(),
+  powerBalanceCoverage: z.number().min(0).max(100).nullable().optional(),
+  powerBalanceValueKind: valueKindSchema.optional(),
 });
 
 export const geographyPropertiesSchema = z.object({
@@ -264,6 +284,138 @@ export const evidenceSchema = z.object({
     valueKind: valueKindSchema,
     observedAt: z.string().datetime(),
   })),
+});
+
+export const metricRangeSchema = z.object({
+  low: z.number(), central: z.number(), high: z.number(),
+}).refine(({ low, central, high }) => low <= central && central <= high, {
+  message: "Metric range must satisfy low <= central <= high",
+});
+
+const nonnegativeMetricRangeSchema = metricRangeSchema.refine(({ low }) => low >= 0, {
+  message: "Physical metric ranges cannot be negative",
+});
+
+export const powerBalanceMetricsSchema = z.object({
+  demandGwh: nonnegativeMetricRangeSchema,
+  localGenerationGwh: nonnegativeMetricRangeSchema.nullable(),
+  localGenerationGapGwh: metricRangeSchema.nullable(),
+  netBalanceGwh: metricRangeSchema.nullable(),
+  observedUnmetDemandGwh: z.number().nonnegative().nullable(),
+  installedCapacityMw: z.number().nonnegative().nullable(),
+  dependableCapacityMw: nonnegativeMetricRangeSchema.nullable(),
+  peakDemandMw: nonnegativeMetricRangeSchema,
+}).refine((value) => (value.localGenerationGwh === null) === (value.localGenerationGapGwh === null), {
+  message: "Local generation and local gap must be available together",
+});
+
+const powerBalanceContributionSchema = z.object({
+  id: z.string().min(1), label: z.string().min(1), rawValue: z.number().nullable(),
+  unit: z.string().nullable(), points: z.number().min(0).max(100).nullable(),
+  maxPoints: z.number().positive().max(100), valueKind: valueKindSchema,
+  sourceIds: z.array(z.string().min(1)), normalization: z.string().min(1),
+});
+
+export const regionalEnergyForecastSchema = z.object({
+  geographyId: z.string().min(1).optional(),
+  year: z.number().int().min(2026).max(2031),
+  metrics: powerBalanceMetricsSchema,
+  powerBalance: z.object({
+    score: scoreSchema, coverage: z.number().min(0).max(100),
+    status: z.enum(["rankable", "not_yet_rankable"]),
+    contributions: z.array(powerBalanceContributionSchema).default([]),
+  }).optional(),
+  methodId: z.string().min(1), sourceIds: z.array(z.string().min(1)).min(1),
+  confidence: z.number().min(0).max(100), coverage: z.number().min(0).max(100),
+  valueKind: valueKindSchema, appliedIncrementIds: z.array(z.string()).default([]),
+  metricLineage: z.record(z.string(), z.object({
+    sourceIds: z.array(z.string().min(1)).min(1), methodId: z.string().min(1),
+    valueKind: valueKindSchema,
+  }).passthrough()).default({}),
+});
+
+export const regionalEnergySchema = z.record(
+  z.string().min(1),
+  z.array(regionalEnergyForecastSchema).refine(
+    (rows) => rows.length === 6 && rows.every((row, index) => row.year === 2026 + index),
+    { message: "Regional energy requires ordered 2026-2031 records" },
+  ),
+).superRefine((regions, context) => {
+  for (const [geographyId, rows] of Object.entries(regions)) {
+    if (rows.some((row) => row.geographyId !== undefined && row.geographyId !== geographyId)) {
+      context.addIssue({ code: "custom", message: "Regional energy geography ID does not match its key", path: [geographyId] });
+    }
+  }
+});
+
+const generatorYearSchema = z.number().int().min(1800).max(2200).nullable();
+const technologyMixSchema = z.partialRecord(generationTechnologySchema, z.number().nonnegative());
+const capacitiesMatch = (left: number, right: number) => Math.abs(left - right) <= Math.max(1e-6, Math.abs(left) * 1e-12);
+export const generatorPropertiesSchema = z.object({
+  id: z.string().min(1), category: z.literal("power_generation").default("power_generation"),
+  country: z.string().length(2), geographyId: z.string().min(1),
+  lifecycle: z.enum(["announced", "planning_filed", "permitted", "under_construction", "operational", "paused", "cancelled", "retired", "decommissioned", "shelved"]).optional(),
+  technologies: z.array(generationTechnologySchema).min(1),
+  capacityMw: z.number().nonnegative(), operatingCapacityMw: z.number().nonnegative(),
+  plannedCapacityMw: z.number().nonnegative(), technologyMixMw: technologyMixSchema,
+  commissioningYear: generatorYearSchema.optional(), retirementYear: generatorYearSchema.optional(),
+  targetYear: generatorYearSchema.optional(), sourceIds: z.array(z.string().min(1)).min(1),
+}).passthrough().refine((value) => capacitiesMatch(value.capacityMw, value.operatingCapacityMw + value.plannedCapacityMw), {
+  message: "Generator capacity must reconcile",
+}).refine((value) => capacitiesMatch(value.capacityMw, Object.values(value.technologyMixMw).reduce((a, b) => a + b, 0)), {
+  message: "Generator technology mix must reconcile",
+}).refine((value) => value.commissioningYear == null || value.retirementYear == null || value.commissioningYear <= value.retirementYear, {
+  message: "Generator retirement cannot precede commissioning",
+});
+
+const pointGeometrySchema = z.object({
+  type: z.literal("Point"),
+  coordinates: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]),
+});
+export const generatorCountryShardSchema = z.object({
+  type: z.literal("FeatureCollection"),
+  features: z.array(z.object({ type: z.literal("Feature"), id: z.string().min(1), geometry: pointGeometrySchema, properties: generatorPropertiesSchema })
+    .refine((feature) => feature.id === feature.properties.id, { message: "Generator feature and property IDs must match" })),
+});
+
+export const generatorOverviewSchema = z.object({
+  type: z.literal("FeatureCollection"),
+  features: z.array(z.object({
+    type: z.literal("Feature"), id: z.string().min(1), geometry: pointGeometrySchema,
+    properties: z.object({
+      geographyId: z.string().min(1), country: z.string().length(2), count: z.number().int().nonnegative(),
+      capacityMw: z.number().nonnegative(), operatingCapacityMw: z.number().nonnegative(),
+      plannedCapacityMw: z.number().nonnegative(), technologyMixMw: technologyMixSchema,
+      dominantTechnology: generationTechnologySchema,
+    }).refine((value) => capacitiesMatch(value.capacityMw, value.operatingCapacityMw + value.plannedCapacityMw))
+      .refine((value) => capacitiesMatch(value.capacityMw, Object.values(value.technologyMixMw).reduce((a, b) => a + b, 0))),
+  }).refine((feature) => feature.id === feature.properties.geographyId, { message: "Generator overview ID must match its ADM1" })),
+});
+
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+export const generatorIndexSchema = z.object({
+  countries: z.record(z.string().length(2), z.object({
+    bbox: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]),
+    path: z.string().regex(/^generators\/[A-Z]{2}\.geojson$/), featureCount: z.number().int().nonnegative(),
+    checksum: sha256Schema, bytes: z.number().int().positive(), capacityMw: z.number().nonnegative(),
+  })),
+  totals: z.object({ featureCount: z.number().int().nonnegative(), capacityMw: z.number().nonnegative() }),
+}).superRefine((index, context) => {
+  let featureCount = 0;
+  let capacityMw = 0;
+  for (const [country, entry] of Object.entries(index.countries)) {
+    if (entry.path !== `generators/${country}.geojson`) {
+      context.addIssue({ code: "custom", message: "Generator shard path must match its country", path: ["countries", country, "path"] });
+    }
+    if (entry.bbox[1] > entry.bbox[3]) {
+      context.addIssue({ code: "custom", message: "Generator shard latitude bounds are reversed", path: ["countries", country, "bbox"] });
+    }
+    featureCount += entry.featureCount;
+    capacityMw += entry.capacityMw;
+  }
+  if (featureCount !== index.totals.featureCount || !capacitiesMatch(capacityMw, index.totals.capacityMw)) {
+    context.addIssue({ code: "custom", message: "Generator index totals must reconcile", path: ["totals"] });
+  }
 });
 
 export type ConnectorState = z.infer<typeof connectorStateSchema>;

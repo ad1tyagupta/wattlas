@@ -281,7 +281,13 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
     }
   }, [selectedId]);
 
-  const label = lens === "infrastructureDemand" ? "Infrastructure Demand" : lens === "siteAttractiveness" ? "Site Attractiveness" : "System Risk";
+  const label = lens === "infrastructureDemand"
+    ? "Infrastructure Demand"
+    : lens === "siteAttractiveness"
+      ? "Site Attractiveness"
+      : lens === "systemRisk"
+        ? "System Risk"
+        : "Power Balance";
   return (
     <section className="map-panel" aria-label="Global opportunity map" data-admin1-count={admin1.features.length}>
       <div className="map-meta">
