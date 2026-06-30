@@ -101,11 +101,12 @@ describe("GlobalMap", () => {
     expect(clusterPaint).toContain("solar");
     expect(clusterPaint).toContain("wind");
     expect(JSON.stringify(mapCalls.layers.find((layer) => layer.id === "generator-cluster-count")?.layout)).toContain("composition");
-    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-composition")).toMatchObject({ type: "symbol", source: "generator-overview" });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-composition")).toMatchObject({ type: "symbol", source: "generator-overview", layout: { "text-field": ["get", "overviewLabel"] } });
     expect(mapCalls.layers.find((layer) => layer.id === "generator-assets")).toMatchObject({ type: "symbol", layout: { "text-field": "■" } });
     expect(mapCalls.layers.find((layer) => layer.id === "water-assets")).toMatchObject({ type: "symbol", layout: { "text-field": "◆" } });
     expect(mapCalls.layers.find((layer) => layer.id === "data-centre-assets")).toMatchObject({ type: "circle" });
     expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "generator-assets")).toBe(true);
+    expect(screen.getAllByLabelText("Generator cluster composition").at(-1)).toHaveTextContent(/partial lifecycle matches retain unfiltered capacity and technology mix/i);
   });
 
   it("renders global ADM1 before the deeper Europe NUTS-2 layer", () => {

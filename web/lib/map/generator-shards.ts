@@ -42,6 +42,11 @@ export function filterGeneratorOverview(data: GeneratorOverviewCollection, techn
       const isMixed = mix.length > 1;
       const compositionLabel = mix.map(([technology, capacity]) => `${technologyLabel(technology)} ${Math.round(capacity / filteredCapacityMw * 100)}%`).join(" · ");
       const lifecycleFilterExact = lifecycleCounts !== undefined && selectedLifecycleCount === feature.properties.count;
+      const filterDisclosure = lifecycleFilterExact
+        ? "Technology and lifecycle filters applied at aggregate resolution"
+        : lifecycleCounts === undefined
+          ? "Lifecycle counts unavailable at world zoom; capacity and technology mix remain unfiltered"
+          : "Partial lifecycle filter is approximate at world zoom; capacity and technology mix remain unfiltered";
       return [{
         ...feature,
         properties: {
@@ -52,8 +57,9 @@ export function filterGeneratorOverview(data: GeneratorOverviewCollection, techn
           isMixed,
           filteredCapacityMw,
           compositionLabel,
+          overviewLabel: lifecycleFilterExact ? compositionLabel : `${compositionLabel} · lifecycle approximate`,
           lifecycleFilterExact,
-          filterDisclosure: lifecycleFilterExact ? "Technology and lifecycle filters applied at aggregate resolution" : "Lifecycle detail unavailable at world zoom",
+          filterDisclosure,
         },
       }];
     }),

@@ -52,8 +52,21 @@ describe("generator semantics", () => {
   it("retains lifecycle aggregates without counts and labels the filter as inexact", () => {
     const overview = overviewCollection({ solar: 100 });
     const filtered = filterGeneratorOverview(overview, new Set(["solar"]), new Set(["operational"]));
-    expect(filtered.features[0].properties).toMatchObject({ lifecycleFilterExact: false, filterDisclosure: "Lifecycle detail unavailable at world zoom" });
+    expect(filtered.features[0].properties).toMatchObject({ lifecycleFilterExact: false, filterDisclosure: "Lifecycle counts unavailable at world zoom; capacity and technology mix remain unfiltered", overviewLabel: "Solar 100% · lifecycle approximate" });
     expect(filterGeneratorOverview(overview, new Set(["solar"]), new Set()).features).toHaveLength(0);
+  });
+
+  it("retains unfiltered world mix for a partial lifecycle match and discloses approximation", () => {
+    const overview = overviewCollection({ solar: 60, wind: 40 }, { operational: 1, retired: 1 });
+    const filtered = filterGeneratorOverview(overview, new Set(["solar", "wind"]), new Set(["operational"]));
+    expect(filtered.features).toHaveLength(1);
+    expect(filtered.features[0].properties).toMatchObject({
+      lifecycleFilterExact: false,
+      filteredCapacityMw: 100,
+      technologyMixMw: { solar: 60, wind: 40 },
+      filterDisclosure: "Partial lifecycle filter is approximate at world zoom; capacity and technology mix remain unfiltered",
+      overviewLabel: "Solar 60% · Wind 40% · lifecycle approximate",
+    });
   });
 
   it("fetches each immutable shard once, combines visible cached shards, and drops only rendered data", async () => {
