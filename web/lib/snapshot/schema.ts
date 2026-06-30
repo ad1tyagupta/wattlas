@@ -70,15 +70,27 @@ export const categoryScoresSchema = z.object({
 });
 
 export const scoreContributionSchema = z.object({
-  id: z.string(),
-  label: z.string(),
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
   rawValue: z.number().nullable(),
-  unit: z.string().nullable(),
-  points: z.number().min(0).max(100),
+  unit: z.string().trim().min(1).nullable(),
+  points: z.number().min(0).max(100).nullable(),
   maxPoints: z.number().positive().max(100),
   valueKind: valueKindSchema,
-  sourceIds: z.array(z.string()),
-  normalization: z.string(),
+  sourceIds: z.array(z.string().trim().min(1)).refine((values) => new Set(values).size === values.length, "Source IDs must be unique"),
+  normalization: z.string().trim().min(1),
+  methodVersion: z.string().trim().min(1),
+}).strict().superRefine((contribution, context) => {
+  const unavailable = contribution.valueKind === "unavailable";
+  if (unavailable && (contribution.rawValue !== null || contribution.points !== null)) {
+    context.addIssue({ code: "custom", message: "Unavailable contributions require null values" });
+  }
+  if (!unavailable && (contribution.rawValue === null || contribution.points === null)) {
+    context.addIssue({ code: "custom", message: "Available contributions require values" });
+  }
+  if (contribution.points !== null && contribution.points > contribution.maxPoints) {
+    context.addIssue({ code: "custom", message: "Contribution points cannot exceed maxPoints", path: ["points"] });
+  }
 });
 
 export const connectorStatusSchema = z.object({
@@ -87,7 +99,7 @@ export const connectorStatusSchema = z.object({
   checkedAt: z.string().datetime(),
   lastSuccessAt: z.string().datetime().nullable(),
   message: z.string().nullable(),
-});
+}).strict();
 
 export const manifestSchema = z.object({
   snapshotId: z.string().min(1),
@@ -106,7 +118,7 @@ export const manifestSchema = z.object({
     regionalEnergy: z.string().optional(),
     generatorOverview: z.string().optional(),
     generatorIndex: z.string().optional(),
-  }),
+  }).strict(),
   coverage: z.object({
     countries: z.number().int().nonnegative(),
     regions: z.number().int().nonnegative(),
@@ -116,14 +128,23 @@ export const manifestSchema = z.object({
     dataCentres: z.number().int().nonnegative(),
     waterInfrastructure: z.number().int().nonnegative(),
     powerSourceRecords: z.number().int().nonnegative().optional(),
+    powerSourceRecordsBySource: z.record(z.string().min(1), z.number().int().nonnegative()).optional(),
     canonicalPowerPlants: z.number().int().nonnegative().optional(),
+    canonicalPowerUnits: z.number().int().nonnegative().optional(),
     publishedPowerPlants: z.number().int().nonnegative().optional(),
     generatorRegions: z.number().int().nonnegative().optional(),
     regionalEnergyRegions: z.number().int().nonnegative().optional(),
-  }),
+  }).strict(),
+  quality: z.object({
+    countryDemandReconciled: z.boolean(),
+    generatorArtifactsReconciled: z.boolean(),
+    populationBuildFingerprint: z.string().min(1).nullable(),
+    demandWeightsBuildFingerprint: z.string().min(1).nullable(),
+  }).strict().optional(),
   boundaryDisclaimer: z.string().nullable(),
   connectors: z.array(connectorStatusSchema),
-});
+  checksums: z.record(z.string().min(1), z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+}).strict();
 
 export const regionPropertiesSchema = z.object({
   id: z.string(),
@@ -349,14 +370,11 @@ export const powerBalanceMetricsSchema = z.object({
   peakDemandMw: nonnegativeMetricRangeSchema,
 }).refine((value) => (value.localGenerationGwh === null) === (value.localGenerationGapGwh === null), {
   message: "Local generation and local gap must be available together",
+}).refine((value) => value.netBalanceGwh === null || value.localGenerationGwh !== null, {
+  message: "Net balance requires available local generation and local gap",
 });
 
-const powerBalanceContributionSchema = z.object({
-  id: z.string().min(1), label: z.string().min(1), rawValue: z.number().nullable(),
-  unit: z.string().nullable(), points: z.number().min(0).max(100).nullable(),
-  maxPoints: z.number().positive().max(100), valueKind: valueKindSchema,
-  sourceIds: z.array(z.string().min(1)), normalization: z.string().min(1),
-});
+const powerBalanceContributionSchema = scoreContributionSchema;
 
 export const regionalEnergyForecastSchema = z.object({
   geographyId: z.string().min(1).optional(),
@@ -440,9 +458,9 @@ export const generatorIndexSchema = z.object({
     bbox: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]),
     path: z.string().regex(/^generators\/[A-Z]{2}\.geojson$/), featureCount: z.number().int().nonnegative(),
     checksum: sha256Schema, bytes: z.number().int().positive(), capacityMw: z.number().nonnegative(),
-  })),
-  totals: z.object({ featureCount: z.number().int().nonnegative(), capacityMw: z.number().nonnegative() }),
-}).superRefine((index, context) => {
+  }).strict()),
+  totals: z.object({ featureCount: z.number().int().nonnegative(), capacityMw: z.number().nonnegative() }).strict(),
+}).strict().superRefine((index, context) => {
   let featureCount = 0;
   let capacityMw = 0;
   for (const [country, entry] of Object.entries(index.countries)) {

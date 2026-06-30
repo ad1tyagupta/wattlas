@@ -129,8 +129,8 @@ export function EntityInspector({ geography, asset, lens, year, onOpenEvidence, 
         {contributions.length ? contributions.map((item) => (
           <button className="driver-row" key={item.id} type="button" onClick={onOpenEvidence}>
             <span>{item.label}<small>{item.rawValue} {item.unit}</small></span>
-            <span className="driver-bar"><i style={{ width: `${(item.points / item.maxPoints) * 100}%` }} /></span>
-            <strong>{item.points}<small>/{item.maxPoints}</small></strong>
+            <span className="driver-bar"><i style={{ width: `${((item.points ?? 0) / item.maxPoints) * 100}%` }} /></span>
+            <strong>{item.points ?? "—"}<small>/{item.maxPoints}</small></strong>
           </button>
         )) : <p className="empty-evidence">Public evidence does not yet support a defensible score for this region.</p>}
       </section>

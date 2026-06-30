@@ -21,11 +21,12 @@ export type ScoreContribution = {
   label: string;
   rawValue: number | null;
   unit: string | null;
-  points: number;
+  points: number | null;
   maxPoints: number;
   valueKind: "observed" | "reported" | "estimated" | "inherited" | "unavailable";
   sourceIds: string[];
   normalization: string;
+  methodVersion: string;
 };
 
 export type RegionProperties = {
@@ -166,13 +167,22 @@ export type SnapshotManifest = {
     dataCentres: number;
     waterInfrastructure: number;
     powerSourceRecords?: number;
+    powerSourceRecordsBySource?: Record<string, number>;
     canonicalPowerPlants?: number;
+    canonicalPowerUnits?: number;
     publishedPowerPlants?: number;
     generatorRegions?: number;
     regionalEnergyRegions?: number;
   };
+  quality?: {
+    countryDemandReconciled: boolean;
+    generatorArtifactsReconciled: boolean;
+    populationBuildFingerprint: string | null;
+    demandWeightsBuildFingerprint: string | null;
+  };
   boundaryDisclaimer: string | null;
   connectors: ConnectorStatus[];
+  checksums?: Record<string, string>;
 };
 
 export type MetricRange = { low: number; central: number; high: number };
@@ -184,7 +194,7 @@ export type RegionalEnergyForecast = {
     observedUnmetDemandGwh: number | null; installedCapacityMw: number | null;
     dependableCapacityMw: MetricRange | null; peakDemandMw: MetricRange;
   };
-  powerBalance?: { score: number | null; coverage: number; status: "rankable" | "not_yet_rankable"; contributions: Array<Omit<ScoreContribution, "points"> & { points: number | null }> };
+  powerBalance?: { score: number | null; coverage: number; status: "rankable" | "not_yet_rankable"; contributions: ScoreContribution[] };
   methodId: string; sourceIds: string[]; confidence: number; coverage: number;
   valueKind: RegionProperties["valueKind"]; appliedIncrementIds: string[];
   metricLineage: Record<string, { sourceIds: string[]; methodId: string; valueKind: RegionProperties["valueKind"]; [key: string]: unknown }>;
