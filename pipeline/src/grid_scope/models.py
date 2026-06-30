@@ -199,7 +199,7 @@ class ScoreContribution(ContractModel):
     label: str = Field(min_length=1)
     raw_value: float | None = Field(allow_inf_nan=False)
     unit: str | None = Field(default=None, min_length=1)
-    points: float = Field(ge=0, le=100, allow_inf_nan=False)
+    points: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
     max_points: float = Field(gt=0, le=100, allow_inf_nan=False)
     value_kind: ValueKind
     source_ids: list[str] = Field(default_factory=list)
@@ -217,7 +217,12 @@ class ScoreContribution(ContractModel):
             raise ValueError("score contribution source IDs must be nonblank")
         if len(self.source_ids) != len(set(self.source_ids)):
             raise ValueError("score contribution source IDs must be unique")
-        if self.points > self.max_points:
+        if self.value_kind == ValueKind.UNAVAILABLE:
+            if self.raw_value is not None or self.points is not None:
+                raise ValueError("unavailable score contribution requires null raw value and points")
+        elif self.raw_value is None or self.points is None:
+            raise ValueError("available score contribution requires raw value and points")
+        if self.points is not None and self.points > self.max_points:
             raise ValueError("score contribution points cannot exceed maximum points")
         return self
 

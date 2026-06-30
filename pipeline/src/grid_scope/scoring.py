@@ -154,7 +154,7 @@ def score_power_balance(
                     label=driver.label,
                     raw_value=None,
                     unit="index",
-                    points=0,
+                    points=None,
                     max_points=driver.weight,
                     value_kind=ValueKind.UNAVAILABLE,
                     source_ids=[],

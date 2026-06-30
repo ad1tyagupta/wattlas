@@ -2,7 +2,9 @@ import math
 
 import pytest
 
-from grid_scope.models import LensScores
+from pydantic import ValidationError
+
+from grid_scope.models import LensScores, ScoreContribution
 from grid_scope.scoring import (
     combine_asset_demand,
     lifecycle_timing_index,
@@ -112,8 +114,9 @@ def test_power_balance_missing_component_is_not_zero_and_exposes_denominator() -
     assert unavailable.raw_value is None
     assert unavailable.value_kind == "unavailable"
     assert unavailable.source_ids == []
-    assert unavailable.points == 0
+    assert unavailable.points is None
     assert unavailable.max_points == 15
+    assert unavailable.model_dump(by_alias=True)["points"] is None
 
 
 def test_power_balance_withholds_score_below_sixty_weighted_points() -> None:
@@ -178,4 +181,35 @@ def test_observed_unmet_demand_cannot_be_labelled_as_estimated() -> None:
             observed_unmet_demand_index=40,
             source_ids=["official-load-shedding"],
             value_kinds={"observed_unmet_demand": "estimated"},
+        )
+
+
+def test_contribution_rejects_zero_points_for_unavailable_evidence() -> None:
+    with pytest.raises(ValidationError, match="unavailable score contribution"):
+        ScoreContribution(
+            id="missing",
+            label="Missing",
+            raw_value=None,
+            unit="index",
+            points=0,
+            max_points=10,
+            value_kind="unavailable",
+            normalization="Unavailable",
+            method_version="test-1",
+        )
+
+
+def test_contribution_rejects_null_points_for_available_evidence() -> None:
+    with pytest.raises(ValidationError, match="available score contribution"):
+        ScoreContribution(
+            id="available",
+            label="Available",
+            raw_value=50,
+            unit="index",
+            points=None,
+            max_points=10,
+            value_kind="estimated",
+            source_ids=["source-a"],
+            normalization="Fixed threshold",
+            method_version="test-1",
         )
