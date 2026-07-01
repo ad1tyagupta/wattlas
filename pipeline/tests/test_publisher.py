@@ -13,7 +13,7 @@ def global_artifacts() -> dict[str, bytes]:
         "admin1.geojson": b'{"type":"FeatureCollection","features":[]}',
         "regions.geojson": b'{"type":"FeatureCollection","features":[]}',
         "assets.geojson": b'{"type":"FeatureCollection","features":[]}',
-        "regional-energy.json": b'{}',
+        "regional-energy.json": b'{"schemaVersion":"regional-energy-v2","contributionDefinitions":{},"regions":{}}',
         "generator-overview.geojson": b'{"type":"FeatureCollection","features":[]}',
         "generators/index.json": b'{"countries":{},"totals":{"featureCount":0,"capacityMw":0}}',
         "evidence.json": b'{"sources":[],"claims":[]}',

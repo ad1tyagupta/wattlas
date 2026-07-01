@@ -98,6 +98,7 @@ export const connectorStatusSchema = z.object({
   state: connectorStateSchema,
   checkedAt: z.string().datetime(),
   lastSuccessAt: z.string().datetime().nullable(),
+  observationDate: z.string().date().nullable().optional(),
   message: z.string().nullable(),
 }).strict();
 
@@ -426,7 +427,7 @@ export const regionalEnergyForecastSchema = z.union([
   countryLevelOnlyEnergyForecastSchema,
 ]);
 
-export const regionalEnergySchema = z.record(
+const regionalEnergyCollectionSchema = z.record(
   z.string().min(1),
   z.array(regionalEnergyForecastSchema).refine(
     (rows) => rows.length === 6 && rows.every((row, index) => row.year === 2026 + index),
@@ -439,6 +440,71 @@ export const regionalEnergySchema = z.record(
     }
   }
 });
+
+const contributionDefinitionSchema = z.object({
+  id: z.string().min(1), label: z.string().min(1), maxPoints: z.number().nonnegative(),
+  methodVersion: z.string().min(1), normalization: z.string().min(1), unit: z.string().min(1),
+}).strict();
+const dynamicContributionSchema = z.object({
+  id: z.string().min(1), rawValue: z.number().finite().nullable(),
+  points: z.number().nonnegative().nullable(), valueKind: valueKindSchema,
+  sourceIds: z.array(z.string().min(1)),
+}).strict();
+const compactRankableForecastSchema = rankableRegionalEnergyForecastSchema.extend({
+  geographyId: z.undefined().optional(),
+  powerBalance: z.object({
+    score: scoreSchema, coverage: z.number().min(0).max(100),
+    status: z.enum(["rankable", "not_yet_rankable"]),
+    contributions: z.array(dynamicContributionSchema).default([]),
+  }).optional(),
+});
+const compactCountryLevelOnlySchema = countryLevelOnlyEnergyForecastSchema.extend({
+  geographyId: z.undefined().optional(),
+});
+const compactRegionalEnergyEnvelopeSchema = z.object({
+  schemaVersion: z.literal("regional-energy-v2"),
+  contributionDefinitions: z.record(z.string().min(1), contributionDefinitionSchema),
+  regions: z.record(z.string().min(1), z.array(z.union([
+    compactRankableForecastSchema, compactCountryLevelOnlySchema,
+  ])).refine(
+    (rows) => rows.length === 6 && rows.every((row, index) => row.year === 2026 + index),
+    { message: "Regional energy requires ordered 2026-2031 records" },
+  )),
+}).strict().superRefine((envelope, context) => {
+  const used = new Set<string>();
+  for (const [id, definition] of Object.entries(envelope.contributionDefinitions)) {
+    if (definition.id !== id) context.addIssue({ code: "custom", message: "Contribution definition ID must match its key", path: ["contributionDefinitions", id] });
+  }
+  for (const [regionId, rows] of Object.entries(envelope.regions)) {
+    for (const row of rows) for (const contribution of row.powerBalance?.contributions ?? []) {
+      used.add(contribution.id);
+      if (!envelope.contributionDefinitions[contribution.id]) context.addIssue({ code: "custom", message: "Unknown contribution definition", path: ["regions", regionId] });
+    }
+  }
+  for (const id of Object.keys(envelope.contributionDefinitions)) {
+    if (!used.has(id)) context.addIssue({ code: "custom", message: "Unused contribution definition", path: ["contributionDefinitions", id] });
+  }
+});
+
+export const regionalEnergySchema = z.union([
+  regionalEnergyCollectionSchema,
+  compactRegionalEnergyEnvelopeSchema.transform((envelope) => {
+    const expanded = Object.fromEntries(Object.entries(envelope.regions).map(([geographyId, rows]) => [
+      geographyId,
+      rows.map((row) => ({
+        ...row,
+        geographyId,
+        powerBalance: row.powerBalance === null ? null : row.powerBalance === undefined ? undefined : {
+          ...row.powerBalance,
+          contributions: row.powerBalance.contributions.map((dynamic) => ({
+            ...envelope.contributionDefinitions[dynamic.id], ...dynamic,
+          })),
+        },
+      })),
+    ]));
+    return regionalEnergyCollectionSchema.parse(expanded);
+  }),
+]);
 
 const generatorYearSchema = z.number().int().min(1800).max(2200).nullable();
 const technologyMixSchema = z.partialRecord(generationTechnologySchema, z.number().nonnegative());

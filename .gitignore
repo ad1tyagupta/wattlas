@@ -9,6 +9,7 @@ data/raw/**
 !data/raw/.gitkeep
 data/cache/worldpop/**
 !data/cache/worldpop/.gitkeep
+data/cache/ember/**
 data/warehouse/**
 !data/warehouse/.gitkeep
 test-results/

@@ -146,6 +146,7 @@ export type ConnectorStatus = {
   state: "current" | "cached" | "stale" | "failed" | "not_configured";
   checkedAt: string;
   lastSuccessAt: string | null;
+  observationDate?: string | null;
   message: string | null;
 };
 

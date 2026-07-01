@@ -595,7 +595,7 @@ def build_global_snapshot_artifacts(
         "regions.geojson": json.dumps({"type": "FeatureCollection", "features": enriched_regions}, separators=(",", ":"), ensure_ascii=False).encode(),
         "assets.geojson": json.dumps({"type": "FeatureCollection", "features": asset_features}, separators=(",", ":"), ensure_ascii=False).encode(),
         "regional-energy.json": json.dumps(
-            energy_by_region,
+            compact_regional_energy(energy_by_region),
             separators=(",", ":"),
             ensure_ascii=False,
             sort_keys=True,
@@ -605,3 +605,112 @@ def build_global_snapshot_artifacts(
     }
     artifacts.update(generator_artifacts)
     return artifacts
+CONTRIBUTION_DEFINITION_FIELDS = (
+    "id", "label", "maxPoints", "methodVersion", "normalization", "unit",
+)
+CONTRIBUTION_DYNAMIC_FIELDS = (
+    "id", "rawValue", "points", "valueKind", "sourceIds",
+)
+
+
+def compact_regional_energy(
+    regions: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Hoist invariant score definitions while preserving every dynamic value."""
+
+    definitions: dict[str, dict[str, Any]] = {}
+    compact_regions: dict[str, list[dict[str, Any]]] = {}
+    for geography_id, rows in regions.items():
+        compact_rows: list[dict[str, Any]] = []
+        for source_row in rows:
+            row = dict(source_row)
+            if row.get("geographyId") not in {None, geography_id}:
+                raise ValueError("regional-energy geography ID does not match its key")
+            row.pop("geographyId", None)
+            balance = row.get("powerBalance")
+            if isinstance(balance, dict) and isinstance(balance.get("contributions"), list):
+                compact_contributions = []
+                for contribution in balance["contributions"]:
+                    definition = {
+                        field: contribution[field] for field in CONTRIBUTION_DEFINITION_FIELDS
+                    }
+                    contribution_id = str(definition["id"])
+                    if contribution_id in definitions and definitions[contribution_id] != definition:
+                        raise ValueError(f"conflicting contribution definition: {contribution_id}")
+                    definitions[contribution_id] = definition
+                    compact_contributions.append({
+                        field: contribution[field] for field in CONTRIBUTION_DYNAMIC_FIELDS
+                    })
+                row["powerBalance"] = {**balance, "contributions": compact_contributions}
+            compact_rows.append(row)
+        compact_regions[geography_id] = compact_rows
+    return {
+        "schemaVersion": "regional-energy-v2",
+        "contributionDefinitions": definitions,
+        "regions": compact_regions,
+    }
+
+
+def expand_regional_energy(payload: Any) -> dict[str, list[dict[str, Any]]]:
+    """Strictly reconstruct the full in-memory regional-energy contract."""
+
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != "regional-energy-v2":
+        raise ValueError("regional-energy.json requires schemaVersion regional-energy-v2")
+    if set(payload) != {"schemaVersion", "contributionDefinitions", "regions"}:
+        raise ValueError("regional-energy.json v2 has unexpected fields")
+    definitions = payload.get("contributionDefinitions")
+    regions = payload.get("regions")
+    if not isinstance(definitions, dict) or not isinstance(regions, dict):
+        raise ValueError("regional-energy.json v2 requires definitions and regions")
+    for contribution_id, definition in definitions.items():
+        if (
+            not isinstance(contribution_id, str) or not contribution_id
+            or not isinstance(definition, dict)
+            or set(definition) != set(CONTRIBUTION_DEFINITION_FIELDS)
+            or definition.get("id") != contribution_id
+        ):
+            raise ValueError("invalid regional-energy contribution definition")
+        if (
+            any(not isinstance(definition[field], str) or not definition[field]
+                for field in ("id", "label", "methodVersion", "normalization", "unit"))
+            or isinstance(definition["maxPoints"], bool)
+            or not isinstance(definition["maxPoints"], (int, float))
+            or definition["maxPoints"] < 0
+        ):
+            raise ValueError("invalid regional-energy contribution definition values")
+    expanded: dict[str, list[dict[str, Any]]] = {}
+    for geography_id, source_rows in regions.items():
+        if not isinstance(source_rows, list):
+            raise ValueError("regional-energy region rows must be an array")
+        rows: list[dict[str, Any]] = []
+        for source_row in source_rows:
+            if not isinstance(source_row, dict):
+                raise ValueError("regional-energy row must be an object")
+            row = dict(source_row)
+            row["geographyId"] = geography_id
+            balance = row.get("powerBalance")
+            if isinstance(balance, dict) and isinstance(balance.get("contributions"), list):
+                contributions = []
+                seen_ids: set[str] = set()
+                for dynamic in balance["contributions"]:
+                    if not isinstance(dynamic, dict) or set(dynamic) != set(CONTRIBUTION_DYNAMIC_FIELDS):
+                        raise ValueError("invalid dynamic score contribution")
+                    contribution_id = dynamic.get("id")
+                    if contribution_id in seen_ids:
+                        raise ValueError(f"duplicate score contribution: {contribution_id}")
+                    seen_ids.add(contribution_id)
+                    definition = definitions.get(contribution_id)
+                    if definition is None:
+                        raise ValueError(f"unknown contribution definition: {contribution_id}")
+                    contributions.append({**definition, **dynamic})
+                row["powerBalance"] = {**balance, "contributions": contributions}
+            rows.append(row)
+        expanded[geography_id] = rows
+    used = {
+        contribution["id"]
+        for rows in expanded.values() for row in rows
+        for contribution in ((row.get("powerBalance") or {}).get("contributions") or [])
+    }
+    if used != set(definitions):
+        raise ValueError("regional-energy contribution definitions must be complete and used")
+    return expanded

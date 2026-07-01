@@ -13,6 +13,7 @@ from grid_scope.generator_artifacts import (
     generator_longitude_centroid,
     generator_point_bbox,
 )
+from grid_scope.snapshot_builder import expand_regional_energy
 
 SNAPSHOT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -203,9 +204,7 @@ class SnapshotPublisher:
             if (feature.get("properties") or {}).get("category") == "power_generation":
                 raise ValueError("power generators must be published only in country shards")
 
-        regional_energy = json.loads(artifacts["regional-energy.json"])
-        if not isinstance(regional_energy, dict):
-            raise ValueError("regional-energy.json must be keyed by geography ID")
+        regional_energy = expand_regional_energy(json.loads(artifacts["regional-energy.json"]))
         for geography_id, rows in regional_energy.items():
             if geography_id not in admin1_ids:
                 raise ValueError(f"regional-energy.json contains unknown ADM1: {geography_id}")

@@ -4,7 +4,12 @@ import math
 import pytest
 
 from grid_scope.generator_artifacts import build_generator_artifacts
-from grid_scope.snapshot_builder import build_global_snapshot_artifacts, build_snapshot_artifacts
+from grid_scope.snapshot_builder import (
+    build_global_snapshot_artifacts,
+    build_snapshot_artifacts,
+    compact_regional_energy,
+    expand_regional_energy,
+)
 
 
 def test_builder_keeps_uncovered_regions_unranked() -> None:
@@ -241,6 +246,32 @@ def _generator(**overrides: object) -> dict:
     return row
 
 
+def test_regional_energy_v2_roundtrips_full_contributions_and_rejects_bad_definitions() -> None:
+    contribution = {
+        "id": "capacity_margin", "label": "Dependable-capacity margin",
+        "maxPoints": 35.0, "methodVersion": "power-balance-score-1.0.0",
+        "normalization": "Fixed public bands", "unit": "index",
+        "rawValue": 42.0, "points": 21.0, "valueKind": "estimated",
+        "sourceIds": ["public-grid-source"],
+    }
+    rows = []
+    for year in range(2026, 2032):
+        row = _energy_forecast(year)
+        row["geographyId"] = "US-CA"
+        row["powerBalance"]["contributions"] = [contribution]
+        rows.append(row)
+    original = {"US-CA": rows}
+
+    compact = compact_regional_energy(original)
+    assert expand_regional_energy(compact) == original
+    assert len(json.dumps(compact, separators=(",", ":"))) < len(
+        json.dumps(original, separators=(",", ":"))
+    )
+    compact["contributionDefinitions"]["capacity_margin"].pop("unit")
+    with pytest.raises(ValueError, match="definition"):
+        expand_regional_energy(compact)
+
+
 def test_global_builder_publishes_compact_energy_and_sharded_generators() -> None:
     countries = {
         "type": "FeatureCollection",
@@ -293,8 +324,9 @@ def test_global_builder_publishes_compact_energy_and_sharded_generators() -> Non
     assert "regionalEnergy" not in compact
     assert "secretField" not in compact
     energy = json.loads(artifacts["regional-energy.json"])
-    assert list(energy) == ["US-CA"]
-    assert [row["year"] for row in energy["US-CA"]] == list(range(2026, 2032))
+    assert energy["schemaVersion"] == "regional-energy-v2"
+    assert list(energy["regions"]) == ["US-CA"]
+    assert [row["year"] for row in energy["regions"]["US-CA"]] == list(range(2026, 2032))
     overview = json.loads(artifacts["generator-overview.geojson"])
     assert overview["features"][0]["properties"] == {
         "geographyId": "US-CA",

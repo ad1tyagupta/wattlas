@@ -139,6 +139,28 @@ describe("power balance snapshot contracts", () => {
     expect(parsed["US-CA"][4].metrics?.observedUnmetDemandGwh).toBe(3);
   });
 
+  it("reconstructs regional-energy v2 contribution definitions strictly", () => {
+    const definition = {
+      id: "capacity_margin", label: "Capacity margin", maxPoints: 25,
+      methodVersion: "power-balance-v1", normalization: "Fixed bands", unit: "%",
+    };
+    const dynamic = { id: definition.id, rawValue: 22, points: 18, valueKind: "estimated", sourceIds: ["grid-source"] };
+    const compactForecast = {
+      ...forecast, geographyId: undefined,
+      powerBalance: { ...forecast.powerBalance, contributions: [dynamic] },
+    };
+    const envelope = {
+      schemaVersion: "regional-energy-v2",
+      contributionDefinitions: { capacity_margin: definition },
+      regions: { "US-CA": Array.from({ length: 6 }, (_, i) => ({ ...compactForecast, year: 2026 + i })) },
+    };
+    const parsed = regionalEnergySchema.parse(envelope);
+    expect(parsed["US-CA"][0].geographyId).toBe("US-CA");
+    expect(parsed["US-CA"][0].powerBalance?.contributions[0]).toEqual({ ...definition, ...dynamic });
+    expect(() => regionalEnergySchema.parse({ ...envelope, contributionDefinitions: {} })).toThrow();
+    expect(() => regionalEnergySchema.parse({ ...envelope, contributionDefinitions: { other: definition } })).toThrow();
+  });
+
   it("requires coherent, versioned score contributions", () => {
     const valid = {
       id: "capacity_margin", label: "Capacity margin", rawValue: 22, unit: "%",
