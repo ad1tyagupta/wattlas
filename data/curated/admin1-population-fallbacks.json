@@ -1,6 +1,8 @@
 {
   "schemaVersion": "wattlas-population-raster-fallbacks-v1",
   "description": "Official WorldPop R2025A v1 2025 constrained country rasters used only when the global 1km raster has no valid ADM1 cell.",
+  "licence": "CC-BY-4.0",
+  "licenceUrl": "https://www.worldpop.org/faq/",
   "sources": [
     {"country":"AG","sourceYear":2025,"fileName":"atg_pop_2025_CN_100m_R2025A_v1.tif","checksumSha256":"ef137c0bf34645ae981ac24ebc9da0e24703981d474309ec5be772d28ce900b6","sourceId":"worldpop-global2-r2025a-v1-2025-cn-100m-atg","sourceRelease":"WorldPop Global2 R2025A v1 (2025 constrained country 100m)","sourceUrl":"https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/ATG/v1/100m/constrained/atg_pop_2025_CN_100m_R2025A_v1.tif","resolutionArcSeconds":3,"resolutionMetersAtEquator":100},
     {"country":"BS","sourceYear":2025,"fileName":"bhs_pop_2025_CN_100m_R2025A_v1.tif","checksumSha256":"c2e6da826faa2360f935054592c2af5b0e85f7a9a2198dd8d111ca7c7ab0031f","sourceId":"worldpop-global2-r2025a-v1-2025-cn-100m-bhs","sourceRelease":"WorldPop Global2 R2025A v1 (2025 constrained country 100m)","sourceUrl":"https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/BHS/v1/100m/constrained/bhs_pop_2025_CN_100m_R2025A_v1.tif","resolutionArcSeconds":3,"resolutionMetersAtEquator":100},

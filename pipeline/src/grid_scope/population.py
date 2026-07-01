@@ -281,6 +281,9 @@ def _release_metadata(
     raster_paths_by_target: Mapping[int, Path],
     projection_methods_by_target: Mapping[int, str],
     source_year_resolution: Mapping[str, Any] | None,
+    source_url: str = "",
+    licence: str = "",
+    licence_url: str = "",
 ) -> dict[str, Any]:
     targets = sorted(target_years)
     paths_by_source_year: dict[int, Path] = {}
@@ -303,6 +306,9 @@ def _release_metadata(
     canonical = {
         "id": release_id,
         "sourceId": source_id,
+        "sourceUrl": source_url,
+        "licence": licence,
+        "licenceUrl": licence_url,
         "targetYears": targets,
         "sourceYears": sorted(paths_by_source_year),
         "targetSourceYears": {
@@ -320,6 +326,9 @@ def _release_metadata(
                 "sourceYear": year,
                 "fileName": paths_by_source_year[year].name,
                 "checksumSha256": checksums_by_source_year[year],
+                "sourceUrl": source_url,
+                "licence": licence,
+                "licenceUrl": licence_url,
             }
             for year in sorted(paths_by_source_year)
         ],
@@ -339,6 +348,9 @@ def build_population_artifact(
     source_years_by_target: Mapping[int, int] | None = None,
     projection_methods_by_target: Mapping[int, str] | None = None,
     source_year_resolution: Mapping[str, Any] | None = None,
+    source_url: str = "",
+    licence: str = "",
+    licence_url: str = "",
 ) -> dict[str, Any]:
     """Aggregate version-pinned population count rasters to active ADM1 geometry.
 
@@ -352,6 +364,12 @@ def build_population_artifact(
         raise ValueError("population raster years must be within 2026-2031")
     if not release_id.strip() or not source_id.strip():
         raise ValueError("population source release and source ID are required")
+    if (
+        not source_url.startswith(("http://", "https://"))
+        or licence != "CC-BY-4.0"
+        or not licence_url.startswith(("http://", "https://"))
+    ):
+        raise ValueError("population source requires an official URL and CC-BY-4.0 licence")
     if source_years_by_target is None:
         resolved_source_years = {year: year for year in years}
     else:
@@ -444,6 +462,9 @@ def build_population_artifact(
                     "valueKind": "estimated",
                     "methodId": method_id,
                     "sourceIds": [source_id],
+                    "sourceUrl": source_url,
+                    "licence": licence,
+                    "licenceUrl": licence_url,
                     "confidence": 70.0,
                     "coverage": round(coverage, 6),
                     "roundingMethod": ROUNDING_METHOD,
@@ -461,6 +482,9 @@ def build_population_artifact(
         raster_paths_by_target=raster_paths,
         projection_methods_by_target=resolved_projection_methods,
         source_year_resolution=source_year_resolution,
+        source_url=source_url,
+        licence=licence,
+        licence_url=licence_url,
     )
     artifact = {
         "schemaVersion": SCHEMA_VERSION,
@@ -517,6 +541,8 @@ def apply_high_resolution_fallbacks(
         source_id = str(raw.get("sourceId") or "").strip()
         source_release = str(raw.get("sourceRelease") or "").strip()
         source_url = str(raw.get("sourceUrl") or "").strip()
+        licence = str(raw.get("licence") or "").strip()
+        licence_url = str(raw.get("licenceUrl") or "").strip()
         source_year = raw.get("sourceYear")
         arc_seconds = raw.get("resolutionArcSeconds")
         metres = raw.get("resolutionMetersAtEquator")
@@ -529,6 +555,8 @@ def apply_high_resolution_fallbacks(
             or not source_id
             or not source_release
             or not source_url.startswith(("http://", "https://"))
+            or licence != "CC-BY-4.0"
+            or not licence_url.startswith(("http://", "https://"))
             or isinstance(arc_seconds, bool)
             or not isinstance(arc_seconds, (int, float))
             or not math.isfinite(float(arc_seconds))
@@ -554,6 +582,8 @@ def apply_high_resolution_fallbacks(
             "sourceId": source_id,
             "sourceRelease": source_release,
             "sourceUrl": source_url,
+            "licence": licence,
+            "licenceUrl": licence_url,
             "resolutionArcSeconds": float(arc_seconds),
             "resolutionMetersAtEquator": float(metres),
             "method": MODEL_METHOD_ID,
@@ -611,6 +641,8 @@ def apply_high_resolution_fallbacks(
                     "methodId": method_id,
                     "sourceIds": [source["sourceId"]],
                     "sourceUrl": source["sourceUrl"],
+                    "licence": source["licence"],
+                    "licenceUrl": source["licenceUrl"],
                     "confidence": 70.0,
                     "coverage": round(coverage, 6),
                     "roundingMethod": ROUNDING_METHOD,
@@ -943,11 +975,21 @@ def _valid_fingerprint(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
 
 
+def _valid_worldpop_provenance(value: Mapping[str, Any]) -> bool:
+    return (
+        str(value.get("sourceUrl") or "").startswith(("http://", "https://"))
+        and value.get("licence") == "CC-BY-4.0"
+        and str(value.get("licenceUrl") or "").startswith(("http://", "https://"))
+    )
+
+
 def _validate_source_release(release: object) -> dict[str, Any]:
     if not isinstance(release, dict):
         raise ValueError("population artifact requires source release metadata")
     if not str(release.get("id") or "").strip() or not str(release.get("sourceId") or "").strip():
         raise ValueError("population source release lacks identity")
+    if not _valid_worldpop_provenance(release):
+        raise ValueError("population source release lacks official URL or licence")
     fingerprint = release.get("fingerprint")
     canonical = dict(release)
     canonical.pop("fingerprint", None)
@@ -1010,6 +1052,7 @@ def _validate_source_release(release: object) -> dict[str, Any]:
             or source_year in raster_years
             or not str(raster_source.get("fileName") or "").strip()
             or raster_source.get("checksumSha256") != checksums[str(source_year)]
+            or not _valid_worldpop_provenance(raster_source)
         ):
             raise ValueError("population source release has inconsistent raster source")
         raster_years.add(source_year)
@@ -1083,6 +1126,7 @@ def _validate_population_artifact(artifact: dict[str, Any]) -> None:
             or not str(source.get("sourceId") or "").strip()
             or not str(source.get("sourceRelease") or "").strip()
             or not str(source.get("sourceUrl") or "").startswith(("http://", "https://"))
+            or not _valid_worldpop_provenance(source)
             or source.get("method") != MODEL_METHOD_ID
         ):
             raise ValueError("invalid population fallback source metadata")
@@ -1167,6 +1211,8 @@ def _validate_population_artifact(artifact: dict[str, Any]) -> None:
         if value_kind not in {"estimated", "reported", "observed"}:
             raise ValueError("population record has invalid value kind")
         if value_kind == "estimated":
+            if not _valid_worldpop_provenance(row):
+                raise ValueError("estimated population record lacks WorldPop provenance")
             expected_source_year = release["targetSourceYears"][str(year)]
             if source_year != expected_source_year:
                 raise ValueError("population record source year disagrees with release mapping")
@@ -1186,6 +1232,8 @@ def _validate_population_artifact(artifact: dict[str, Any]) -> None:
                 or row.get("sourceRelease") != fallback["sourceRelease"]
                 or source_ids != [fallback["sourceId"]]
                 or row.get("sourceUrl") != fallback["sourceUrl"]
+                or row.get("licence") != fallback["licence"]
+                or row.get("licenceUrl") != fallback["licenceUrl"]
                 or row.get("sourceResolutionArcSeconds") != fallback["resolutionArcSeconds"]
                 or row.get("sourceResolutionMetersAtEquator")
                 != fallback["resolutionMetersAtEquator"]

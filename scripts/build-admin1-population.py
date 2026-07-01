@@ -30,12 +30,16 @@ def _fallback_sources(manifest_path: Path, raster_dir: Path) -> list[dict[str, o
     sources = payload.get("sources") if isinstance(payload, dict) else None
     if not isinstance(sources, list):
         raise ValueError("population fallback manifest requires a sources array")
+    licence = str(payload.get("licence") or "").strip()
+    licence_url = str(payload.get("licenceUrl") or "").strip()
     result: list[dict[str, object]] = []
     for source in sources:
         if not isinstance(source, dict) or not str(source.get("fileName") or "").strip():
             raise ValueError("population fallback manifest source requires a fileName")
         resolved = dict(source)
         resolved["path"] = raster_dir / str(source["fileName"])
+        resolved["licence"] = licence
+        resolved["licenceUrl"] = licence_url
         result.append(resolved)
     return result
 
@@ -125,6 +129,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release", default="worldpop-global2-configured")
     parser.add_argument("--source-id", default="worldpop-global2")
+    parser.add_argument("--source-url", default="https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/0_Mosaicked/1km/constrained/global_pop_2025_CN_1km_R2025A_UA_v1.tif")
+    parser.add_argument("--licence", choices=("CC-BY-4.0",), default="CC-BY-4.0")
+    parser.add_argument("--licence-url", default="https://www.worldpop.org/faq/")
     parser.add_argument("--year", type=int, action="append", dest="years")
     parser.add_argument("--overrides", type=Path)
     parser.add_argument("--controls", type=Path)
@@ -151,6 +158,9 @@ def main() -> int:
         source_id=args.source_id,
         source_years_by_target=source_years,
         source_year_resolution=source_year_resolution,
+        source_url=args.source_url,
+        licence=args.licence,
+        licence_url=args.licence_url,
     )
     if args.fallback_manifest:
         artifact = apply_high_resolution_fallbacks(

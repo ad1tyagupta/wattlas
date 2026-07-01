@@ -32,6 +32,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 BOUNDARIES = FIXTURES / "admin1-small.geojson"
 RASTER = FIXTURES / "worldpop-tiny.tif"
 DATELINE_BOUNDARIES = FIXTURES / "admin1-dateline.geojson"
+TEST_PROVENANCE = {
+    "source_url": "https://data.worldpop.org/test.tif",
+    "licence": "CC-BY-4.0",
+    "licence_url": "https://www.worldpop.org/faq/",
+}
 
 
 def _write_raster(
@@ -71,6 +76,7 @@ def _artifact(
         release_id="worldpop-global2-test-v1",
         source_id="worldpop-global2",
         source_years_by_target={year: resolved_source_year for year in years},
+        **TEST_PROVENANCE,
     )
 
 
@@ -111,6 +117,7 @@ def test_dateline_multipolygon_reads_each_component_in_a_small_window(
         boundaries_path=DATELINE_BOUNDARIES,
         raster_paths={2026: raster},
         release_id="dateline-test-v1",
+        **TEST_PROVENANCE,
     )
 
     assert _records_by_key(artifact)[("DL-ISLANDS", 2026)]["population"] == 4
@@ -150,11 +157,13 @@ def test_touching_multipolygon_components_are_normalized_without_double_counting
         boundaries_path=boundaries,
         raster_paths={2026: raster},
         release_id="touching-test-v1",
+        **TEST_PROVENANCE,
     )
     second = build_population_artifact(
         boundaries_path=boundaries,
         raster_paths={2026: raster},
         release_id="touching-test-v1",
+        **TEST_PROVENANCE,
     )
 
     assert _records_by_key(first)[("AA-TOUCH", 2026)]["population"] == 30
@@ -180,6 +189,7 @@ def test_single_polygon_ring_crossing_dateline_requires_presplitting(tmp_path: P
             boundaries_path=boundaries,
             raster_paths={2026: RASTER},
             release_id="wrap-test-v1",
+            **TEST_PROVENANCE,
         )
 
 
@@ -201,6 +211,7 @@ def test_partial_raster_coverage_is_unavailable_instead_of_clipped(tmp_path: Pat
         boundaries_path=boundaries,
         raster_paths={2026: RASTER},
         release_id="partial-test-v1",
+        **TEST_PROVENANCE,
     )
 
     assert artifact["records"] == []
@@ -245,6 +256,7 @@ def test_subpixel_global_extent_rounding_does_not_reject_dateline_region(tmp_pat
         boundaries_path=boundaries,
         raster_paths={2026: raster},
         release_id="rounded-global-v1",
+        **TEST_PROVENANCE,
     )
 
     assert artifact["unavailable"] == []
@@ -286,6 +298,7 @@ def test_high_resolution_fallback_rescues_only_unavailable_regions_with_lineage(
         boundaries_path=boundaries,
         raster_paths={2026: primary},
         release_id="primary-1km-v1",
+        **TEST_PROVENANCE,
     )
     assert [(row["geographyId"], row["year"]) for row in primary_artifact["unavailable"]] == [
         ("AA-TINY", 2026),
@@ -303,6 +316,8 @@ def test_high_resolution_fallback_rescues_only_unavailable_regions_with_lineage(
             "sourceId": "worldpop-aa-100m-r2025a-v1",
             "sourceRelease": "WorldPop AA R2025A v1 100m",
             "sourceUrl": "https://data.worldpop.org/aa.tif",
+            "licence": "CC-BY-4.0",
+            "licenceUrl": "https://www.worldpop.org/faq/",
             "resolutionArcSeconds": 3,
             "resolutionMetersAtEquator": 100,
         }],
@@ -338,6 +353,8 @@ def test_high_resolution_fallback_rejects_checksum_mismatch(tmp_path: Path) -> N
                 "sourceId": "worldpop-aa-100m-r2025a-v1",
                 "sourceRelease": "WorldPop AA R2025A v1 100m",
                 "sourceUrl": "https://data.worldpop.org/aa.tif",
+                "licence": "CC-BY-4.0",
+                "licenceUrl": "https://www.worldpop.org/faq/",
                 "resolutionArcSeconds": 3,
                 "resolutionMetersAtEquator": 100,
             }],
@@ -590,12 +607,37 @@ def test_compact_artifact_is_deterministic_and_fingerprinted(tmp_path: Path) -> 
     expected_checksum = sha256(RASTER.read_bytes()).hexdigest()
     assert payload["sourceRelease"]["checksumsSha256"] == {"2026": expected_checksum}
     assert payload["sourceRelease"]["fingerprint"].startswith("sha256:")
+    assert payload["sourceRelease"]["sourceUrl"] == TEST_PROVENANCE["source_url"]
+    assert payload["sourceRelease"]["licence"] == "CC-BY-4.0"
+    assert payload["sourceRelease"]["licenceUrl"] == TEST_PROVENANCE["licence_url"]
+    assert payload["sourceRelease"]["rasterSources"][0]["sourceUrl"] == TEST_PROVENANCE["source_url"]
+    assert payload["records"][0]["licence"] == "CC-BY-4.0"
     assert payload["buildInputs"]["boundaryChecksumSha256"] == sha256(
         BOUNDARIES.read_bytes()
     ).hexdigest()
     assert payload["effectiveInputFingerprint"].startswith("sha256:")
     assert payload["buildFingerprint"].startswith("sha256:")
     assert "geometry" not in first.read_text()
+
+
+def test_population_fingerprint_changes_with_machine_source_provenance() -> None:
+    first = _artifact()
+    second = build_population_artifact(
+        boundaries_path=BOUNDARIES,
+        raster_paths={2026: RASTER},
+        release_id="worldpop-global2-test-v1",
+        source_id="worldpop-global2",
+        source_url="https://data.worldpop.org/other.tif",
+        licence="CC-BY-4.0",
+        licence_url="https://www.worldpop.org/faq/",
+    )
+    assert first["buildFingerprint"] != second["buildFingerprint"]
+    with pytest.raises(ValueError, match="official URL"):
+        build_population_artifact(
+            boundaries_path=BOUNDARIES,
+            raster_paths={2026: RASTER},
+            release_id="worldpop-global2-test-v1",
+        )
 
 
 def test_loader_rejects_record_tampering(tmp_path: Path) -> None:
@@ -832,6 +874,7 @@ def test_release_fingerprint_changes_when_target_to_source_mapping_changes(tmp_p
         raster_paths={2026: raster_2026, 2027: raster_2027},
         release_id="worldpop-global2-test-v1",
         source_years_by_target={2026: 2026, 2027: 2027},
+        **TEST_PROVENANCE,
     )
 
     assert carried["sourceRelease"]["fingerprint"] != per_year["sourceRelease"]["fingerprint"]
@@ -986,5 +1029,6 @@ def test_population_builder_reprojects_an_explicit_mismatched_crs(tmp_path: Path
         raster_paths={2026: RASTER},
         release_id="worldpop-global2-test-v1",
         source_id="worldpop-global2",
+        **TEST_PROVENANCE,
     )
     assert artifact["unavailable"]
