@@ -1018,6 +1018,9 @@ def build_regional_energy_model(
     for region_id, rows in sorted(demand_by_region.items()):
         if [row["year"] for row in rows] != list(range(2026, 2032)):
             continue
+        if all(row.get("availability") == "country_level_only" for row in rows):
+            forecasts[region_id] = rows
+            continue
         net_interchange: dict[int, object] = {}
         observed_unmet: dict[int, object] = {}
         for observation in official:

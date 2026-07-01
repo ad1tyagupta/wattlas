@@ -607,9 +607,14 @@ def test_regional_model_preserves_official_demand_and_allocates_residual() -> No
 def test_regional_model_publishes_country_control_without_adm1_demand_for_country_level_only() -> None:
     root = Path(__file__).parents[2]
     stages: list[str] = []
+    rankable_weights = [{
+        "geographyId": "AA-1", "countryIso3": "AAA", "year": year,
+        "populationShare": 1.0, "activityShare": None, "industrialShare": None,
+        "sourceIds": ["population-release"], "coverage": 100,
+    } for year in range(2026, 2032)]
     forecasts, reconciled = build_regional_energy_model(
         demand_weights={
-            "records": [],
+            "records": rankable_weights,
             "countryLevelOnly": [{
                 "country": "BB",
                 "activeGeographyIds": ["BB-1", "BB-2"],
@@ -624,11 +629,14 @@ def test_regional_model_publishes_country_control_without_adm1_demand_for_countr
                 },
             }],
         },
-        country_controls=[{
-            "countryIso3": "BBB", "year": 2025, "demandGwh": 1000,
-            "sourceIds": ["country-series"], "valueKind": "reported",
-            "methodId": "country-control-v1", "confidence": 90, "coverage": 100,
-        }],
+        country_controls=[
+            {"countryIso3": "BBB", "year": 2025, "demandGwh": 1000,
+             "sourceIds": ["country-series"], "valueKind": "reported",
+             "methodId": "country-control-v1", "confidence": 90, "coverage": 100},
+            {"countryIso3": "AAA", "year": 2025, "demandGwh": 500,
+             "sourceIds": ["country-series"], "valueKind": "reported",
+             "methodId": "country-control-v1", "confidence": 90, "coverage": 100},
+        ],
         official_observations=[], power_records=[],
         assumptions=load_generation_assumptions(root / "data/curated/generation-assumptions.json"),
         method_config=load_regional_demand_methods(root / "data/curated/regional-demand-methods.json"),
@@ -637,7 +645,7 @@ def test_regional_model_publishes_country_control_without_adm1_demand_for_countr
     )
 
     assert reconciled is True
-    assert set(forecasts) == {"BB-1", "BB-2"}
+    assert set(forecasts) == {"AA-1", "BB-1", "BB-2"}
     assert [row["year"] for row in forecasts["BB-2"]] == list(range(2026, 2032))
     row = forecasts["BB-1"][0]
     assert row["availability"] == "country_level_only"
