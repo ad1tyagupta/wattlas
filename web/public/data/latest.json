@@ -1,6 +1,6 @@
 {
-  "snapshotId": "2026-07-01T10-38-09Z",
-  "generatedAt": "2026-07-01T10:38:09Z",
+  "snapshotId": "2026-07-01T15-55-32Z",
+  "generatedAt": "2026-07-01T15:55:32Z",
   "modelVersion": "2.1.0",
   "activeYears": [
     2026,
@@ -11,14 +11,14 @@
     2031
   ],
   "artifacts": {
-    "countries": "snapshots/2026-07-01T10-38-09Z/countries.geojson",
-    "admin1": "snapshots/2026-07-01T10-38-09Z/admin1.geojson",
-    "regions": "snapshots/2026-07-01T10-38-09Z/regions.geojson",
-    "assets": "snapshots/2026-07-01T10-38-09Z/assets.geojson",
-    "evidence": "snapshots/2026-07-01T10-38-09Z/evidence.json",
-    "regionalEnergy": "snapshots/2026-07-01T10-38-09Z/regional-energy.json",
-    "generatorOverview": "snapshots/2026-07-01T10-38-09Z/generator-overview.geojson",
-    "generatorIndex": "snapshots/2026-07-01T10-38-09Z/generators/index.json"
+    "countries": "snapshots/2026-07-01T15-55-32Z/countries.geojson",
+    "admin1": "snapshots/2026-07-01T15-55-32Z/admin1.geojson",
+    "regions": "snapshots/2026-07-01T15-55-32Z/regions.geojson",
+    "assets": "snapshots/2026-07-01T15-55-32Z/assets.geojson",
+    "evidence": "snapshots/2026-07-01T15-55-32Z/evidence.json",
+    "regionalEnergy": "snapshots/2026-07-01T15-55-32Z/regional-energy.json",
+    "generatorOverview": "snapshots/2026-07-01T15-55-32Z/generator-overview.geojson",
+    "generatorIndex": "snapshots/2026-07-01T15-55-32Z/generators/index.json"
   },
   "coverage": {
     "countries": 246,
@@ -44,79 +44,79 @@
   "quality": {
     "countryDemandReconciled": true,
     "generatorArtifactsReconciled": true,
-    "populationBuildFingerprint": "sha256:8cff873bdd5537b521964fe6fe536b8d81f06aa18140d6714eb1cfab99913c92",
-    "demandWeightsBuildFingerprint": "sha256:05b2984921d1cea70e18382d7c4c2d03d1ce1e9ee759f277f4173bcce597bfa8"
+    "populationBuildFingerprint": "sha256:422bb1977c7e8bca147733a605add85b05c91ee20a14c2993c062a43a63cb7fe",
+    "demandWeightsBuildFingerprint": "sha256:73d997713b8cb6e77ed229e219f9ecc75e3ab2498efe612310a37cef4fff5ad2"
   },
   "boundaryDisclaimer": "The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.",
   "connectors": [
     {
       "id": "un_geodata",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "gisco",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "eurostat",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "osm_infrastructure",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "global_assets",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "source_registry",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "geoboundaries_adm1",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "curated_evidence",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "entsoe",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "ENTSO-E security token is not configured."
@@ -124,7 +124,7 @@
     {
       "id": "official_power",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Optional official_power public release is not configured."
@@ -132,7 +132,7 @@
     {
       "id": "gem_power",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Set GEM_GIPT_PATH or GEM_GIPT_URL to a reusable public GEM GIPT release."
@@ -140,7 +140,7 @@
     {
       "id": "wri_power",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Set WRI_POWER_URL to a reusable public WRI resource."
@@ -148,23 +148,23 @@
     {
       "id": "osm_power",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": null,
       "message": null
     },
     {
       "id": "country_electricity_controls",
       "state": "current",
-      "checkedAt": "2026-07-01T10:38:09Z",
-      "lastSuccessAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
+      "lastSuccessAt": "2026-07-01T15:55:32Z",
       "observationDate": "2025-12-31",
       "message": null
     },
     {
       "id": "official_adm1_electricity",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Optional official_adm1_electricity source is not configured."
@@ -172,7 +172,7 @@
     {
       "id": "eia_state_observations",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Optional eia_state_observations source is not configured."
@@ -180,19 +180,19 @@
     {
       "id": "official_adm1_electricity_merged",
       "state": "not_configured",
-      "checkedAt": "2026-07-01T10:38:09Z",
+      "checkedAt": "2026-07-01T15:55:32Z",
       "lastSuccessAt": null,
       "observationDate": null,
       "message": "Optional official_adm1_electricity_merged public source is not configured."
     }
   ],
   "checksums": {
-    "countries.geojson": "23175ec988785b3e44c6b9a1b72c8c95a9cb6f1d4c36332c53388df3e81c1ae0",
-    "admin1.geojson": "4be20d81b2ba58f4b24a10e037c5857fb645b973dfdab0d11bc2beb5c83015de",
-    "regions.geojson": "b0c0510f29183f2102f1b2a1f9b16348c4676e65e7bd235ffab4d700ddd83eab",
-    "assets.geojson": "213526c30ad026e9baad610039f0ee844b9789fad53d108adea65893d5a2dbf2",
+    "countries.geojson": "80e73482de8d6753ace6103dcb8de3c91e844479f2570835cde447b7417172c1",
+    "admin1.geojson": "4ee7bcd7b0c3e9298f3d685f74827808b504bbacdd2af429d9f48db1190e3ed6",
+    "regions.geojson": "e14d743ad60348c1f2dd0bb6b966fcf5e809a160382d65d0e5c76cd5d6f60e9b",
+    "assets.geojson": "0bb09472d60a7dc477b80e7ee22e3dcfa054644c4f8b85c9f6cd90d07925b37e",
     "regional-energy.json": "713f13a3dfba8c30d1c79a51c2cc5374bd7d60ade42ed20eaa17911f5064c9b2",
-    "evidence.json": "28895dfe294effbc928fe9f294f4fae1265f7ad508cb706274005f817e61d5e7",
+    "evidence.json": "c5894d23347c2f9105c96266c88ad08965d2ee61a77e1b0b56eae1bf4acd6ecd",
     "generators/AD.geojson": "bdf1b8ce00e39883e1b05d65576ed7ada3614c1b735ca8e445c99f9c3188ca4b",
     "generators/AE.geojson": "bcfcb1065dbd85f8fc413fbc4550d17c525a9bdc1d4aeb81e018e0c02d0a8e18",
     "generators/AF.geojson": "dc0547fd8ad89b996e3085209fb693aac43b5a66d6d1324defe39a76cb6e6038",

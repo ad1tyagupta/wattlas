@@ -34,16 +34,16 @@ The exception is applied to the whole country because allocating the national el
 
 ## Integrity and limitations
 
-- Population build fingerprint: `sha256:8cff873bdd5537b521964fe6fe536b8d81f06aa18140d6714eb1cfab99913c92`.
-- Demand-weight build fingerprint: `sha256:05b2984921d1cea70e18382d7c4c2d03d1ce1e9ee759f277f4173bcce597bfa8`.
-- Compact artifact sizes: 8,586,903 bytes population; 4,018,061 bytes demand weights.
+- Population build fingerprint: `sha256:422bb1977c7e8bca147733a605add85b05c91ee20a14c2993c062a43a63cb7fe`.
+- Demand-weight build fingerprint: `sha256:73d997713b8cb6e77ed229e219f9ecc75e3ab2498efe612310a37cef4fff5ad2`.
+- Compact artifact sizes: 12,376,575 bytes population; 4,018,061 bytes demand weights. The population artifact is larger because each record now carries resolvable source URL and licence provenance.
 - The 2025 source raster is carried forward unchanged for 2026–2031 and explicitly labelled `worldpop-carry-forward-v1`; Wattlas does not imply observed annual population growth.
 - Country 100 m rasters use a different national boundary mastergrid than Wattlas ADM1 boundaries. Coverage remains fail-closed when a boundary exceeds the source raster by more than 0.001 pixel.
 - The global raster's serialized +180° edge is approximately 0.00017 pixel short. A tested sub-0.001-pixel tolerance treats that numerical drift as full coverage while continuing to reject real clipping.
 
 ## Published electricity and generation snapshot
 
-- Snapshot: `2026-07-01T10-38-09Z`, generated `2026-07-01T10:38:09Z` with model `2.1.0`.
+- Snapshot: `2026-07-01T15-55-32Z`, generated `2026-07-01T15:55:32Z` with model `2.1.0`.
 - Ember release: `yearly_full_release_long_format.csv`, last modified 2026-06-23 10:58:24 GMT, from `https://files.ember-energy.org/public-downloads/yearly_full_release_long_format.csv` under CC BY 4.0.
 - Ember release size and checksum: 49,079,981 bytes; SHA-256 `259e1095ee8ffeaf0aff37ad557916ae1823a2da13312da50ba4cec6b4574c3b`.
 - Country controls: 5,388 annual records for 214 countries/economies, spanning 2000–2025; the published connector observation date is 2025-12-31.

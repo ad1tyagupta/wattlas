@@ -26,6 +26,7 @@ from grid_scope.cli import (
     _field_lineage,
     _demand_weights_with_iso3,
     attach_population_evidence_sources,
+    attach_evidence_sources,
 )
 from grid_scope.connectors.base import ConnectorResult, FetchPayload
 from grid_scope.models import ConnectorState
@@ -676,6 +677,7 @@ def test_population_evidence_sources_preserve_machine_provenance() -> None:
     attach_population_evidence_sources(registry, {"sourceRelease": {
         "id": "WorldPop R2025A v1", "sourceId": "worldpop-primary",
         "sourceUrl": "https://data.worldpop.org/global.tif",
+        "checksumsSha256": {"2025": "b" * 64},
         "licence": "CC-BY-4.0", "licenceUrl": "https://www.worldpop.org/faq/",
         "fallbackSources": [{
             "sourceId": "worldpop-fallback", "sourceRelease": "WorldPop fallback",
@@ -688,7 +690,22 @@ def test_population_evidence_sources_preserve_machine_provenance() -> None:
         "worldpop-primary", "worldpop-fallback",
     ]
     assert registry["sources"][1]["checksumSha256"] == "a" * 64
+    assert registry["sources"][0]["checksumSha256"] == "b" * 64
     assert registry["sources"][0]["licence"] == "CC-BY-4.0"
+
+
+def test_european_region_source_ids_are_merged_into_global_evidence() -> None:
+    registry = {"sources": [{
+        "id": "global-source", "name": "Global", "tier": "A",
+        "url": "https://example.org/global", "publishedAt": None,
+    }]}
+    attach_evidence_sources(registry, [{
+        "id": "regional-source", "name": "Regional", "tier": "B",
+        "url": "https://example.org/regional", "publishedAt": "2026-01-01T00:00:00Z",
+    }, registry["sources"][0]])
+    assert [source["id"] for source in registry["sources"]] == [
+        "global-source", "regional-source",
+    ]
 
 
 def test_regional_model_uses_every_official_field_and_forward_increment_once() -> None:

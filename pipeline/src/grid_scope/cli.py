@@ -859,12 +859,17 @@ def attach_population_evidence_sources(
     release = population_artifact.get("sourceRelease")
     if not isinstance(release, Mapping):
         raise ValueError("population evidence requires sealed source release")
+    release_checksums = release.get("checksumsSha256")
+    primary_checksum = None
+    if isinstance(release_checksums, Mapping) and len(release_checksums) == 1:
+        primary_checksum = next(iter(release_checksums.values()))
     candidates = [{
         "id": release.get("sourceId"),
         "name": str(release.get("id") or "WorldPop population release"),
         "tier": "B",
         "url": release.get("sourceUrl"),
         "publishedAt": "2025-09-01T00:00:00Z",
+        "checksumSha256": primary_checksum,
         "licence": release.get("licence"),
         "licenceUrl": release.get("licenceUrl"),
     }]
@@ -881,6 +886,19 @@ def attach_population_evidence_sources(
         })
     existing = {source["id"] for source in registry.get("sources", [])}
     for raw in candidates:
+        source = SourceRef.model_validate(raw).model_dump(by_alias=True, mode="json")
+        if source["id"] not in existing:
+            registry.setdefault("sources", []).append(source)
+            existing.add(source["id"])
+
+
+def attach_evidence_sources(
+    registry: dict[str, Any], sources: Iterable[Mapping[str, Any]]
+) -> None:
+    """Merge cited source definitions so every published source ID is resolvable."""
+
+    existing = {source["id"] for source in registry.get("sources", [])}
+    for raw in sources:
         source = SourceRef.model_validate(raw).model_dump(by_alias=True, mode="json")
         if source["id"] not in existing:
             registry.setdefault("sources", []).append(source)
@@ -1345,6 +1363,7 @@ def refresh() -> Path:
     curated = json.loads(curated_result.payload.body)
     europe_artifacts = build_snapshot_artifacts(geometry, population, curated, generated_at)
     registry = load_asset_registry(GLOBAL_ASSETS_PATH, SOURCE_REGISTRY_PATH)
+    attach_evidence_sources(registry, curated.get("sources", []))
     attach_population_evidence_sources(registry, model_artifacts["population"])
     countries = json.loads(countries_body)
     registry = merge_asset_feeds(

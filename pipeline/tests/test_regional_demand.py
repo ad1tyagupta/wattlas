@@ -511,6 +511,9 @@ def test_weight_builder_cli_is_deterministic(tmp_path: Path) -> None:
         raster_paths={2026: fixtures / "worldpop-tiny.tif"},
         release_id="worldpop-cli-test-v1",
         source_years_by_target={2026: 2026},
+        source_url="https://example.org/worldpop-cli-test-v1.tif",
+        licence="CC-BY-4.0",
+        licence_url="https://example.org/licence",
     )
     write_population_artifact(population_artifact, population)
     boundary_payload = json.loads(source_boundaries.read_text())
