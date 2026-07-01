@@ -1,8 +1,8 @@
-import type { LensKey, RegionFeature } from "@/lib/snapshot/types";
+import type { LensKey, RegionalEnergyData, RegionFeature } from "@/lib/snapshot/types";
 
-type Props = { regions: RegionFeature[]; lens: LensKey; year: number; onClose: () => void; onRemove: (id: string) => void };
+type Props = { regions: RegionFeature[]; lens: LensKey; year: number; regionalEnergy?: RegionalEnergyData; onClose: () => void; onRemove: (id: string) => void };
 
-export function ComparisonDrawer({ regions, lens, year, onClose, onRemove }: Props) {
+export function ComparisonDrawer({ regions, lens, year, regionalEnergy = {}, onClose, onRemove }: Props) {
   if (regions.length < 2) return null;
   return (
     <section className="comparison-drawer" aria-label="Region comparison">
@@ -10,7 +10,8 @@ export function ComparisonDrawer({ regions, lens, year, onClose, onRemove }: Pro
       <div className="comparison-grid">
         {regions.map((region) => {
           const score = region.properties.scoresByYear[String(year)]?.[lens] ?? null;
-          return <article key={region.properties.id}><button type="button" onClick={() => onRemove(region.properties.id)} aria-label={`Remove ${region.properties.name}`}>×</button><small>{region.properties.country} · {region.properties.id}</small><h3>{region.properties.name}</h3><div className="comparison-score">{score ?? "—"}<span>{score == null ? "Not rankable" : "Active lens"}</span></div><p>Confidence {region.properties.confidence}% · {region.properties.valueKind}</p></article>;
+          const energy = regionalEnergy[region.properties.id]?.find((row) => row.year === year);
+          return <article key={region.properties.id}><button type="button" onClick={() => onRemove(region.properties.id)} aria-label={`Remove ${region.properties.name}`}>×</button><small>{region.properties.country} · {region.properties.id}</small><h3>{region.properties.name}</h3><div className="comparison-score">{score ?? "—"}<span>{score == null ? "Not rankable" : "Active lens"}</span></div><p>Confidence {region.properties.confidence}% · {region.properties.valueKind}</p>{lens === "powerBalance" && <dl className="comparison-energy"><dt>Demand</dt><dd>{energy ? `${energy.metrics.demandGwh.central.toLocaleString()} GWh` : "Unavailable"}</dd><dt>Local generation gap</dt><dd>{energy?.metrics.localGenerationGapGwh ? `${energy.metrics.localGenerationGapGwh.central.toLocaleString()} GWh` : "Unavailable"}</dd><dt>Coverage</dt><dd>{energy ? `${energy.powerBalance?.coverage ?? energy.coverage}%` : "Unavailable"}</dd></dl>}</article>;
         })}
       </div>
     </section>

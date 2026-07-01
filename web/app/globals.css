@@ -504,6 +504,36 @@ button {
   line-height: 1;
 }
 
+.power-balance-panel { display: grid; gap: 16px; margin-top: 14px; }
+.population-context { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.025); }
+.population-context span, .method-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.energy-facts, .forward-demand { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.energy-facts span, .forward-demand span { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.energy-facts strong, .forward-demand strong { color: var(--text); font-size: 14px; text-transform: none; letter-spacing: 0; }
+.generation-context h2 { margin: 0 0 8px; font-size: 13px; }
+.generation-context > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.generation-context span { padding: 5px 7px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.power-balance-chart svg { display: block; width: 100%; height: auto; min-height: 150px; overflow: visible; }
+.power-balance-chart svg text { fill: var(--muted); font-size: 9px; }
+.demand-range, .supply-range { stroke-width: 5; stroke-linecap: round; opacity: .35; }
+.demand-line, .supply-line { fill: none; stroke-width: 2; }
+.demand-range, .demand-line { stroke: #f5b66d; }
+.supply-range, .supply-line { stroke: #67d9bd; }
+.chart-legend { display: flex; gap: 16px; color: var(--muted); font-size: 11px; }
+.chart-legend span::before { content: ""; display: inline-block; width: 10px; height: 2px; margin: 0 5px 3px 0; background: #f5b66d; }
+.chart-legend .supply-key::before { background: #67d9bd; }
+.chart-table-wrap { overflow-x: auto; }
+.power-balance-chart table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.power-balance-chart th, .power-balance-chart td { padding: 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.power-contribution { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.comparison-energy { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; font-size: 11px; }
+.comparison-energy dt { color: var(--muted); }
+.comparison-energy dd { margin: 0; }
+
+@media (max-width: 520px) {
+  .energy-facts, .forward-demand { grid-template-columns: 1fr; }
+}
+
 .region-meta {
   margin: 8px 0 0;
   color: var(--muted);

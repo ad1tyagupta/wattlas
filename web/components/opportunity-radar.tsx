@@ -11,8 +11,8 @@ import { EntityInspector } from "@/components/inspector/entity-inspector";
 import { GlobalMap } from "@/components/map/global-map";
 import { DataStatusDrawer } from "@/components/status/data-status-drawer";
 import { geographyFeatureCollectionSchema } from "@/lib/snapshot/schema";
-import { loadGeneratorIndex, loadGeneratorOverview } from "@/lib/snapshot/generators";
-import type { AssetFeature, GenerationTechnology, GeneratorFeature, GeneratorIndex, GeneratorOverviewCollection, GeographyCollection, GeographyFeature, LensKey, RegionFeature, SnapshotData } from "@/lib/snapshot/types";
+import { loadGeneratorIndex, loadGeneratorOverview, loadRegionalEnergy } from "@/lib/snapshot/generators";
+import type { AssetFeature, GenerationTechnology, GeneratorFeature, GeneratorIndex, GeneratorOverviewCollection, GeographyCollection, GeographyFeature, LensKey, RegionalEnergyData, RegionFeature, SnapshotData } from "@/lib/snapshot/types";
 
 type Props = { snapshot: SnapshotData };
 
@@ -30,6 +30,7 @@ export function OpportunityRadar({ snapshot }: Props) {
   const [lifecycles, setLifecycles] = useState<Set<string>>(() => new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved", "unknown"]));
   const [generatorOverview, setGeneratorOverview] = useState<GeneratorOverviewCollection | null>(null);
   const [generatorIndex, setGeneratorIndex] = useState<GeneratorIndex | null>(null);
+  const [regionalEnergy, setRegionalEnergy] = useState<RegionalEnergyData>({});
   const [admin1, setAdmin1] = useState<GeographyCollection>(snapshot.admin1);
   useEffect(() => {
     if (snapshot.admin1.features.length) return;
@@ -56,6 +57,15 @@ export function OpportunityRadar({ snapshot }: Props) {
     });
     return () => controller.abort();
   }, [snapshot.manifest.artifacts.generatorIndex, snapshot.manifest.artifacts.generatorOverview]);
+  useEffect(() => {
+    const path = snapshot.manifest.artifacts.regionalEnergy;
+    if (!path || lens !== "powerBalance") return;
+    const controller = new AbortController();
+    void loadRegionalEnergy(path, { signal: controller.signal }).then((result) => {
+      if (result.ok) setRegionalEnergy(result.data);
+    });
+    return () => controller.abort();
+  }, [lens, snapshot.manifest.artifacts.regionalEnergy]);
   const selectableGeographies = useMemo(
     () => [...snapshot.countries.features, ...admin1.features, ...snapshot.regions.features] as Array<GeographyFeature | RegionFeature>,
     [admin1.features, snapshot.countries.features, snapshot.regions.features],
@@ -92,11 +102,11 @@ export function OpportunityRadar({ snapshot }: Props) {
         }}
       />
       <GlobalMap countries={snapshot.countries} admin1={admin1} regions={snapshot.regions} assets={snapshot.assets} coverage={snapshot.manifest.coverage} lens={lens} year={year} selectedId={selectedId} onSelect={(id) => { setSelectedGenerator(null); setSelectedId(id); }} onSelectGenerator={(generator) => { setSelectedGenerator(generator); setSelectedId(null); }} onVisibleGeneratorsChange={(ids) => setSelectedGenerator((current) => current && !ids.has(current.properties.id) ? null : current)} infrastructure={infrastructure} technologies={technologies} lifecycles={lifecycles} generatorOverview={generatorOverview} generatorIndex={generatorIndex} snapshotRoot={snapshot.manifest.snapshotId ? `snapshots/${snapshot.manifest.snapshotId}` : null} />
-      <EntityInspector geography={selectedGeography} asset={selectedAsset} generator={selectedGenerator} lens={lens} year={year} onOpenEvidence={() => setEvidenceOpen(true)} onAddComparison={addComparison} />
+      <EntityInspector geography={selectedGeography} asset={selectedAsset} generator={selectedGenerator} regionalEnergy={selectedGeography ? regionalEnergy[selectedGeography.properties.id] : undefined} generatorOverview={generatorOverview} evidence={snapshot.evidence} lens={lens} year={year} onOpenEvidence={() => setEvidenceOpen(true)} onAddComparison={addComparison} />
       <Timeline years={snapshot.manifest.activeYears} activeYear={year} onChange={setYear} />
       <DataStatusDrawer manifest={snapshot.manifest} open={statusOpen} onClose={() => setStatusOpen(false)} />
       <EvidenceDossier region={selectedGeography as RegionFeature | null} evidence={snapshot.evidence} open={evidenceOpen && !selectedAsset} onClose={() => setEvidenceOpen(false)} />
-      <ComparisonDrawer regions={comparisonRegions} lens={lens} year={year} onClose={() => setComparisonIds([])} onRemove={(id) => setComparisonIds((current) => current.filter((item) => item !== id))} />
+      <ComparisonDrawer regions={comparisonRegions} lens={lens} year={year} regionalEnergy={regionalEnergy} onClose={() => setComparisonIds([])} onRemove={(id) => setComparisonIds((current) => current.filter((item) => item !== id))} />
       {comparisonIds.length === 1 && <div className="comparison-toast">1 region queued. Select another region and add it to compare.<button type="button" onClick={() => setComparisonIds([])}>Clear</button></div>}
     </main>
   );
