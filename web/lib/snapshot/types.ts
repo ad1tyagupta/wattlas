@@ -199,7 +199,15 @@ export type RegionalEnergyForecast = {
   valueKind: RegionProperties["valueKind"]; appliedIncrementIds: string[];
   metricLineage: Record<string, { sourceIds: string[]; methodId: string; valueKind: RegionProperties["valueKind"]; [key: string]: unknown }>;
 };
-export type RegionalEnergyData = Record<string, RegionalEnergyForecast[]>;
+export type CountryLevelOnlyEnergyForecast = {
+  geographyId?: string; countryIso3: string; year: number;
+  availability: "country_level_only"; rankable: false; metrics: null; powerBalance: null;
+  countryControl: { countryIso3: string; year: number; sourceYear: number; demandGwh: MetricRange; sourceIds: string[]; valueKind: RegionProperties["valueKind"]; methodId: string; confidence: number; coverage: number } | null;
+  reason: "population_unavailable_for_active_adm1"; unavailableGeographyIds: string[];
+  methodId: string; sourceIds: string[]; confidence: 0; coverage: 0; valueKind: "unavailable";
+};
+export type RegionalEnergyRow = RegionalEnergyForecast | CountryLevelOnlyEnergyForecast;
+export type RegionalEnergyData = Record<string, RegionalEnergyRow[]>;
 
 export type GeneratorProperties = {
   id: string; category: "power_generation"; country: string; geographyId: string;

@@ -11,13 +11,14 @@ import httpx
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import from_bounds, from_origin
 
 import grid_scope.population as population_module
-from grid_scope.connectors.worldpop import WorldPopConnector
+from grid_scope.connectors.worldpop import WorldPopConnector, checksum_file
 from grid_scope.models import ConnectorState
 from grid_scope.population import (
     TARGET_YEARS,
+    apply_high_resolution_fallbacks,
     apply_official_overrides,
     build_population_artifact,
     load_population_artifact,
@@ -204,6 +205,143 @@ def test_partial_raster_coverage_is_unavailable_instead_of_clipped(tmp_path: Pat
 
     assert artifact["records"] == []
     assert artifact["unavailable"][0]["reason"] == "incomplete_raster_coverage"
+
+
+def test_subpixel_global_extent_rounding_does_not_reject_dateline_region(tmp_path: Path) -> None:
+    boundaries = tmp_path / "dateline.geojson"
+    boundaries.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"id": "DL-EAST", "name": "East edge", "country": "DL"},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [179.0, 0.0], [180.0, 0.0], [180.0, 1.0], [179.0, 1.0], [179.0, 0.0],
+                ]],
+            },
+        }],
+    }))
+    raster = tmp_path / "rounded-global.tif"
+    with rasterio.open(
+        raster,
+        "w",
+        driver="GTiff",
+        width=360,
+        height=1,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        # Deliberately ends a tiny fraction short of +180, as the production
+        # WorldPop GeoTIFF does after serializing its pixel transform.
+        transform=from_bounds(-180.0, 0.0, 179.99999856, 1.0, 360, 1),
+        nodata=-99999,
+    ) as dataset:
+        values = np.ones((1, 360), dtype=np.float32)
+        values[0, -1] = 7.0
+        dataset.write(values, 1)
+
+    artifact = build_population_artifact(
+        boundaries_path=boundaries,
+        raster_paths={2026: raster},
+        release_id="rounded-global-v1",
+    )
+
+    assert artifact["unavailable"] == []
+    assert _records_by_key(artifact)[("DL-EAST", 2026)]["population"] == 7
+
+
+def test_high_resolution_fallback_rescues_only_unavailable_regions_with_lineage(tmp_path: Path) -> None:
+    boundaries = tmp_path / "fallback-boundaries.geojson"
+    boundaries.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": "AA-TINY", "name": "Tiny", "country": "AA"},
+                "geometry": {"type": "Polygon", "coordinates": [[
+                    [0.0, 0.6], [0.4, 0.6], [0.4, 1.0], [0.0, 1.0], [0.0, 0.6],
+                ]]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"id": "AA-LARGE", "name": "Large", "country": "AA"},
+                "geometry": {"type": "Polygon", "coordinates": [[
+                    [1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0], [1.0, 0.0],
+                ]]},
+            },
+        ],
+    }))
+    primary = tmp_path / "primary.tif"
+    _write_raster(primary, np.array([[5.0, 11.0]], dtype=np.float32), west=0, north=1, pixel_size=1)
+    fallback = tmp_path / "aa_pop_2026_CN_100m_R2025A_v1.tif"
+    _write_raster(
+        fallback,
+        np.full((10, 20), 2.0, dtype=np.float32),
+        west=0,
+        north=1,
+        pixel_size=0.1,
+    )
+    primary_artifact = build_population_artifact(
+        boundaries_path=boundaries,
+        raster_paths={2026: primary},
+        release_id="primary-1km-v1",
+    )
+    assert [(row["geographyId"], row["year"]) for row in primary_artifact["unavailable"]] == [
+        ("AA-TINY", 2026),
+    ]
+    original_large = _records_by_key(primary_artifact)[("AA-LARGE", 2026)]
+
+    rescued = apply_high_resolution_fallbacks(
+        primary_artifact,
+        boundaries_path=boundaries,
+        sources=[{
+            "country": "AA",
+            "sourceYear": 2026,
+            "path": fallback,
+            "checksumSha256": checksum_file(fallback),
+            "sourceId": "worldpop-aa-100m-r2025a-v1",
+            "sourceRelease": "WorldPop AA R2025A v1 100m",
+            "sourceUrl": "https://data.worldpop.org/aa.tif",
+            "resolutionArcSeconds": 3,
+            "resolutionMetersAtEquator": 100,
+        }],
+    )
+
+    rows = _records_by_key(rescued)
+    assert rows[("AA-LARGE", 2026)] == original_large
+    assert rows[("AA-TINY", 2026)]["population"] == 32
+    assert rows[("AA-TINY", 2026)]["fallbackSource"] is True
+    assert rows[("AA-TINY", 2026)]["sourceIds"] == ["worldpop-aa-100m-r2025a-v1"]
+    assert rows[("AA-TINY", 2026)]["sourceUrl"] == "https://data.worldpop.org/aa.tif"
+    assert rescued["unavailable"] == []
+    fallback_meta = rescued["sourceRelease"]["fallbackSources"][0]
+    assert fallback_meta["checksumSha256"] == checksum_file(fallback)
+    assert fallback_meta["resolutionArcSeconds"] == 3
+    assert rescued["buildInputs"]["fallbackRasterSourcesFingerprint"].startswith("sha256:")
+    load_path = tmp_path / "rescued.json"
+    write_population_artifact(rescued, load_path)
+    assert load_population_artifact(load_path)["buildFingerprint"] == rescued["buildFingerprint"]
+
+
+def test_high_resolution_fallback_rejects_checksum_mismatch(tmp_path: Path) -> None:
+    artifact = _artifact()
+    with pytest.raises(ValueError, match="fallback raster checksum mismatch"):
+        apply_high_resolution_fallbacks(
+            artifact,
+            boundaries_path=BOUNDARIES,
+            sources=[{
+                "country": "AA",
+                "sourceYear": 2026,
+                "path": RASTER,
+                "checksumSha256": "0" * 64,
+                "sourceId": "worldpop-aa-100m-r2025a-v1",
+                "sourceRelease": "WorldPop AA R2025A v1 100m",
+                "sourceUrl": "https://data.worldpop.org/aa.tif",
+                "resolutionArcSeconds": 3,
+                "resolutionMetersAtEquator": 100,
+            }],
+        )
 
 
 def test_modelled_rows_keep_complete_worldpop_lineage_for_2026_to_2031() -> None:

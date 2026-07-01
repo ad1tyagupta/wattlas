@@ -376,7 +376,7 @@ export const powerBalanceMetricsSchema = z.object({
 
 const powerBalanceContributionSchema = scoreContributionSchema;
 
-export const regionalEnergyForecastSchema = z.object({
+const rankableRegionalEnergyForecastSchema = z.object({
   geographyId: z.string().min(1).optional(),
   year: z.number().int().min(2026).max(2031),
   metrics: powerBalanceMetricsSchema,
@@ -393,6 +393,38 @@ export const regionalEnergyForecastSchema = z.object({
     valueKind: valueKindSchema,
   }).passthrough()).default({}),
 });
+
+const countryLevelOnlyEnergyForecastSchema = z.object({
+  geographyId: z.string().min(1).optional(),
+  countryIso3: z.string().regex(/^[A-Z]{3}$/),
+  year: z.number().int().min(2026).max(2031),
+  availability: z.literal("country_level_only"),
+  rankable: z.literal(false),
+  metrics: z.null(),
+  powerBalance: z.null(),
+  countryControl: z.object({
+    countryIso3: z.string().regex(/^[A-Z]{3}$/),
+    year: z.number().int().min(2026).max(2031),
+    sourceYear: z.number().int(),
+    demandGwh: nonnegativeMetricRangeSchema,
+    sourceIds: z.array(z.string().min(1)).min(1),
+    valueKind: valueKindSchema,
+    methodId: z.string().min(1),
+    confidence: z.number().min(0).max(100),
+    coverage: z.number().min(0).max(100),
+  }).nullable(),
+  reason: z.literal("population_unavailable_for_active_adm1"),
+  unavailableGeographyIds: z.array(z.string().min(1)).min(1),
+  methodId: z.literal("country-level-only-no-adm1-allocation-v1"),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  confidence: z.literal(0), coverage: z.literal(0),
+  valueKind: z.literal("unavailable"),
+});
+
+export const regionalEnergyForecastSchema = z.union([
+  rankableRegionalEnergyForecastSchema,
+  countryLevelOnlyEnergyForecastSchema,
+]);
 
 export const regionalEnergySchema = z.record(
   z.string().min(1),

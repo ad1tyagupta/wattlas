@@ -819,6 +819,26 @@ def _attach_power_balance_scores(rows: list[dict[str, Any]]) -> None:
         }
 
 
+def _demand_weights_with_iso3(
+    demand_weights: Mapping[str, Any],
+    country_iso3_by_iso2: Mapping[str, str],
+) -> dict[str, Any]:
+    """Attach canonical ISO3 controls without mutating the sealed weight artifact."""
+
+    result = dict(demand_weights)
+    records: list[dict[str, Any]] = []
+    for raw in demand_weights.get("records", []):
+        row = dict(raw)
+        iso2 = str(row.get("country") or "").strip().upper()
+        iso3 = str(country_iso3_by_iso2.get(iso2) or "").strip().upper()
+        if re.fullmatch(r"[A-Z]{3}", iso3) is None:
+            raise ValueError(f"regional demand weight lacks ISO3 mapping: {iso2}")
+        row["countryIso3"] = iso3
+        records.append(row)
+    result["records"] = records
+    return result
+
+
 def build_regional_energy_model(
     *,
     demand_weights: Mapping[str, Any],
@@ -830,10 +850,12 @@ def build_regional_energy_model(
     demand_increments: Iterable[Mapping[str, Any]] = (),
     attach_scores: bool = True,
     before_supply: Callable[[], None] | None = None,
+    country_iso3_by_iso2: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
     """Build country-controlled ADM1 residual demand, then supply and balance."""
 
     weights = [dict(row) for row in demand_weights.get("records", [])]
+    country_level_only = [dict(row) for row in demand_weights.get("countryLevelOnly", [])]
     controls = [dict(row) for row in country_controls if row.get("demandGwh") is not None]
     official = [dict(row) for row in official_observations]
     allocation_official: list[dict[str, Any]] = []
@@ -845,7 +867,7 @@ def build_regional_energy_model(
             **_field_lineage(observation, "demandGwh"),
         })
     increments = [dict(row) for row in demand_increments]
-    if not weights or not controls:
+    if not weights and not country_level_only:
         return {}, True
     latest_controls: dict[str, dict[str, Any]] = {}
     for control in controls:
@@ -857,6 +879,74 @@ def build_regional_energy_model(
             latest_controls[country] = control
     demand_by_region: dict[str, list[dict[str, Any]]] = {}
     reconciled = True
+    iso3_mapping = {
+        str(iso2).strip().upper(): str(iso3).strip().upper()
+        for iso2, iso3 in (country_iso3_by_iso2 or {}).items()
+    }
+    for exception in country_level_only:
+        iso2 = str(exception.get("country") or "").strip().upper()
+        iso3 = iso3_mapping.get(iso2)
+        if not iso3 or re.fullmatch(r"[A-Z]{3}", iso3) is None:
+            raise ValueError(f"country-level-only exception lacks ISO3 mapping: {iso2}")
+        control = latest_controls.get(iso3)
+        for geography_id in exception.get("activeGeographyIds", []):
+            rows: list[dict[str, Any]] = []
+            for year in range(2026, 2032):
+                normalized_control = None
+                if control:
+                    raw_demand = control["demandGwh"]
+                    demand_range = (
+                        {
+                            "low": float(raw_demand["low"]),
+                            "central": float(raw_demand["central"]),
+                            "high": float(raw_demand["high"]),
+                        }
+                        if isinstance(raw_demand, Mapping)
+                        else {key: float(raw_demand) for key in ("low", "central", "high")}
+                    )
+                    normalized_control = {
+                        "countryIso3": iso3,
+                        "year": year,
+                        "sourceYear": int(control["year"]),
+                        "demandGwh": demand_range,
+                        "sourceIds": sorted({str(value).strip() for value in control["sourceIds"]}),
+                        "valueKind": (
+                            str(control.get("valueKind") or "reported")
+                            if int(control["year"]) == year else "inherited"
+                        ),
+                        "methodId": (
+                            str(control.get("methodId") or "country-control")
+                            if int(control["year"]) == year
+                            else "latest-country-control-flat-baseline-v1"
+                        ),
+                        "confidence": float(control.get("confidence", 80)),
+                        "coverage": float(control.get("coverage", 100)),
+                    }
+                source_ids = (
+                    normalized_control["sourceIds"]
+                    if normalized_control is not None
+                    else ["population-grid-coverage"]
+                )
+                rows.append({
+                    "geographyId": geography_id,
+                    "countryIso3": iso3,
+                    "year": year,
+                    "availability": "country_level_only",
+                    "rankable": False,
+                    "metrics": None,
+                    "countryControl": normalized_control,
+                    "reason": exception.get("reason"),
+                    "unavailableGeographyIds": exception.get("unavailableGeographyIds", []),
+                    "sourceIds": source_ids,
+                    "methodId": "country-level-only-no-adm1-allocation-v1",
+                    "valueKind": "unavailable",
+                    "confidence": 0.0,
+                    "coverage": 0.0,
+                    "powerBalance": None,
+                })
+            demand_by_region[geography_id] = rows
+    if not weights or not controls:
+        return demand_by_region, reconciled
     for country, control in sorted(latest_controls.items()):
         for year in range(2026, 2032):
             year_weights = [
@@ -1297,7 +1387,9 @@ def refresh() -> Path:
         registry, active_admin1=active_admin1
     )
     regional_energy, country_demand_reconciled = build_regional_energy_model(
-            demand_weights=model_artifacts["demandWeights"],
+            demand_weights=_demand_weights_with_iso3(
+                model_artifacts["demandWeights"], country_iso3
+            ),
             country_controls=country_controls,
             official_observations=official_observations,
             power_records=forecast_power_records,
@@ -1310,10 +1402,12 @@ def refresh() -> Path:
             method_config=load_regional_demand_methods(
                 CURATED_PATH.parent / "regional-demand-methods.json"
             ),
+            country_iso3_by_iso2=country_iso3,
     )
     stage("scores")
     for rows in regional_energy.values():
-        _attach_power_balance_scores(rows)
+        if rows and rows[0].get("availability") != "country_level_only":
+            _attach_power_balance_scores(rows)
     stage("artifacts")
     artifacts = build_global_snapshot_artifacts(
         countries=countries,

@@ -1,6 +1,6 @@
 import { formatPopulation } from "@/lib/format";
 import { PowerBalanceChart } from "@/components/inspector/power-balance-chart";
-import type { AssetFeature, EvidenceData, GeneratorFeature, GeneratorOverviewCollection, GeographyFeature, LensKey, RegionalEnergyForecast, RegionFeature } from "@/lib/snapshot/types";
+import type { AssetFeature, EvidenceData, GeneratorFeature, GeneratorOverviewCollection, GeographyFeature, LensKey, RegionalEnergyForecast, RegionalEnergyRow, RegionFeature } from "@/lib/snapshot/types";
 
 const lensLabels: Record<LensKey, string> = {
   infrastructureDemand: "Infrastructure Demand",
@@ -13,7 +13,7 @@ type Props = {
   geography: GeographyFeature | RegionFeature | null;
   asset: AssetFeature | null;
   generator?: GeneratorFeature | null;
-  regionalEnergy?: RegionalEnergyForecast[];
+  regionalEnergy?: RegionalEnergyRow[];
   generatorOverview?: GeneratorOverviewCollection | null;
   evidence?: EvidenceData;
   regionalEnergyState?: "idle" | "loading" | "ready" | "error" | "unavailable";
@@ -147,6 +147,9 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
   const contributions = properties.contributionsByYear[String(year)] ?? [];
   const summary = "assetSummary" in properties ? properties.assetSummary : null;
   const activeEnergy = regionalEnergy.find((row) => row.year === year);
+  const rankableEnergy = regionalEnergy.filter(
+    (row): row is RegionalEnergyForecast => row.metrics !== null,
+  );
   const overview = generatorOverview?.features.find((feature) => feature.properties.geographyId === properties.id)?.properties;
   const demand = "demandMwByYear" in properties ? properties.demandMwByYear[String(year)] : undefined;
   const energySources = evidence?.sources.filter((source) => activeEnergy?.sourceIds.includes(source.id)) ?? [];
@@ -162,6 +165,7 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
         <div className="population-context"><strong>{properties.population == null ? "Population unavailable" : `${number(properties.population / 1_000_000)} million residents`}</strong><span>Source year {properties.populationSourceYear ?? "unavailable"} · Forecast growth unavailable · {humanize(properties.populationValueKind ?? properties.valueKind)}</span></div>
         {regionalEnergyState === "loading" ? <p className="empty-evidence" role="status">Loading regional energy data…</p>
         : regionalEnergyState === "error" ? <div className="energy-load-error" role="alert"><p>Could not load regional energy data. {regionalEnergyError || "Please try again."}</p>{onRetryRegionalEnergy && <button type="button" className="secondary-action" onClick={onRetryRegionalEnergy}>Retry regional energy</button>}</div>
+        : activeEnergy?.metrics === null ? <div className="empty-evidence" role="status"><p><strong>Country-level data only.</strong> ADM1 demand is unavailable because at least one active region lacks defensible population coverage, so Wattlas does not fabricate regional shares.</p><p>{activeEnergy.countryControl ? `Published national demand control: ${metric(activeEnergy.countryControl.demandGwh, "GWh")}.` : "A national demand control is not currently available."}</p></div>
         : activeEnergy ? <>
           <div className="energy-facts">
             <span>Current demand<strong>{metric(activeEnergy.metrics.demandGwh, "GWh")}</strong></span><span>Peak demand<strong>{metric(activeEnergy.metrics.peakDemandMw, "MW")}</strong></span>
@@ -172,7 +176,7 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
           </div>
           <div className="forward-demand"><span>Data-centre forward demand<strong>{demand?.data_centre ? `${number(demand.data_centre.low)}–${number(demand.data_centre.high)} MW` : "Unavailable"}</strong></span><span>Water forward demand<strong>{demand?.water_infrastructure ? `${number(demand.water_infrastructure.low)}–${number(demand.water_infrastructure.high)} MW` : "Unavailable"}</strong></span></div>
           {overview && <div className="generation-context"><h2>Generation mix and plant lifecycle</h2><div>{Object.entries(overview.technologyMixMw).map(([technology, capacity]) => <span key={technology}>{humanize(technology)} {mixTotal ? Math.round((capacity ?? 0) / mixTotal * 100) : 0}%</span>)}</div><div>{Object.entries(overview.lifecycleCounts ?? {}).map(([status, count]) => <span key={status}>{count} {humanize(status).toLowerCase()}</span>)}</div></div>}
-          <PowerBalanceChart forecasts={regionalEnergy} />
+          <PowerBalanceChart forecasts={rankableEnergy} />
           <section className="power-contributions"><div className="section-heading"><span>Power Balance contributions</span><small>{activeEnergy.powerBalance?.coverage ?? activeEnergy.coverage}% coverage</small></div>
             <p className="contribution-summary">{activeEnergy.powerBalance?.status === "rankable" ? "Rankable" : "Not yet rankable"} at {activeEnergy.powerBalance?.coverage ?? activeEnergy.coverage}% coverage · {(activeEnergy.powerBalance?.contributions ?? []).reduce((sum, item) => sum + (item.points ?? 0), 0)} of {(activeEnergy.powerBalance?.contributions ?? []).reduce((sum, item) => sum + (item.points == null ? 0 : item.maxPoints), 0)} available points</p>
             {activeEnergy.powerBalance?.contributions.map((item) => <div className="power-contribution" key={item.id}><div><span>{item.label}</span><small>{item.rawValue == null ? "Raw value unavailable" : `${number(item.rawValue)}${item.unit ? ` ${item.unit}` : ""}`}</small><small>{item.normalization}</small><small>{humanize(item.valueKind)} · {item.methodVersion}</small><small>Sources: {item.sourceIds.length ? item.sourceIds.join(", ") : "unavailable"}</small></div><strong>{item.points == null ? `Unavailable/${item.maxPoints} points` : `${item.points}/${item.maxPoints} points`}</strong></div>)}</section>

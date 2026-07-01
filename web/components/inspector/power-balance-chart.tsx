@@ -6,13 +6,14 @@ const cell = (value: number | null) => value == null ? "Unavailable" : `${fmt(va
 
 export function PowerBalanceChart({ forecasts }: Props) {
   const ordered = [...forecasts].sort((a, b) => a.year - b.year);
+  if (ordered.some((row) => row.metrics === null)) return <p className="empty-evidence" role="status">ADM1 demand-versus-supply chart unavailable; this country currently has country-level data only.</p>;
+  const data = ordered.filter((row): row is RegionalEnergyForecast & { metrics: NonNullable<RegionalEnergyForecast["metrics"]> } => row.metrics !== null);
   const validRange = (value: { low: number; central: number; high: number } | null) => value === null || ([value.low, value.central, value.high].every(Number.isFinite) && value.low <= value.central && value.central <= value.high);
-  const valid = ordered.length === 6
-    && ordered.every((row, index) => row.year === 2026 + index)
-    && new Set(ordered.map((row) => row.year)).size === 6
-    && ordered.every((row) => [row.metrics.demandGwh, row.metrics.localGenerationGwh, row.metrics.localGenerationGapGwh, row.metrics.netBalanceGwh, row.metrics.dependableCapacityMw, row.metrics.peakDemandMw].every(validRange));
+  const valid = data.length === 6
+    && data.every((row, index) => row.year === 2026 + index)
+    && new Set(data.map((row) => row.year)).size === 6
+    && data.every((row) => [row.metrics.demandGwh, row.metrics.localGenerationGwh, row.metrics.localGenerationGapGwh, row.metrics.netBalanceGwh, row.metrics.dependableCapacityMw, row.metrics.peakDemandMw].every(validRange));
   if (!valid) return <p className="empty-evidence" role="status">Demand-versus-supply chart unavailable because the annual series is incomplete or invalid.</p>;
-  const data = ordered;
   const max = Math.max(1, ...data.flatMap((row) => [row.metrics.demandGwh.high, row.metrics.localGenerationGwh?.high ?? 0]));
   const x = (index: number) => 28 + index * (244 / Math.max(1, data.length - 1));
   const y = (value: number) => 116 - value / max * 92;

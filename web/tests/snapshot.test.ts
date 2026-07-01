@@ -134,9 +134,9 @@ describe("power balance snapshot contracts", () => {
 
   it("accepts signed balances while keeping local gap and observed unmet distinct", () => {
     const parsed = regionalEnergySchema.parse({ "US-CA": Array.from({ length: 6 }, (_, i) => ({ ...forecast, year: 2026 + i })) });
-    expect(parsed["US-CA"][4].metrics.netBalanceGwh?.central).toBe(-10);
-    expect(parsed["US-CA"][4].metrics.localGenerationGapGwh?.central).toBe(20);
-    expect(parsed["US-CA"][4].metrics.observedUnmetDemandGwh).toBe(3);
+    expect(parsed["US-CA"][4].metrics?.netBalanceGwh?.central).toBe(-10);
+    expect(parsed["US-CA"][4].metrics?.localGenerationGapGwh?.central).toBe(20);
+    expect(parsed["US-CA"][4].metrics?.observedUnmetDemandGwh).toBe(3);
   });
 
   it("requires coherent, versioned score contributions", () => {
@@ -164,6 +164,29 @@ describe("power balance snapshot contracts", () => {
     const compact = { ...forecast, powerBalance: { score: 58, coverage: 80, status: "rankable" } };
     const parsed = regionalEnergySchema.parse({ "US-CA": Array.from({ length: 6 }, (_, i) => ({ ...compact, year: 2026 + i })) });
     expect(parsed["US-CA"][0].powerBalance?.contributions).toEqual([]);
+  });
+
+  it("accepts explicit country-level-only rows without fabricating ADM1 demand", () => {
+    const unavailable = {
+      geographyId: "BB-1", countryIso3: "BBB", year: 2026,
+      availability: "country_level_only", rankable: false, metrics: null,
+      countryControl: {
+        countryIso3: "BBB", year: 2026, sourceYear: 2025, demandGwh: range,
+        sourceIds: ["country-series"], valueKind: "inherited",
+        methodId: "latest-country-control-flat-baseline-v1", confidence: 90, coverage: 100,
+      },
+      reason: "population_unavailable_for_active_adm1",
+      unavailableGeographyIds: ["BB-2"], sourceIds: ["country-series"],
+      methodId: "country-level-only-no-adm1-allocation-v1",
+      valueKind: "unavailable", confidence: 0, coverage: 0, powerBalance: null,
+    };
+    const parsed = regionalEnergySchema.parse({
+      "BB-1": Array.from({ length: 6 }, (_, i) => ({ ...unavailable, year: 2026 + i })),
+    });
+    expect(parsed["BB-1"][0].metrics).toBeNull();
+    expect(() => regionalEnergySchema.parse({
+      "BB-1": Array.from({ length: 6 }, (_, i) => ({ ...unavailable, year: 2026 + i, rankable: true })),
+    })).toThrow();
   });
 
   it("rejects unordered ranges and dates outside the forecast horizon", () => {

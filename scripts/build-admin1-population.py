@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "pipeline" / "src"))
 
 from grid_scope.population import (  # noqa: E402
     TARGET_YEARS,
+    apply_high_resolution_fallbacks,
     apply_official_overrides,
     build_population_artifact,
     load_country_controls,
@@ -21,6 +23,21 @@ from grid_scope.population import (  # noqa: E402
     reconcile_country_totals,
     write_population_artifact,
 )
+
+
+def _fallback_sources(manifest_path: Path, raster_dir: Path) -> list[dict[str, object]]:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sources = payload.get("sources") if isinstance(payload, dict) else None
+    if not isinstance(sources, list):
+        raise ValueError("population fallback manifest requires a sources array")
+    result: list[dict[str, object]] = []
+    for source in sources:
+        if not isinstance(source, dict) or not str(source.get("fileName") or "").strip():
+            raise ValueError("population fallback manifest source requires a fileName")
+        resolved = dict(source)
+        resolved["path"] = raster_dir / str(source["fileName"])
+        result.append(resolved)
+    return result
 
 
 def _filename_source_year(source: Path) -> int | None:
@@ -111,8 +128,13 @@ def main() -> int:
     parser.add_argument("--year", type=int, action="append", dest="years")
     parser.add_argument("--overrides", type=Path)
     parser.add_argument("--controls", type=Path)
+    parser.add_argument("--fallback-manifest", type=Path)
+    parser.add_argument("--fallback-raster-dir", type=Path)
     parser.add_argument("--reconciliation-tolerance", type=float, default=0.01)
     args = parser.parse_args()
+
+    if (args.fallback_manifest is None) != (args.fallback_raster_dir is None):
+        parser.error("--fallback-manifest and --fallback-raster-dir must be provided together")
 
     years = tuple(sorted(set(args.years or TARGET_YEARS)))
     if args.source_year is not None and not 1900 <= args.source_year <= 2100:
@@ -130,6 +152,12 @@ def main() -> int:
         source_years_by_target=source_years,
         source_year_resolution=source_year_resolution,
     )
+    if args.fallback_manifest:
+        artifact = apply_high_resolution_fallbacks(
+            artifact,
+            boundaries_path=args.boundaries,
+            sources=_fallback_sources(args.fallback_manifest, args.fallback_raster_dir),
+        )
     if args.overrides:
         artifact = apply_official_overrides(artifact, load_csv_rows(args.overrides))
     if args.controls:

@@ -24,6 +24,7 @@ from grid_scope.cli import (
     run_refresh_stage_sequence,
     _fetch_eia_observations,
     _field_lineage,
+    _demand_weights_with_iso3,
 )
 from grid_scope.connectors.base import ConnectorResult, FetchPayload
 from grid_scope.models import ConnectorState
@@ -583,6 +584,60 @@ def test_regional_model_preserves_official_demand_and_allocates_residual() -> No
     assert forecasts["USA-A"][0]["metrics"]["demandGwh"]["central"] == 700
     assert forecasts["USA-B"][0]["metrics"]["demandGwh"]["central"] == 300
     assert [row["year"] for row in forecasts["USA-B"]] == list(range(2026, 2032))
+
+
+def test_regional_model_publishes_country_control_without_adm1_demand_for_country_level_only() -> None:
+    root = Path(__file__).parents[2]
+    forecasts, reconciled = build_regional_energy_model(
+        demand_weights={
+            "records": [],
+            "countryLevelOnly": [{
+                "country": "BB",
+                "activeGeographyIds": ["BB-1", "BB-2"],
+                "unavailableGeographyIds": ["BB-2"],
+                "years": [2026],
+                "reason": "population_unavailable_for_active_adm1",
+                "sourceCoverage": {
+                    "availableGeographyCount": 1,
+                    "unavailableGeographyCount": 1,
+                    "populationArtifactFingerprint": "sha256:population",
+                },
+            }],
+        },
+        country_controls=[{
+            "countryIso3": "BBB", "year": 2025, "demandGwh": 1000,
+            "sourceIds": ["country-series"], "valueKind": "reported",
+            "methodId": "country-control-v1", "confidence": 90, "coverage": 100,
+        }],
+        official_observations=[], power_records=[],
+        assumptions=load_generation_assumptions(root / "data/curated/generation-assumptions.json"),
+        method_config=load_regional_demand_methods(root / "data/curated/regional-demand-methods.json"),
+        country_iso3_by_iso2={"BB": "BBB"},
+    )
+
+    assert reconciled is True
+    assert set(forecasts) == {"BB-1", "BB-2"}
+    assert [row["year"] for row in forecasts["BB-2"]] == list(range(2026, 2032))
+    row = forecasts["BB-1"][0]
+    assert row["availability"] == "country_level_only"
+    assert row["rankable"] is False
+    assert row["metrics"] is None
+    assert row["countryControl"]["demandGwh"]["central"] == 1000
+    assert row["countryControl"]["sourceIds"] == ["country-series"]
+    assert row["valueKind"] == "unavailable"
+
+
+def test_refresh_maps_iso2_weight_countries_to_country_control_iso3() -> None:
+    resolved = _demand_weights_with_iso3(
+        {"records": [{"geographyId": "US-CA", "country": "US", "year": 2026}]},
+        {"US": "USA"},
+    )
+    assert resolved["records"][0]["countryIso3"] == "USA"
+    with pytest.raises(ValueError, match="ISO3 mapping"):
+        _demand_weights_with_iso3(
+            {"records": [{"geographyId": "XX-1", "country": "XX", "year": 2026}]},
+            {},
+        )
 
 
 def test_regional_model_uses_every_official_field_and_forward_increment_once() -> None:

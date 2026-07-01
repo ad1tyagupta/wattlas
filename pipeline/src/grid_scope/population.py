@@ -240,11 +240,14 @@ def _raster_coverage_reason(
     geometry: Mapping[str, Any],
 ) -> str | None:
     components = _polygon_components(geometry)
+    # Global rasters can serialize an intended +180/-180 extent a tiny
+    # fraction of a cell short (WorldPop's production raster is ~0.00017 of a
+    # pixel short at +180). Treat sub-thousandth-pixel drift as numeric noise,
+    # while retaining the fail-closed coverage check for real clipping.
     pixel_tolerance = max(
         abs(float(dataset.transform.a)),
         abs(float(dataset.transform.e)),
-        1.0,
-    ) * 1e-7
+    ) * 1e-3
     raster_bounds = dataset.bounds
     any_intersection = False
     all_inside = True
@@ -476,6 +479,163 @@ def build_population_artifact(
         "unavailable": unavailable,
     }
     sealed = _seal_population_artifact(artifact)
+    _validate_population_artifact(sealed)
+    return sealed
+
+
+def apply_high_resolution_fallbacks(
+    artifact: Mapping[str, Any],
+    *,
+    boundaries_path: Path,
+    sources: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Fill only unavailable ADM1 rows from version-pinned country rasters.
+
+    The primary global raster remains authoritative wherever it produced a
+    value. Country 100m rasters are a narrow resolution fallback for polygons
+    that contain no valid 1km cell, and every fallback is checksum-pinned in
+    both release metadata and the effective build-input fingerprint.
+    """
+
+    result = deepcopy(dict(artifact))
+    _validate_population_artifact(result)
+    collection = json.loads(boundaries_path.read_text())
+    if not isinstance(collection, Mapping):
+        raise ValueError("boundary GeoJSON must be an object")
+    boundary_crs = _boundary_crs(collection)
+    features = {feature["id"]: feature for feature in _active_features(collection)}
+    if checksum_file(boundaries_path) != result["buildInputs"]["boundaryChecksumSha256"]:
+        raise ValueError("fallback boundaries do not match primary population artifact")
+
+    normalized_sources: list[dict[str, Any]] = []
+    source_paths: dict[str, Path] = {}
+    countries: set[str] = set()
+    for raw in sources:
+        country = str(raw.get("country") or "").strip().upper()
+        path = Path(raw.get("path") or "")
+        checksum = str(raw.get("checksumSha256") or "").strip().lower()
+        source_id = str(raw.get("sourceId") or "").strip()
+        source_release = str(raw.get("sourceRelease") or "").strip()
+        source_url = str(raw.get("sourceUrl") or "").strip()
+        source_year = raw.get("sourceYear")
+        arc_seconds = raw.get("resolutionArcSeconds")
+        metres = raw.get("resolutionMetersAtEquator")
+        if (
+            re.fullmatch(r"[A-Z]{2}", country) is None
+            or country in countries
+            or isinstance(source_year, bool)
+            or not isinstance(source_year, int)
+            or not 1900 <= source_year <= 2100
+            or not source_id
+            or not source_release
+            or not source_url.startswith(("http://", "https://"))
+            or isinstance(arc_seconds, bool)
+            or not isinstance(arc_seconds, (int, float))
+            or not math.isfinite(float(arc_seconds))
+            or float(arc_seconds) <= 0
+            or isinstance(metres, bool)
+            or not isinstance(metres, (int, float))
+            or not math.isfinite(float(metres))
+            or float(metres) <= 0
+            or not _valid_checksum(checksum)
+        ):
+            raise ValueError("invalid high-resolution population fallback source")
+        if not path.is_file():
+            raise ValueError(f"fallback population raster does not exist: {path}")
+        if checksum_file(path) != checksum:
+            raise ValueError(f"fallback raster checksum mismatch: {path.name}")
+        countries.add(country)
+        source_paths[country] = path
+        normalized_sources.append({
+            "country": country,
+            "sourceYear": source_year,
+            "fileName": path.name,
+            "checksumSha256": checksum,
+            "sourceId": source_id,
+            "sourceRelease": source_release,
+            "sourceUrl": source_url,
+            "resolutionArcSeconds": float(arc_seconds),
+            "resolutionMetersAtEquator": float(metres),
+            "method": MODEL_METHOD_ID,
+        })
+    normalized_sources.sort(key=lambda row: row["country"])
+
+    records = result["records"]
+    unavailable = result["unavailable"]
+    unavailable_by_country: dict[str, list[dict[str, Any]]] = {}
+    for row in unavailable:
+        unavailable_by_country.setdefault(row["country"], []).append(row)
+    rescued_keys: set[tuple[str, int]] = set()
+    for source in normalized_sources:
+        candidates = unavailable_by_country.get(source["country"], [])
+        if not candidates:
+            continue
+        source_year = source["sourceYear"]
+        if any(
+            result["sourceRelease"]["targetSourceYears"][str(row["year"])] != source_year
+            for row in candidates
+        ):
+            raise ValueError("fallback source year disagrees with target/source mapping")
+        with rasterio.open(source_paths[source["country"]]) as dataset:
+            if dataset.count < 1 or dataset.crs is None:
+                raise ValueError("fallback population raster requires one band and a CRS")
+            aggregates: dict[str, tuple[float, float]] = {}
+            for geography_id in sorted({row["geographyId"] for row in candidates}):
+                feature = features.get(geography_id)
+                if feature is None or feature["country"] != source["country"]:
+                    raise ValueError("fallback geography is absent or has a country mismatch")
+                geometry = feature["geometry"]
+                if boundary_crs != dataset.crs:
+                    geometry = transform_geom(boundary_crs, dataset.crs, geometry)
+                if _raster_coverage_reason(dataset, geometry) is not None:
+                    continue
+                aggregate = _zonal_population(dataset, geometry)
+                if aggregate is not None:
+                    aggregates[geography_id] = aggregate
+            for marker in candidates:
+                aggregate = aggregates.get(marker["geographyId"])
+                if aggregate is None:
+                    continue
+                population, coverage = aggregate
+                year = marker["year"]
+                method_id = result["sourceRelease"]["projectionMethodsByTarget"][str(year)]
+                record = {
+                    "geographyId": marker["geographyId"],
+                    "name": marker["name"],
+                    "country": marker["country"],
+                    "year": year,
+                    "population": _round_population(population),
+                    "sourceYear": source_year,
+                    "sourceRelease": source["sourceRelease"],
+                    "valueKind": "estimated",
+                    "methodId": method_id,
+                    "sourceIds": [source["sourceId"]],
+                    "sourceUrl": source["sourceUrl"],
+                    "confidence": 70.0,
+                    "coverage": round(coverage, 6),
+                    "roundingMethod": ROUNDING_METHOD,
+                    "adjustmentFactor": 1.0,
+                    "fallbackSource": True,
+                    "sourceResolutionArcSeconds": source["resolutionArcSeconds"],
+                    "sourceResolutionMetersAtEquator": source["resolutionMetersAtEquator"],
+                }
+                if year != source_year:
+                    record["baseYear"] = source_year
+                records.append(record)
+                rescued_keys.add((marker["geographyId"], year))
+
+    result["records"] = sorted(records, key=lambda row: (row["geographyId"], row["year"]))
+    result["unavailable"] = [
+        row for row in unavailable if (row["geographyId"], row["year"]) not in rescued_keys
+    ]
+    result["sourceRelease"]["fallbackSources"] = normalized_sources
+    release_payload = dict(result["sourceRelease"])
+    release_payload.pop("fingerprint", None)
+    result["sourceRelease"]["fingerprint"] = _content_fingerprint(release_payload)
+    result["buildInputs"]["fallbackRasterSourcesFingerprint"] = _content_fingerprint(
+        normalized_sources
+    )
+    sealed = _seal_population_artifact(result)
     _validate_population_artifact(sealed)
     return sealed
 
@@ -902,6 +1062,48 @@ def _validate_population_artifact(artifact: dict[str, Any]) -> None:
     ):
         raise ValueError("population reconciliation tolerance is invalid")
     release = _validate_source_release(artifact.get("sourceRelease"))
+    fallback_sources = release.get("fallbackSources", [])
+    if not isinstance(fallback_sources, list):
+        raise ValueError("population fallback sources must be an array")
+    fallback_by_country: dict[str, dict[str, Any]] = {}
+    for source in fallback_sources:
+        if not isinstance(source, dict):
+            raise ValueError("invalid population fallback source metadata")
+        country = source.get("country")
+        source_year = source.get("sourceYear")
+        if (
+            not isinstance(country, str)
+            or re.fullmatch(r"[A-Z]{2}", country) is None
+            or country in fallback_by_country
+            or isinstance(source_year, bool)
+            or not isinstance(source_year, int)
+            or not 1900 <= source_year <= 2100
+            or not str(source.get("fileName") or "").strip()
+            or not _valid_checksum(source.get("checksumSha256"))
+            or not str(source.get("sourceId") or "").strip()
+            or not str(source.get("sourceRelease") or "").strip()
+            or not str(source.get("sourceUrl") or "").startswith(("http://", "https://"))
+            or source.get("method") != MODEL_METHOD_ID
+        ):
+            raise ValueError("invalid population fallback source metadata")
+        for field in ("resolutionArcSeconds", "resolutionMetersAtEquator"):
+            value = source.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0
+            ):
+                raise ValueError("invalid population fallback resolution metadata")
+        fallback_by_country[country] = source
+    if fallback_sources != sorted(fallback_sources, key=lambda row: row["country"]):
+        raise ValueError("population fallback sources must be sorted by country")
+    fallback_fingerprint = build_inputs.get("fallbackRasterSourcesFingerprint")
+    if fallback_sources:
+        if fallback_fingerprint != _content_fingerprint(fallback_sources):
+            raise ValueError("population fallback source fingerprint mismatch")
+    elif fallback_fingerprint is not None:
+        raise ValueError("population fallback fingerprint exists without sources")
     if build_inputs.get("targetSourceYears") != release["targetSourceYears"]:
         raise ValueError("population build target/source mapping mismatch")
     if build_inputs.get("projectionMethodsByTarget") != release["projectionMethodsByTarget"]:
@@ -976,6 +1178,21 @@ def _validate_population_artifact(artifact: dict[str, Any]) -> None:
             raise ValueError("reported population record requires a public source URL")
         if not str(row.get("roundingMethod") or "").strip():
             raise ValueError("population record requires a rounding method")
+        if row.get("fallbackSource") is True:
+            fallback = fallback_by_country.get(country)
+            if (
+                fallback is None
+                or source_year != fallback["sourceYear"]
+                or row.get("sourceRelease") != fallback["sourceRelease"]
+                or source_ids != [fallback["sourceId"]]
+                or row.get("sourceUrl") != fallback["sourceUrl"]
+                or row.get("sourceResolutionArcSeconds") != fallback["resolutionArcSeconds"]
+                or row.get("sourceResolutionMetersAtEquator")
+                != fallback["resolutionMetersAtEquator"]
+            ):
+                raise ValueError("population fallback record disagrees with source metadata")
+        elif "fallbackSource" in row:
+            raise ValueError("population fallback marker must be true when present")
         if "countryControlPopulation" in row:
             control_population = row["countryControlPopulation"]
             if (

@@ -644,19 +644,67 @@ def build_regional_demand_weights(
     population_rows = population_artifact.get("records")
     if not isinstance(population_rows, list):
         raise ValueError("population artifact requires records")
+    unavailable_rows = population_artifact.get("unavailable", [])
+    if not isinstance(unavailable_rows, list):
+        raise ValueError("population artifact unavailable markers must be an array")
     population_ids = {str(row.get("geographyId") or "").strip() for row in population_rows}
-    if population_ids != set(active):
+    relevant_unavailable_rows = [
+        row for row in unavailable_rows
+        if str(row.get("geographyId") or "").strip() in set(active)
+    ]
+    unavailable_ids = {
+        str(row.get("geographyId") or "").strip() for row in relevant_unavailable_rows
+    }
+    if not population_ids.issubset(set(active)) or population_ids | unavailable_ids != set(active):
         raise ValueError("population artifact IDs must exactly match active ADM1 IDs")
     geography_country: dict[str, str] = {}
-    population_values: dict[tuple[str, int], dict[str, Any]] = {}
-    for row in population_rows:
+    for row in [*population_rows, *relevant_unavailable_rows]:
         geography_id = str(row.get("geographyId") or "").strip()
         country = str(row.get("country") or "").strip().upper()
-        if re.fullmatch(r"[A-Z]{2}", country) is None:
+        if not geography_id or re.fullmatch(r"[A-Z]{2}", country) is None:
             raise ValueError(f"population record requires an ISO2 country: {geography_id}")
         previous_country = geography_country.setdefault(geography_id, country)
         if previous_country != country:
             raise ValueError(f"population geography changes country: {geography_id}")
+    country_active_ids: dict[str, list[str]] = {}
+    for geography_id in active:
+        country_active_ids.setdefault(geography_country[geography_id], []).append(geography_id)
+    unavailable_by_country: dict[str, set[str]] = {}
+    unavailable_years_by_country: dict[str, set[int]] = {}
+    for row in relevant_unavailable_rows:
+        geography_id = str(row.get("geographyId") or "").strip()
+        country = geography_country[geography_id]
+        try:
+            year = int(row.get("year"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("population unavailable marker requires a target year") from error
+        if year not in TARGET_YEARS:
+            raise ValueError("population unavailable marker requires a target year")
+        unavailable_by_country.setdefault(country, set()).add(geography_id)
+        unavailable_years_by_country.setdefault(country, set()).add(year)
+    country_level_only_countries = set(unavailable_by_country)
+    country_level_only = [
+        {
+            "country": country,
+            "activeGeographyIds": sorted(country_active_ids[country]),
+            "unavailableGeographyIds": sorted(unavailable_by_country[country]),
+            "years": sorted(unavailable_years_by_country[country]),
+            "reason": "population_unavailable_for_active_adm1",
+            "sourceCoverage": {
+                "availableGeographyCount": len(country_active_ids[country])
+                - len(unavailable_by_country[country]),
+                "unavailableGeographyCount": len(unavailable_by_country[country]),
+                "populationArtifactFingerprint": population_artifact.get("buildFingerprint"),
+            },
+        }
+        for country in sorted(country_level_only_countries)
+    ]
+    population_values: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in population_rows:
+        geography_id = str(row.get("geographyId") or "").strip()
+        country = geography_country[geography_id]
+        if country in country_level_only_countries:
+            continue
         year = int(row.get("year"))
         key = (geography_id, year)
         if key in population_values:
@@ -670,6 +718,14 @@ def build_regional_demand_weights(
         }
     activity_values = _component_records(activity_records, component="activity", geography_country=geography_country)
     industrial_values = _component_records(industrial_records, component="industrial", geography_country=geography_country)
+    activity_values = {
+        key: value for key, value in activity_values.items()
+        if geography_country[key[0]] not in country_level_only_countries
+    }
+    industrial_values = {
+        key: value for key, value in industrial_values.items()
+        if geography_country[key[0]] not in country_level_only_countries
+    }
     for label, values in (("activity", activity_values), ("industrial", industrial_values)):
         unexpected = sorted(set(values) - set(population_values))
         if unexpected:
@@ -689,6 +745,8 @@ def build_regional_demand_weights(
         except (TypeError, ValueError) as error:
             raise ValueError("official observation requires a year") from error
         key = (geography_id, year)
+        if geography_country[geography_id] in country_level_only_countries:
+            continue
         if key not in population_values:
             raise ValueError(
                 f"official observation has no matching population geography-year: "
@@ -769,17 +827,92 @@ def build_regional_demand_weights(
             | {source for row in official_lineage for source in row["sourceIds"]}
         ),
         "records": records,
+        "countryLevelOnly": country_level_only,
         "officialObservationLineage": official_lineage,
         "buildInputs": build_inputs,
         "effectiveInputFingerprint": _fingerprint(build_inputs),
     }
     artifact["buildFingerprint"] = _fingerprint(artifact)
+    _validate_regional_demand_weights_artifact(artifact)
     return artifact
 
 
-def write_regional_demand_weights(artifact: Mapping[str, Any], output: Path | str) -> None:
+def _validate_regional_demand_weights_artifact(artifact: Mapping[str, Any]) -> None:
     if artifact.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError("unsupported regional demand weights schema")
+    build_inputs = artifact.get("buildInputs")
+    if not isinstance(build_inputs, Mapping):
+        raise ValueError("regional demand weights require build inputs")
+    if artifact.get("effectiveInputFingerprint") != _fingerprint(build_inputs):
+        raise ValueError("regional demand weights effective-input fingerprint mismatch")
+    seal_payload = dict(artifact)
+    stored_seal = seal_payload.pop("buildFingerprint", None)
+    if stored_seal != _fingerprint(seal_payload):
+        raise ValueError("regional demand weights build fingerprint mismatch")
+    active = set(_id_list(
+        build_inputs.get("activeGeographyIds"),
+        label="active ADM1 geography IDs",
+    ))
+    records = artifact.get("records")
+    exceptions = artifact.get("countryLevelOnly", [])
+    if not isinstance(records, list) or not isinstance(exceptions, list):
+        raise ValueError("regional demand weights require records and country-level-only arrays")
+    exception_countries: set[str] = set()
+    exception_active_ids: set[str] = set()
+    population_fingerprint = build_inputs.get("populationFingerprint")
+    for entry in exceptions:
+        if not isinstance(entry, Mapping):
+            raise ValueError("invalid country-level-only exception")
+        country = str(entry.get("country") or "").strip().upper()
+        active_ids = set(_id_list(
+            entry.get("activeGeographyIds"), label=f"country-level-only {country} active IDs"
+        ))
+        unavailable_ids = set(_id_list(
+            entry.get("unavailableGeographyIds"),
+            label=f"country-level-only {country} unavailable IDs",
+        ))
+        coverage = entry.get("sourceCoverage")
+        if (
+            re.fullmatch(r"[A-Z]{2}", country) is None
+            or country in exception_countries
+            or entry.get("reason") != "population_unavailable_for_active_adm1"
+            or not unavailable_ids
+            or not unavailable_ids.issubset(active_ids)
+            or not active_ids.issubset(active)
+            or exception_active_ids & active_ids
+            or not isinstance(coverage, Mapping)
+            or coverage.get("populationArtifactFingerprint") != population_fingerprint
+            or coverage.get("availableGeographyCount") != len(active_ids - unavailable_ids)
+            or coverage.get("unavailableGeographyCount") != len(unavailable_ids)
+        ):
+            raise ValueError("country-level-only exception requires an active unavailable population gap")
+        years = entry.get("years")
+        if (
+            not isinstance(years, list)
+            or not years
+            or years != sorted(set(years))
+            or any(isinstance(year, bool) or not isinstance(year, int) or year not in TARGET_YEARS for year in years)
+        ):
+            raise ValueError("country-level-only exception has invalid unavailable years")
+        exception_countries.add(country)
+        exception_active_ids.update(active_ids)
+    record_ids: set[str] = set()
+    for row in records:
+        if not isinstance(row, Mapping):
+            raise ValueError("regional demand weight must be an object")
+        geography_id = str(row.get("geographyId") or "").strip()
+        country = str(row.get("country") or "").strip().upper()
+        if geography_id in exception_active_ids or country in exception_countries:
+            raise ValueError("country-level-only countries cannot contain regional rows")
+        if geography_id not in active:
+            raise ValueError("regional demand weight uses an inactive ADM1 ID")
+        record_ids.add(geography_id)
+    if record_ids | exception_active_ids != active:
+        raise ValueError("regional demand weights must represent every active ADM1 ID")
+
+
+def write_regional_demand_weights(artifact: Mapping[str, Any], output: Path | str) -> None:
+    _validate_regional_demand_weights_artifact(artifact)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_stable_json(artifact) + "\n", encoding="utf-8")

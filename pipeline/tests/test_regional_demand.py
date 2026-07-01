@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+import grid_scope.regional_demand as regional_demand_module
 from grid_scope.population import build_population_artifact, write_population_artifact
 from grid_scope.regional_demand import (
     add_forward_demand_increments,
@@ -430,6 +431,74 @@ def test_weight_artifact_contains_only_normalized_compact_inputs_and_fingerprint
             population_artifact=population_without_lineage,
             active_geography_ids={"AA-1", "AA-2"},
         )
+
+
+def test_weight_builder_marks_whole_country_level_only_when_any_active_adm1_is_unavailable() -> None:
+    population = _population_artifact()
+    population["records"].extend([
+        {
+            "geographyId": "BB-1", "country": "BB", "year": year,
+            "population": 25, "sourceIds": ["worldpop"],
+        }
+        for year in (2026, 2027)
+    ])
+    population["unavailable"] = [
+        {
+            "geographyId": "BB-2", "name": "Unsupported island", "country": "BB",
+            "year": year, "reason": "outside_raster_coverage",
+        }
+        for year in (2026, 2027)
+    ]
+
+    artifact = build_regional_demand_weights(
+        population_artifact=population,
+        active_geography_ids={"AA-1", "AA-2", "BB-1", "BB-2"},
+    )
+
+    assert {row["geographyId"] for row in artifact["records"]} == {"AA-1", "AA-2"}
+    assert artifact["countryLevelOnly"] == [{
+        "country": "BB",
+        "activeGeographyIds": ["BB-1", "BB-2"],
+        "unavailableGeographyIds": ["BB-2"],
+        "years": [2026, 2027],
+        "reason": "population_unavailable_for_active_adm1",
+        "sourceCoverage": {
+            "availableGeographyCount": 1,
+            "unavailableGeographyCount": 1,
+            "populationArtifactFingerprint": "sha256:population",
+        },
+    }]
+    assert set(artifact["buildInputs"]["activeGeographyIds"]) == {
+        "AA-1", "AA-2", "BB-1", "BB-2",
+    }
+
+
+def test_weight_writer_rejects_country_level_only_without_gap_or_with_modelled_row(tmp_path: Path) -> None:
+    population = _population_artifact()
+    population["records"] = [
+        row for row in population["records"] if row["geographyId"] != "AA-2"
+    ]
+    population["unavailable"] = [{
+        "geographyId": "AA-2", "name": "Gap", "country": "AA", "year": year,
+        "reason": "outside_raster_coverage",
+    } for year in (2026, 2027)]
+    artifact = build_regional_demand_weights(
+        population_artifact=population,
+        active_geography_ids={"AA-1", "AA-2"},
+    )
+    artifact["records"].append({
+        "geographyId": "AA-1", "country": "AA", "year": 2026,
+        "populationShare": 1.0, "activityShare": None, "industrialShare": None,
+        "sourceIds": ["worldpop"],
+    })
+    # Re-seal to prove semantic validation catches the leak independently of
+    # content-integrity validation.
+    artifact["buildFingerprint"] = regional_demand_module._fingerprint({
+        key: value for key, value in artifact.items() if key != "buildFingerprint"
+    })
+
+    with pytest.raises(ValueError, match="country-level-only.*regional rows"):
+        write_regional_demand_weights(artifact, tmp_path / "weights.json")
 
 
 def test_weight_builder_cli_is_deterministic(tmp_path: Path) -> None:
