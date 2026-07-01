@@ -86,9 +86,10 @@ def _metric_kind(row: dict[str, Any]) -> tuple[str, str | None] | None:
     variable = _first(row, "Variable", "Metric", "metric").lower()
     subcategory = _first(row, "Subcategory", "subcategory").lower()
     unit = _first(row, "Unit", "unit")
-    # Use the unit converter only as a vocabulary check, never on the row value.
+    # Use a finite sentinel so punctuation-only units such as ``%`` cannot be
+    # mistaken for a missing unit by the converter's null-value path.
     try:
-        normalize_metric_value(None, unit=unit, dimension="energy")
+        normalize_metric_value(0, unit=unit, dimension="energy")
     except ValueError:
         return None
     if category in {"electricity demand", "demand"} and variable in {
@@ -122,6 +123,11 @@ def normalize_ember_yearly_rows(
     lookup = country_lookup or {}
     grouped: dict[tuple[str, int], dict[str, Any]] = {}
     for index, row in enumerate(rows, start=1):
+        area_type = _first(row, "Area type", "area_type").lower()
+        if area_type and area_type not in {"country", "country or economy", "economy"}:
+            if report is not None:
+                report["ignoredRows"] = int(report.get("ignoredRows", 0)) + 1
+            continue
         metric_kind = _metric_kind(row)
         if metric_kind is None:
             if report is not None:

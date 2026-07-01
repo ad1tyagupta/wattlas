@@ -72,6 +72,31 @@ def test_ember_full_dataset_ignores_non_energy_metrics_before_grouping() -> None
     assert report["ignoredRows"] == 3
 
 
+def test_ember_ignores_percentage_fuel_rows_from_full_release() -> None:
+    report: dict = {}
+    records = normalize_ember_yearly_rows([{
+        "Area": "Afghanistan", "ISO 3 code": "AFG", "Year": "2024",
+        "Category": "Electricity generation", "Subcategory": "Fuel",
+        "Variable": "Bioenergy", "Unit": "%", "Value": "1.5",
+    }], report=report)
+
+    assert records == []
+    assert report == {"ignoredRows": 1}
+
+
+def test_ember_ignores_aggregate_regions_from_full_release() -> None:
+    report: dict = {}
+    records = normalize_ember_yearly_rows([{
+        "Area": "Africa", "ISO 3 code": "", "Year": "2024",
+        "Area type": "Region", "Category": "Electricity demand",
+        "Subcategory": "Demand", "Variable": "Demand", "Unit": "TWh",
+        "Value": "900",
+    }], report=report)
+
+    assert records == []
+    assert report == {"ignoredRows": 1}
+
+
 @pytest.mark.parametrize(
     ("field", "conflicting_value"),
     [("Source URL", "https://example.org/other"),
