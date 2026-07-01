@@ -70,6 +70,81 @@ button {
   background: var(--ground);
 }
 
+.snapshot-loader {
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  min-height: 100dvh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% 15%, rgb(114 217 189 / 16%), transparent 32%),
+    radial-gradient(circle at 85% 80%, rgb(143 174 255 / 12%), transparent 34%),
+    var(--ground);
+}
+
+.snapshot-loader-card {
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgb(13 25 24 / 86%);
+  box-shadow: 0 28px 90px rgb(0 0 0 / 35%);
+}
+
+.snapshot-loader-card .eyebrow {
+  margin: 0 0 14px;
+  color: var(--mint);
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 11px;
+  letter-spacing: .18em;
+}
+
+.snapshot-loader-card h1 {
+  margin: 0;
+  font-family: var(--font-plex-condensed), sans-serif;
+  font-size: clamp(30px, 5vw, 48px);
+  line-height: .98;
+}
+
+.snapshot-loader-card p:not(.eyebrow) {
+  max-width: 420px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.snapshot-loader-card pre {
+  margin: 18px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--rust);
+  font: 12px/1.5 var(--font-plex-mono), monospace;
+}
+
+.snapshot-loader-bar {
+  position: relative;
+  height: 3px;
+  margin-top: 24px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+}
+
+.snapshot-loader-bar::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--mint), transparent);
+  animation: snapshot-loader-sweep 1.2s ease-in-out infinite;
+  content: "";
+}
+
+@keyframes snapshot-loader-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(260%); }
+}
+
 /* Command bar */
 .command-bar {
   grid-area: command;

@@ -1,9 +1,7 @@
-import { OpportunityRadar } from "@/components/opportunity-radar";
-import { loadSnapshot } from "@/lib/snapshot/load";
+import { SnapshotLoader } from "@/components/snapshot-loader";
 
 export const dynamic = "force-static";
 
-export default async function Home() {
-  const snapshot = await loadSnapshot();
-  return <OpportunityRadar snapshot={snapshot} />;
+export default function Home() {
+  return <SnapshotLoader />;
 }
