@@ -59,6 +59,19 @@ test("keeps the analytical canvas usable in the in-app pane", async ({ page }, t
   expect(layout.inspector?.width).toBe(300);
   expect(layout.map?.right).toBeLessThanOrEqual(layout.inspector?.left ?? 0);
   expect(layout.inspector?.right).toBeLessThanOrEqual(layout.viewport);
+
+  await expect(page.getByRole("link", { name: "United Nations" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "India boundary perspective: Government of India" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Wattlas open-source project by Aditya Gupta" })).toBeVisible();
+
+  const attributionBox = await page.locator(".data-attribution").boundingBox();
+  const navigationBox = await page.locator(".maplibregl-ctrl-bottom-left").boundingBox();
+  expect(attributionBox && navigationBox && (
+    attributionBox.x < navigationBox.x + navigationBox.width
+    && attributionBox.x + attributionBox.width > navigationBox.x
+    && attributionBox.y < navigationBox.y + navigationBox.height
+    && attributionBox.y + attributionBox.height > navigationBox.y
+  )).toBeFalsy();
 });
 
 test("stacks the map and inspector without mobile overflow", async ({ page }, testInfo) => {

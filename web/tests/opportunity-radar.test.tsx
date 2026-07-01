@@ -77,7 +77,7 @@ const snapshot: SnapshotData = {
     },
   }] } as SnapshotData["assets"],
   evidence: { sources: [], claims: [] },
-};
+} as unknown as SnapshotData;
 
 describe("OpportunityRadar", () => {
   it("renders daily freshness, lenses, year, and source truth", () => {
@@ -96,6 +96,17 @@ describe("OpportunityRadar", () => {
     expect(screen.getByText("Severe pressure")).toBeInTheDocument();
     expect(screen.getAllByText("2030").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^LIVE$/)).not.toBeInTheDocument();
+  });
+
+  it("distinguishes source observation time from check time and states unavailable observations plainly", () => {
+    render(<OpportunityRadar snapshot={snapshot} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Daily refreshed/i }));
+
+    expect(screen.getByText("Observed 27 Jun, 04:12 UTC")).toBeInTheDocument();
+    expect(screen.getAllByText("Checked 27 Jun, 04:12 UTC")).toHaveLength(2);
+    expect(screen.getByText("Observation unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Token missing")).toBeInTheDocument();
   });
 
   it("selects and inspects an individual facility", () => {

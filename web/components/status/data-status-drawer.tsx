@@ -15,7 +15,12 @@ export function DataStatusDrawer({ manifest, open, onClose }: Props) {
           {manifest.connectors.map((connector) => (
             <article key={connector.id} className="connector-row">
               <span className={`connector-state ${connector.state}`} aria-label={connector.state} />
-              <div><strong>{connectorLabel(connector.id)}</strong><small>{connector.message ?? `Checked ${formatSnapshotTime(connector.checkedAt)}`}</small></div>
+              <div>
+                <strong>{connectorLabel(connector.id)}</strong>
+                <small>{connector.lastSuccessAt ? `Observed ${formatSnapshotTime(connector.lastSuccessAt)}` : "Observation unavailable"}</small>
+                <small>Checked {formatSnapshotTime(connector.checkedAt)}</small>
+                {connector.message ? <small className="connector-message">{connector.message}</small> : null}
+              </div>
               <em>{connector.state.replace("_", " ")}</em>
             </article>
           ))}

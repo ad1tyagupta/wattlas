@@ -438,12 +438,18 @@ button {
   z-index: 4;
   right: 8px;
   bottom: 25px;
+  display: flex;
+  max-width: min(760px, calc(100% - 16px));
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px 12px;
   padding: 4px 6px;
-  color: var(--muted);
+  color: #9baca8;
   background: rgb(7 16 15 / 76%);
   font-family: var(--font-plex-mono), monospace;
   font-size: 8px;
-  text-decoration: none;
+  line-height: 1.45;
+  text-align: right;
 }
 
 .data-attribution a {
@@ -453,6 +459,16 @@ button {
 
 .data-attribution a:hover {
   color: var(--text);
+}
+
+.data-attribution a:focus-visible {
+  border-radius: 1px;
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+
+.creator-attribution {
+  white-space: nowrap;
 }
 
 .maplibregl-map {
@@ -1091,6 +1107,10 @@ button {
   display: block;
 }
 
+.connector-row .connector-message {
+  color: var(--amber);
+}
+
 .connector-row strong {
   font-size: 13px;
   font-weight: 500;
@@ -1413,6 +1433,13 @@ button {
 
   .map-meta {
     min-width: 250px;
+  }
+
+  .data-attribution {
+    right: 6px;
+    bottom: 25px;
+    max-width: calc(100% - 58px);
+    font-size: 8px;
   }
 }
 

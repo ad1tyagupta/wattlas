@@ -61,7 +61,15 @@ describe("GlobalMap", () => {
     expect(screen.getByRole("region", { name: "Global opportunity map" })).toBeInTheDocument();
     expect(screen.getByText(/246 countries · 14 infrastructure assets/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toHaveAttribute("href", "https://www.openstreetmap.org/copyright");
-    expect(screen.getByText(/India boundary perspective: Government of India/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Wattlas open-source project by Aditya Gupta" })).toHaveAttribute(
+      "href",
+      "https://github.com/ad1tyagupta/wattlas",
+    );
+    expect(screen.getByText("Created by Aditya Gupta · Open-source project")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "United Nations" })).toHaveAttribute("href", "https://www.un.org/geospatial/mapsgeo");
+    expect(screen.getByRole("link", { name: "GISCO" })).toHaveAttribute("href", "https://ec.europa.eu/eurostat/web/gisco");
+    expect(screen.getByRole("link", { name: "geoBoundaries" })).toHaveAttribute("href", "https://www.geoboundaries.org/");
+    expect(screen.getByRole("link", { name: "India boundary perspective: Government of India" })).toHaveAttribute("href", "https://surveyofindia.gov.in/");
   });
 
   it("clusters infrastructure while preserving selectable facility layers", () => {

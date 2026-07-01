@@ -461,10 +461,17 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       </div>
       <div ref={containerRef} className="map-container" data-testid="global-map" />
       <div className="map-composition-key" aria-label="Generator cluster composition">Cluster labels show technology counts; mixed clusters are neutral. At world scale lifecycle filters exclude aggregates only when no selected plants match; partial lifecycle matches retain unfiltered capacity and technology mix and are labelled approximate.</div>
-      <div className="data-attribution">
-        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">Infrastructure © OpenStreetMap contributors · ODbL</a>
-        <span> · </span><a href="https://www.geoboundaries.org/" target="_blank" rel="noreferrer">Regions © geoBoundaries · CC BY 4.0</a>
-        <span> · India boundary perspective: Government of India</span>
+      <div className="data-attribution" aria-label="Map data and project attribution">
+        <span>
+          Boundaries: <a href="https://www.un.org/geospatial/mapsgeo" target="_blank" rel="noreferrer">United Nations</a>
+          {" · "}<a href="https://ec.europa.eu/eurostat/web/gisco" target="_blank" rel="noreferrer">GISCO</a>
+          {" · "}<a href="https://www.geoboundaries.org/" target="_blank" rel="noreferrer">geoBoundaries</a>
+          {" · "}<a href="https://surveyofindia.gov.in/" target="_blank" rel="noreferrer">India boundary perspective: Government of India</a>
+          {" · "}<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" aria-label="OpenStreetMap infrastructure attribution">Infrastructure © OpenStreetMap contributors · ODbL</a>
+        </span>
+        <a className="creator-attribution" href="https://github.com/ad1tyagupta/wattlas" target="_blank" rel="noreferrer" aria-label="Wattlas open-source project by Aditya Gupta">
+          Created by Aditya Gupta · Open-source project
+        </a>
       </div>
     </section>
   );
