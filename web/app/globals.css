@@ -526,6 +526,9 @@ button {
 .power-balance-chart table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .power-balance-chart th, .power-balance-chart td { padding: 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .power-contribution { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.power-contribution > div { display: grid; gap: 3px; }
+.power-contribution small, .contribution-summary { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.energy-load-error { padding: 10px; border: 1px solid var(--rust); color: var(--text); }
 .comparison-energy { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; font-size: 11px; }
 .comparison-energy dt { color: var(--muted); }
 .comparison-energy dd { margin: 0; }

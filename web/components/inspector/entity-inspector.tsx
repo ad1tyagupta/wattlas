@@ -16,6 +16,9 @@ type Props = {
   regionalEnergy?: RegionalEnergyForecast[];
   generatorOverview?: GeneratorOverviewCollection | null;
   evidence?: EvidenceData;
+  regionalEnergyState?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  regionalEnergyError?: string | null;
+  onRetryRegionalEnergy?: () => void;
   lens: LensKey;
   year: number;
   onOpenEvidence: () => void;
@@ -40,7 +43,7 @@ function formatAddress(address: AssetFeature["properties"]["address"]): string {
 const number = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value);
 const metric = (value: { central: number } | null, unit: string) => value ? `${number(value.central)} ${unit}` : "Unavailable";
 
-export function EntityInspector({ geography, asset, generator, regionalEnergy = [], generatorOverview, evidence, lens, year, onOpenEvidence, onAddComparison }: Props) {
+export function EntityInspector({ geography, asset, generator, regionalEnergy = [], generatorOverview, evidence, regionalEnergyState = "ready", regionalEnergyError, onRetryRegionalEnergy, lens, year, onOpenEvidence, onAddComparison }: Props) {
   if (generator) {
     const properties = generator.properties;
     const name = typeof properties.name === "string" ? properties.name : properties.id;
@@ -52,9 +55,10 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
       <div className="facility-detail-groups">
         <section className="facility-detail-group"><h2>Plant</h2><div className="facility-facts">
           <span>Technology<strong>{properties.technologies.length ? properties.technologies.map(humanize).join(", ") : "Unavailable"}</strong></span>
-          <span>Fuel<strong>{typeof properties.fuel === "string" ? properties.fuel : typeof properties.secondaryFuel === "string" ? properties.secondaryFuel : "Fuel unavailable"}</strong></span>
+          <span>Primary fuel<strong>{properties.primaryFuel || "Primary fuel unavailable"}</strong></span>
+          <span>Secondary fuel<strong>{properties.secondaryFuel || "Secondary fuel unavailable"}</strong></span>
           <span>Capacity<strong>{number(properties.capacityMw)} MW</strong></span>
-          <span>Annual generation<strong>{typeof properties.annualGenerationGwh === "number" ? `${number(properties.annualGenerationGwh)} GWh` : "Generation unavailable"}</strong></span>
+          <span>Annual generation<strong>{properties.annualGenerationGwh ? `${number(properties.annualGenerationGwh.central)} GWh (${number(properties.annualGenerationGwh.low)}–${number(properties.annualGenerationGwh.high)})` : "Generation unavailable"}</strong></span>
           <span>Status<strong>{properties.lifecycle ? humanize(properties.lifecycle) : "Status unavailable"}</strong></span>
         </div></section>
         <section className="facility-detail-group"><h2>Dates and ownership</h2><div className="facility-facts">
@@ -66,7 +70,7 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
         <section className="facility-detail-group"><h2>Location and evidence</h2><div className="facility-facts">
           <span>Region<strong>{properties.geographyId}</strong></span><span>Coordinates<strong>{generator.geometry.coordinates[1].toFixed(5)}, {generator.geometry.coordinates[0].toFixed(5)}</strong></span>
           <span>Confidence<strong>{typeof properties.confidence === "number" ? `${properties.confidence}%` : "Confidence unavailable"}</strong></span>
-          <span>Source IDs<strong>{properties.sourceIds.join(", ")}</strong></span>
+          <span>Source IDs<strong>{properties.sourceIds.length ? properties.sourceIds.join(", ") : "Source IDs unavailable"}</strong></span>
         </div></section>
       </div>
       <div className="inspector-actions single-action">{sourceUrl ? <a className="primary-action" href={sourceUrl} target="_blank" rel="noreferrer">Open source record</a> : <button className="secondary-action" type="button" disabled>Source record unavailable</button>}</div>
@@ -148,7 +152,9 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
 
       {lens === "powerBalance" && <section className="power-balance-panel" aria-label="Regional power balance">
         <div className="population-context"><strong>{properties.population == null ? "Population unavailable" : `${number(properties.population / 1_000_000)} million residents`}</strong><span>Source year {properties.populationSourceYear ?? "unavailable"} · Forecast growth unavailable · {humanize(properties.populationValueKind ?? properties.valueKind)}</span></div>
-        {activeEnergy ? <>
+        {regionalEnergyState === "loading" ? <p className="empty-evidence" role="status">Loading regional energy data…</p>
+        : regionalEnergyState === "error" ? <div className="energy-load-error" role="alert"><p>Could not load regional energy data. {regionalEnergyError || "Please try again."}</p>{onRetryRegionalEnergy && <button type="button" className="secondary-action" onClick={onRetryRegionalEnergy}>Retry regional energy</button>}</div>
+        : activeEnergy ? <>
           <div className="energy-facts">
             <span>Current demand<strong>{metric(activeEnergy.metrics.demandGwh, "GWh")}</strong></span><span>Peak demand<strong>{metric(activeEnergy.metrics.peakDemandMw, "MW")}</strong></span>
             <span>Local generation<strong>{metric(activeEnergy.metrics.localGenerationGwh, "GWh")}</strong></span><span>Dependable capacity<strong>{metric(activeEnergy.metrics.dependableCapacityMw, "MW")}</strong></span>
@@ -159,10 +165,12 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
           <div className="forward-demand"><span>Data-centre forward demand<strong>{demand?.data_centre ? `${number(demand.data_centre.low)}–${number(demand.data_centre.high)} MW` : "Unavailable"}</strong></span><span>Water forward demand<strong>{demand?.water_infrastructure ? `${number(demand.water_infrastructure.low)}–${number(demand.water_infrastructure.high)} MW` : "Unavailable"}</strong></span></div>
           {overview && <div className="generation-context"><h2>Generation mix and plant lifecycle</h2><div>{Object.entries(overview.technologyMixMw).map(([technology, capacity]) => <span key={technology}>{humanize(technology)} {mixTotal ? Math.round((capacity ?? 0) / mixTotal * 100) : 0}%</span>)}</div><div>{Object.entries(overview.lifecycleCounts ?? {}).map(([status, count]) => <span key={status}>{count} {humanize(status).toLowerCase()}</span>)}</div></div>}
           <PowerBalanceChart forecasts={regionalEnergy} />
-          <section className="power-contributions"><div className="section-heading"><span>Power Balance contributions</span><small>{activeEnergy.powerBalance?.coverage ?? activeEnergy.coverage}% coverage</small></div>{activeEnergy.powerBalance?.contributions.map((item) => <div className="power-contribution" key={item.id}><span>{item.label}</span><strong>{item.points == null ? "Unavailable" : `${item.points}/${item.maxPoints} points`}</strong></div>)}</section>
+          <section className="power-contributions"><div className="section-heading"><span>Power Balance contributions</span><small>{activeEnergy.powerBalance?.coverage ?? activeEnergy.coverage}% coverage</small></div>
+            <p className="contribution-summary">{activeEnergy.powerBalance?.status === "rankable" ? "Rankable" : "Not yet rankable"} at {activeEnergy.powerBalance?.coverage ?? activeEnergy.coverage}% coverage · {(activeEnergy.powerBalance?.contributions ?? []).reduce((sum, item) => sum + (item.points ?? 0), 0)} of {(activeEnergy.powerBalance?.contributions ?? []).reduce((sum, item) => sum + (item.points == null ? 0 : item.maxPoints), 0)} available points</p>
+            {activeEnergy.powerBalance?.contributions.map((item) => <div className="power-contribution" key={item.id}><div><span>{item.label}</span><small>{item.rawValue == null ? "Raw value unavailable" : `${number(item.rawValue)}${item.unit ? ` ${item.unit}` : ""}`}</small><small>{item.normalization}</small><small>{humanize(item.valueKind)} · {item.methodVersion}</small><small>Sources: {item.sourceIds.length ? item.sourceIds.join(", ") : "unavailable"}</small></div><strong>{item.points == null ? `Unavailable/${item.maxPoints} points` : `${item.points}/${item.maxPoints} points`}</strong></div>)}</section>
           <p className="method-note">Method: {activeEnergy.methodId}. Values marked estimated are modelled ranges, not reported measurements.</p>
           <div className="facility-source-links">{energySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.name}</a>)}</div>
-        </> : <p className="empty-evidence">Regional energy estimates are unavailable for this year.</p>}
+        </> : <p className="empty-evidence" role="status">Regional energy estimates are unavailable for this year.</p>}
       </section>}
 
       {summary && summary.total > 0 && (

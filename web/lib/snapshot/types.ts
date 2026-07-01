@@ -207,6 +207,8 @@ export type GeneratorProperties = {
   operatingCapacityMw: number; plannedCapacityMw: number;
   technologyMixMw: Partial<Record<GenerationTechnology, number>>; sourceIds: string[];
   commissioningYear?: number | null; retirementYear?: number | null; targetYear?: number | null;
+  primaryFuel?: string | null; secondaryFuel?: string | null; annualGenerationGwh?: MetricRange | null;
+  operator?: string | null; owner?: string | null; confidence?: number | null; sourceUrl?: string | null; name?: string | null;
   [key: string]: unknown;
 };
 export type GeneratorFeature = GeoJSON.Feature<GeoJSON.Point, GeneratorProperties> & { id: string };

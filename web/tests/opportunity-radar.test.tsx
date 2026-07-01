@@ -1,8 +1,14 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpportunityRadar } from "@/components/opportunity-radar";
 import type { SnapshotData } from "@/lib/snapshot/types";
+
+const mockLoadRegionalEnergy = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/snapshot/generators", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/snapshot/generators")>()),
+  loadRegionalEnergy: mockLoadRegionalEnergy,
+}));
 
 afterEach(cleanup);
 
@@ -146,5 +152,19 @@ describe("OpportunityRadar", () => {
     expect(solar).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Operational" })).toBeInTheDocument();
     for (const lifecycle of ["Under construction", "Planned", "Paused", "Cancelled or shelved", "Retired or decommissioned", "Unknown status"]) expect(screen.getByRole("button", { name: lifecycle })).toBeInTheDocument();
+  });
+
+  it("clears stale regional energy on snapshot path change and exposes a recoverable error", async () => {
+    const forecast = Array.from({ length: 6 }, (_, index) => ({ geographyId: "DE71", year: 2026 + index, metrics: { demandGwh: { low: 90, central: 100, high: 110 }, localGenerationGwh: { low: 80, central: 90, high: 100 }, localGenerationGapGwh: { low: -10, central: 10, high: 30 }, netBalanceGwh: null, observedUnmetDemandGwh: null, installedCapacityMw: 50, dependableCapacityMw: { low: 30, central: 35, high: 40 }, peakDemandMw: { low: 20, central: 25, high: 30 } }, methodId: "m1", sourceIds: ["s1"], confidence: 70, coverage: 80, valueKind: "estimated", appliedIncrementIds: [], metricLineage: {} }));
+    mockLoadRegionalEnergy.mockResolvedValueOnce({ ok: true, data: { DE71: forecast } }).mockResolvedValue({ ok: false, error: { kind: "network", message: "Network unavailable", recoverable: true, path: "snapshots/new/regional-energy.json" } });
+    const first = { ...snapshot, manifest: { ...snapshot.manifest, snapshotId: "old", artifacts: { ...snapshot.manifest.artifacts, regionalEnergy: "snapshots/old/regional-energy.json" } } };
+    const next = { ...snapshot, manifest: { ...snapshot.manifest, snapshotId: "new", artifacts: { ...snapshot.manifest.artifacts, regionalEnergy: "snapshots/new/regional-energy.json" } } };
+    const { rerender } = render(<OpportunityRadar snapshot={first} />);
+    fireEvent.click(screen.getByRole("button", { name: "Power Balance" }));
+    await screen.findByText("100 GWh");
+    rerender(<OpportunityRadar snapshot={next} />);
+    await waitFor(() => expect(screen.queryByText("100 GWh")).not.toBeInTheDocument());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not load regional energy/i);
+    expect(screen.getByRole("button", { name: /retry regional energy/i })).toBeInTheDocument();
   });
 });

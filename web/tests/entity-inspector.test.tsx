@@ -104,7 +104,13 @@ describe("EntityInspector", () => {
     expect(screen.getByText(/Data-centre forward demand/i)).toBeInTheDocument();
     expect(screen.getByText(/Water forward demand/i)).toBeInTheDocument();
     expect(screen.getByText("20/25 points")).toBeInTheDocument();
-    expect(screen.getByText(/80% coverage/i)).toBeInTheDocument();
+    expect(screen.getByText("80 %")).toBeInTheDocument();
+    expect(screen.getByText("80% supply coverage")).toBeInTheDocument();
+    expect(screen.getByText(/Estimated · power-balance-v1/)).toBeInTheDocument();
+    expect(screen.getByText(/Sources: energy-source/)).toBeInTheDocument();
+    expect(screen.getByText(/20 of 25 available points/i)).toBeInTheDocument();
+    expect(screen.getByText(/Rankable at 80% coverage/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/80% coverage/i)).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Public Energy Office" })).toHaveAttribute("href", "https://energy.example/source");
     expect(screen.getByText(/regional-power-balance-v1/i)).toBeInTheDocument();
   });
@@ -117,9 +123,9 @@ describe("EntityInspector", () => {
   });
 
   it("shows the complete generator record with plain-language unavailable values", () => {
-    const generator = { type: "Feature", id: "g-1", geometry: { type: "Point", coordinates: [8.5, 50.1] }, properties: { id: "g-1", name: "Main River Plant", category: "power_generation", country: "DE", geographyId: "DE-HE", lifecycle: "operational", technologies: ["gas"], fuel: "Natural gas", capacityMw: 500, operatingCapacityMw: 500, plannedCapacityMw: 0, technologyMixMw: { gas: 500 }, annualGenerationGwh: 2200, commissioningYear: 2015, retirementYear: null, operator: "GridCo", owner: "Public Power", confidence: 91, sourceUrl: "https://generator.example", sourceIds: ["registry"] } } as GeneratorFeature;
+    const generator = { type: "Feature", id: "g-1", geometry: { type: "Point", coordinates: [8.5, 50.1] }, properties: { id: "g-1", name: "Main River Plant", category: "power_generation", country: "DE", geographyId: "DE-HE", lifecycle: "operational", technologies: ["gas"], primaryFuel: "Natural gas", secondaryFuel: "Fuel oil", capacityMw: 500, operatingCapacityMw: 500, plannedCapacityMw: 0, technologyMixMw: { gas: 500 }, annualGenerationGwh: { low: 2000, central: 2200, high: 2400 }, commissioningYear: 2015, retirementYear: null, operator: "GridCo", owner: "Public Power", confidence: 91, sourceUrl: "https://generator.example", sourceIds: [] } } as GeneratorFeature;
     render(<EntityInspector geography={null} asset={null} generator={generator} lens="infrastructureDemand" year={2030} onOpenEvidence={vi.fn()} onAddComparison={vi.fn()} />);
-    for (const text of ["Natural gas", "500 MW", "2,200 GWh", "Operational", "2015", "GridCo", "Public Power", "50.10000, 8.50000", "91%", "Retirement date unavailable"]) expect(screen.getByText(text)).toBeInTheDocument();
+    for (const text of ["Natural gas", "Fuel oil", "500 MW", "2,200 GWh (2,000–2,400)", "Operational", "2015", "GridCo", "Public Power", "50.10000, 8.50000", "91%", "Retirement date unavailable", "Source IDs unavailable"]) expect(screen.getByText(text)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open source record" })).toHaveAttribute("href", "https://generator.example");
   });
 });
