@@ -135,6 +135,20 @@ describe("GlobalMap", () => {
     expect(mapCalls.sourceUpdates.some(([id]) => id === "generator-overview")).toBe(true);
   });
 
+  it("applies asynchronously loaded global state data while the style reports a transient loading state", () => {
+    const empty = { type: "FeatureCollection", features: [] } as GeographyCollection;
+    const state = {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [] },
+      properties: { id: "US-CA", name: "California", country: "US", scores: {}, scoresByYear: {}, categoryScoresByYear: {} },
+    } as unknown as GeographyCollection["features"][number];
+    const props = { countries: empty, regions: empty, assets: { type: "FeatureCollection", features: [] } as AssetCollection, lens: "infrastructureDemand" as const, year: 2030, selectedId: null, onSelect: () => undefined, coverage: { countries: 1, regions: 0, admin1Regions: 1, countriesWithAdmin1: 1, assets: 0, dataCentres: 0, waterInfrastructure: 0 } };
+    const { rerender } = render(<GlobalMap {...props} admin1={empty} />);
+    const loaded = { type: "FeatureCollection", features: [state] } as GeographyCollection;
+    rerender(<GlobalMap {...props} admin1={loaded} />);
+    expect(mapCalls.sourceUpdates.some(([id, data]) => id === "admin1" && (data as GeographyCollection).features[0]?.properties.id === "US-CA")).toBe(true);
+  });
+
   it("hides both world overview geometry and composition when generators are disabled", () => {
     render(<GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined} coverage={{ countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} infrastructure={{ dataCentres: true, water: true, generators: false }} />);
     expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-markers")?.layout).toMatchObject({ visibility: "none" });

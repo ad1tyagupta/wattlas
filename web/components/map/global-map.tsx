@@ -421,7 +421,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map) return;
     (map.getSource("countries") as GeoJSONSource | undefined)?.setData(preparedCountries);
     (map.getSource("admin1") as GeoJSONSource | undefined)?.setData(preparedAdmin1);
     (map.getSource("regions") as GeoJSONSource | undefined)?.setData(preparedRegions);
