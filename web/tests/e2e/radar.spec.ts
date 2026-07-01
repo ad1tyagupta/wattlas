@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import latestSnapshot from "../../public/data/latest.json" with { type: "json" };
 
 test("renders the map and updates the analytical view", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop interaction assertion");
@@ -15,7 +16,7 @@ test("renders the map and updates the analytical view", async ({ page }, testInf
   await expect(page.locator(".map-container")).toHaveAttribute("data-map-loaded", "true");
   await expect(page.locator(".map-panel")).toHaveAttribute("data-admin1-count", "3229", { timeout: 30_000 });
   await expect(page.locator(".map-meta")).toContainText("246 countries");
-  await expect(page.locator(".map-meta")).toContainText("3628 infrastructure assets");
+  await expect(page.locator(".map-meta")).toContainText(`${latestSnapshot.coverage.assets} infrastructure assets`);
   await expect(page.getByRole("link", { name: "OpenStreetMap infrastructure attribution" })).toBeVisible();
 
   const mapBox = await page.locator(".map-container").boundingBox();
