@@ -125,7 +125,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       center: GLOBAL_VIEW.center,
       zoom: GLOBAL_VIEW.zoom,
       minZoom: 0.8,
-      maxZoom: 8,
+      maxZoom: 12,
       attributionControl: false,
     });
     hoveredAdmin1Ref.current = null;
@@ -369,7 +369,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map) return;
     (map.getSource("generator-overview") as GeoJSONSource | undefined)?.setData(preparedGeneratorOverview);
   }, [preparedGeneratorOverview]);
 
@@ -409,7 +409,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map) return;
     const filtered = filterGenerators(activeGeneratorsRef.current, technologies, lifecycles);
     (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filtered);
     onVisibleGeneratorsChangeRef.current?.(new Set(filtered.features.map((feature) => feature.properties.id)));

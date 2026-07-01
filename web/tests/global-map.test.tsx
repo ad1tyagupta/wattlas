@@ -2,7 +2,9 @@ import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mapCalls = vi.hoisted(() => ({
+  options: [] as Array<Record<string, unknown>>,
   sources: [] as Array<[string, Record<string, unknown>]>,
+  sourceUpdates: [] as Array<[string, unknown]>,
   layers: [] as Array<Record<string, unknown>>,
   handlers: [] as Array<[string, unknown, unknown?]>,
   featureStates: [] as Array<Record<string, unknown>>,
@@ -11,12 +13,17 @@ const mapCalls = vi.hoisted(() => ({
 vi.mock("maplibre-gl", () => ({
   default: {
     Map: class {
+      private sourceMap = new Map<string, { setData: (data: unknown) => void }>();
+      constructor(options: Record<string, unknown>) { mapCalls.options.push(options); }
       addControl() {}
-      addSource(id: string, source: Record<string, unknown>) { mapCalls.sources.push([id, source]); }
+      addSource(id: string, source: Record<string, unknown>) {
+        mapCalls.sources.push([id, source]);
+        this.sourceMap.set(id, { setData: (data) => mapCalls.sourceUpdates.push([id, data]) });
+      }
       addLayer(layer: Record<string, unknown>) { mapCalls.layers.push(layer); }
       getCanvas() { return { style: { cursor: "" } }; }
       getLayer() { return undefined; }
-      getSource() { return undefined; }
+      getSource(id: string) { return this.sourceMap.get(id); }
       isStyleLoaded() { return false; }
       on(event: string, layerOrHandler: unknown, handler?: unknown) {
         mapCalls.handlers.push([event, layerOrHandler, handler]);
@@ -36,7 +43,9 @@ import type { AssetCollection, GeographyCollection } from "@/lib/snapshot/types"
 
 describe("GlobalMap", () => {
   beforeEach(() => {
+    mapCalls.options.length = 0;
     mapCalls.sources.length = 0;
+    mapCalls.sourceUpdates.length = 0;
     mapCalls.layers.length = 0;
     mapCalls.handlers.length = 0;
     mapCalls.featureStates.length = 0;
@@ -101,7 +110,8 @@ describe("GlobalMap", () => {
     render(
       <GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined} coverage={{ countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} generatorOverview={{ type: "FeatureCollection", features: [] }} />,
     );
-    expect(mapCalls.sources.find(([id]) => id === "generators")?.[1]).toMatchObject({ cluster: true, clusterRadius: 44, clusterProperties: expect.objectContaining({ solar: expect.any(Array), wind: expect.any(Array) }) });
+    expect(mapCalls.options.at(-1)?.maxZoom).toBeGreaterThan(8);
+    expect(mapCalls.sources.find(([id]) => id === "generators")?.[1]).toMatchObject({ cluster: true, clusterRadius: 44, clusterMaxZoom: 8, clusterProperties: expect.objectContaining({ solar: expect.any(Array), wind: expect.any(Array) }) });
     expect(JSON.stringify(mapCalls.sources.find(([id]) => id === "generators")?.[1])).toContain('["in","solar",["get","technologies"]]');
     expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-markers")).toMatchObject({ maxzoom: 3 });
     const clusterPaint = JSON.stringify(mapCalls.layers.find((layer) => layer.id === "generator-clusters")?.paint);
@@ -115,6 +125,14 @@ describe("GlobalMap", () => {
     expect(mapCalls.layers.find((layer) => layer.id === "data-centre-assets")).toMatchObject({ type: "circle" });
     expect(mapCalls.handlers.some(([event, layer]) => event === "click" && layer === "generator-assets")).toBe(true);
     expect(screen.getAllByLabelText("Generator cluster composition").at(-1)).toHaveTextContent(/partial lifecycle matches retain unfiltered capacity and technology mix/i);
+  });
+
+  it("applies generator overview data even while the style reports a transient loading state", () => {
+    const overview = { type: "FeatureCollection", features: [] } as const;
+    const props = { countries: { type: "FeatureCollection", features: [] } as const, admin1: { type: "FeatureCollection", features: [] } as const, regions: { type: "FeatureCollection", features: [] } as const, assets: { type: "FeatureCollection", features: [] } as const, lens: "infrastructureDemand" as const, year: 2030, selectedId: null, onSelect: () => undefined, coverage: { countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 } };
+    const { rerender } = render(<GlobalMap {...props} generatorOverview={null} />);
+    rerender(<GlobalMap {...props} generatorOverview={overview} />);
+    expect(mapCalls.sourceUpdates.some(([id]) => id === "generator-overview")).toBe(true);
   });
 
   it("hides both world overview geometry and composition when generators are disabled", () => {
