@@ -5,7 +5,17 @@ export type MapBounds = [west: number, south: number, east: number, north: numbe
 type CountryLoader = (root: string, index: GeneratorIndex, country: string, options?: { signal?: AbortSignal }) => Promise<LayerResult<GeneratorCollection>>;
 
 const emptyCollection = (): GeneratorCollection => ({ type: "FeatureCollection", features: [] });
-const longitudeSegments = (west: number, east: number): Array<[number, number]> => west <= east ? [[west, east]] : [[west, 180], [-180, east]];
+const normalizeLongitude = (longitude: number): number => ((longitude + 180) % 360 + 360) % 360 - 180;
+function longitudeSegments(west: number, east: number): Array<[number, number]> {
+  const rawSpan = east - west;
+  if (Math.abs(rawSpan) >= 360) return [[-180, 180]];
+  let span = rawSpan;
+  while (span < 0) span += 360;
+  if (span >= 360) return [[-180, 180]];
+  const start = normalizeLongitude(west);
+  const finish = start + span;
+  return finish <= 180 ? [[start, finish]] : [[start, 180], [-180, finish - 360]];
+}
 
 export function countriesInBounds(index: GeneratorIndex, bounds: MapBounds): string[] {
   const [west, south, east, north] = bounds;
@@ -18,9 +28,10 @@ export function countriesInBounds(index: GeneratorIndex, bounds: MapBounds): str
 }
 
 export function filterGenerators(data: GeneratorCollection, technologies: ReadonlySet<GenerationTechnology>, lifecycles: ReadonlySet<string>): GeneratorCollection {
+  if (technologies.size === 0 || lifecycles.size === 0) return emptyCollection();
   return {
     type: "FeatureCollection",
-    features: data.features.filter(({ properties }) => properties.technologies.some((technology) => technologies.has(technology)) && (!properties.lifecycle || lifecycles.has(properties.lifecycle))),
+    features: data.features.filter(({ properties }) => properties.technologies.some((technology) => technologies.has(technology)) && lifecycles.has(properties.lifecycle ?? "unknown")),
   };
 }
 
@@ -36,7 +47,11 @@ export function filterGeneratorOverview(data: GeneratorOverviewCollection, techn
         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
       if (!mix.length) return [];
       const lifecycleCounts = feature.properties.lifecycleCounts;
-      const selectedLifecycleCount = lifecycleCounts ? Object.entries(lifecycleCounts).reduce((sum, [state, count]) => sum + (lifecycles.has(state) ? (count ?? 0) : 0), 0) : null;
+      const classifiedLifecycleCount = lifecycleCounts ? Object.values(lifecycleCounts).reduce<number>((sum, count) => sum + (count ?? 0), 0) : 0;
+      const unknownLifecycleCount = lifecycleCounts ? Math.max(0, feature.properties.count - classifiedLifecycleCount) : 0;
+      const selectedLifecycleCount = lifecycleCounts
+        ? Object.entries(lifecycleCounts).reduce<number>((sum, [state, count]) => sum + (lifecycles.has(state) ? (count ?? 0) : 0), lifecycles.has("unknown") ? unknownLifecycleCount : 0)
+        : null;
       if (selectedLifecycleCount === 0) return [];
       const filteredCapacityMw = mix.reduce((sum, [, capacity]) => sum + capacity, 0);
       const isMixed = mix.length > 1;
@@ -71,16 +86,23 @@ export function generatorSelection(data: GeneratorCollection, id: string | numbe
   return (data.features.find((feature) => feature.properties.id === id) as GeneratorFeature | undefined) ?? null;
 }
 
-export function createGeneratorShardController(root: string, index: GeneratorIndex, loader: CountryLoader = loadGeneratorCountry, options: { concurrency?: number } = {}) {
+export function createGeneratorShardController(root: string, index: GeneratorIndex, loader: CountryLoader = loadGeneratorCountry, options: { concurrency?: number; maxCountries?: number; maxFeatures?: number } = {}) {
   const cache = new Map<string, GeneratorCollection>();
   const pending = new Map<string, Promise<void>>();
   const controllers = new Map<string, AbortController>();
   const concurrency = Math.max(1, options.concurrency ?? 3);
+  const maxCountries = Math.max(1, options.maxCountries ?? 12);
+  const maxFeatures = Math.max(1, options.maxFeatures ?? 100_000);
   let revision = 0;
   let disposed = false;
 
   async function ensure(country: string, retry = true): Promise<void> {
-    if (cache.has(country)) return;
+    const cached = cache.get(country);
+    if (cached) {
+      cache.delete(country);
+      cache.set(country, cached);
+      return;
+    }
     const existing = pending.get(country);
     if (existing) {
       await existing;
@@ -110,6 +132,13 @@ export function createGeneratorShardController(root: string, index: GeneratorInd
         while (cursor < visible.length) await ensure(visible[cursor++]);
       }));
       if (disposed || requestRevision !== revision) return emptyCollection();
+      let retainedFeatures = [...cache.values()].reduce((sum, collection) => sum + collection.features.length, 0);
+      while (cache.size > maxCountries || retainedFeatures > maxFeatures) {
+        const candidate = [...cache.keys()].find((country) => !visible.includes(country) && !pending.has(country));
+        if (!candidate) break;
+        retainedFeatures -= cache.get(candidate)?.features.length ?? 0;
+        cache.delete(candidate);
+      }
       return { type: "FeatureCollection", features: visible.flatMap((country) => cache.get(country)?.features ?? []) };
     },
     dispose() {

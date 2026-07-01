@@ -21,6 +21,10 @@ const lifecycleGroups = {
   operational: { label: "Operational", states: ["operational"] },
   construction: { label: "Under construction", states: ["under_construction"] },
   planned: { label: "Planned", states: ["announced", "planning_filed", "permitted"] },
+  paused: { label: "Paused", states: ["paused"] },
+  cancelled: { label: "Cancelled or shelved", states: ["cancelled", "shelved"] },
+  retired: { label: "Retired or decommissioned", states: ["retired", "decommissioned"] },
+  unknown: { label: "Unknown status", states: ["unknown"] },
 } as const;
 
 export function LayerRail({ activeLens, onChange, infrastructure, onInfrastructureChange, technologies, onTechnologiesChange, lifecycles, onLifecyclesChange }: Props) {

@@ -39,6 +39,7 @@ type Props = {
   generatorIndex?: GeneratorIndex | null;
   snapshotRoot?: string | null;
   onSelectGenerator?: (generator: GeneratorFeature) => void;
+  onVisibleGeneratorsChange?: (ids: ReadonlySet<string>) => void;
 };
 
 export const GLOBAL_VIEW = { center: [12, 22] as [number, number], zoom: 1.25 };
@@ -79,11 +80,12 @@ function activeRegions(regions: GeographyCollection, lens: LensKey, year: number
 const EMPTY_GENERATORS: GeneratorCollection = { type: "FeatureCollection", features: [] };
 const EMPTY_OVERVIEW: GeneratorOverviewCollection = { type: "FeatureCollection", features: [] };
 
-export function GlobalMap({ countries, admin1, regions, assets, lens, year, selectedId, onSelect, coverage, infrastructure = { dataCentres: true, water: true, generators: true }, technologies = new Set<GenerationTechnology>(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"]), lifecycles = new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved"]), generatorOverview = null, generatorIndex = null, snapshotRoot = null, onSelectGenerator }: Props) {
+export function GlobalMap({ countries, admin1, regions, assets, lens, year, selectedId, onSelect, coverage, infrastructure = { dataCentres: true, water: true, generators: true }, technologies = new Set<GenerationTechnology>(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"]), lifecycles = new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved", "unknown"]), generatorOverview = null, generatorIndex = null, snapshotRoot = null, onSelectGenerator, onVisibleGeneratorsChange }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const onSelectRef = useRef(onSelect);
   const onSelectGeneratorRef = useRef(onSelectGenerator);
+  const onVisibleGeneratorsChangeRef = useRef(onVisibleGeneratorsChange);
   const infrastructureRef = useRef(infrastructure);
   const generatorControllerRef = useRef<ReturnType<typeof createGeneratorShardController> | null>(null);
   const activeGeneratorsRef = useRef<GeneratorCollection>(EMPTY_GENERATORS);
@@ -103,6 +105,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
   useEffect(() => {
     onSelectRef.current = onSelect;
     onSelectGeneratorRef.current = onSelectGenerator;
+    onVisibleGeneratorsChangeRef.current = onVisibleGeneratorsChange;
     countriesRef.current = preparedCountries;
     admin1Ref.current = preparedAdmin1;
     regionsRef.current = preparedRegions;
@@ -111,7 +114,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
     generatorFiltersRef.current = { technologies, lifecycles };
     infrastructureRef.current = infrastructure;
     generatorOverviewRef.current = preparedGeneratorOverview;
-  }, [infrastructure, lens, lifecycles, onSelect, onSelectGenerator, preparedAdmin1, preparedCountries, preparedGeneratorOverview, preparedRegions, selectedId, technologies]);
+  }, [infrastructure, lens, lifecycles, onSelect, onSelectGenerator, onVisibleGeneratorsChange, preparedAdmin1, preparedCountries, preparedGeneratorOverview, preparedRegions, selectedId, technologies]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -258,8 +261,8 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
           "circle-stroke-width": 2,
         },
       });
-      map.addLayer({ id: "generator-overview-markers", type: "circle", source: "generator-overview", maxzoom: 3, paint: { "circle-color": ["case", ["boolean", ["get", "isMixed"], false], "#84918E", generatorColorExpression("displayTechnology")], "circle-radius": ["step", ["get", "count"], 5, 10, 8, 50, 11], "circle-stroke-color": "#07100F", "circle-stroke-width": 1.5, "circle-opacity": 0.9 } });
-      map.addLayer({ id: "generator-overview-composition", type: "symbol", source: "generator-overview", minzoom: 1.8, maxzoom: 3, layout: { "text-field": ["get", "overviewLabel"], "text-size": 9, "text-offset": [0, 1.4], "text-optional": true }, paint: { "text-color": "#D7E2DF", "text-halo-color": "#07100F", "text-halo-width": 1 } });
+      map.addLayer({ id: "generator-overview-markers", type: "circle", source: "generator-overview", maxzoom: 3, layout: { visibility: infrastructureRef.current.generators ? "visible" : "none" }, paint: { "circle-color": ["case", ["boolean", ["get", "isMixed"], false], "#84918E", generatorColorExpression("displayTechnology")], "circle-radius": ["step", ["get", "count"], 5, 10, 8, 50, 11], "circle-stroke-color": "#07100F", "circle-stroke-width": 1.5, "circle-opacity": 0.9 } });
+      map.addLayer({ id: "generator-overview-composition", type: "symbol", source: "generator-overview", minzoom: 1.8, maxzoom: 3, layout: { visibility: infrastructureRef.current.generators ? "visible" : "none", "text-field": ["get", "overviewLabel"], "text-size": 9, "text-offset": [0, 1.4], "text-optional": true }, paint: { "text-color": "#D7E2DF", "text-halo-color": "#07100F", "text-halo-width": 1 } });
       const technologyKindCount = ["+", ...(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"].map((technology) => ["case", [">", ["get", technology], 0], 1, 0]))] as unknown as ExpressionSpecification;
       map.addLayer({ id: "generator-clusters", type: "circle", source: "generators", minzoom: 3, filter: ["has", "point_count"], paint: { "circle-color": ["case", [">", technologyKindCount, 1], "#84918E", ["case", [">", ["get", "solar"], 0], "#E7B84B", [">", ["get", "wind"], 0], "#55C7D9", [">", ["get", "hydro"], 0], "#4E8EDB", [">", ["get", "nuclear"], 0], "#A98AE8", [">", ["get", "gas"], 0], "#E07A5F", [">", ["get", "coal"], 0], "#6F7782", [">", ["get", "oil"], 0], "#B88762", [">", ["get", "biomass"], 0], "#78B77A", [">", ["get", "geothermal"], 0], "#D98255", "#9AA6A4"]], "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24], "circle-stroke-color": "#E8EFED", "circle-stroke-width": 1.5 } });
       map.addLayer({ id: "generator-cluster-count", type: "symbol", source: "generators", minzoom: 3, filter: ["has", "point_count"], layout: { "text-field": ["concat", ["get", "point_count_abbreviated"], " · composition S", ["get", "solar"], " W", ["get", "wind"], " H", ["get", "hydro"], " N", ["get", "nuclear"], " G", ["get", "gas"], " C", ["get", "coal"], " O", ["get", "oil"], " B", ["get", "biomass"], " T", ["get", "geothermal"], " X", ["get", "other"]], "text-size": 9, "text-offset": [0, 2] }, paint: { "text-color": "#D7E2DF", "text-halo-color": "#07100F", "text-halo-width": 1 } });
@@ -382,6 +385,7 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       if (map.getZoom() < 3 || !infrastructure.generators) {
         activeGeneratorsRef.current = EMPTY_GENERATORS;
         (map.getSource("generators") as GeoJSONSource | undefined)?.setData(EMPTY_GENERATORS);
+        onVisibleGeneratorsChangeRef.current?.(new Set());
         return;
       }
       const bounds = map.getBounds();
@@ -390,7 +394,9 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
       if (generatorControllerRef.current !== controller) return;
       activeGeneratorsRef.current = combined;
       const filters = generatorFiltersRef.current;
-      (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filterGenerators(combined, filters.technologies, filters.lifecycles));
+      const filtered = filterGenerators(combined, filters.technologies, filters.lifecycles);
+      (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filtered);
+      onVisibleGeneratorsChangeRef.current?.(new Set(filtered.features.map((feature) => feature.properties.id)));
     };
     map.on("moveend", refresh);
     void refresh();
@@ -404,11 +410,13 @@ export function GlobalMap({ countries, admin1, regions, assets, lens, year, sele
   useEffect(() => {
     const map = mapRef.current;
     if (!map?.isStyleLoaded()) return;
-    (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filterGenerators(activeGeneratorsRef.current, technologies, lifecycles));
+    const filtered = filterGenerators(activeGeneratorsRef.current, technologies, lifecycles);
+    (map.getSource("generators") as GeoJSONSource | undefined)?.setData(filtered);
+    onVisibleGeneratorsChangeRef.current?.(new Set(filtered.features.map((feature) => feature.properties.id)));
     (map.getSource("assets") as GeoJSONSource | undefined)?.setData(visibleAssets(assets, infrastructure));
     for (const id of ["data-centre-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.dataCentres ? "visible" : "none");
     for (const id of ["water-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.water ? "visible" : "none");
-    for (const id of ["generator-overview-markers", "generator-clusters", "generator-cluster-count", "generator-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.generators ? "visible" : "none");
+    for (const id of ["generator-overview-markers", "generator-overview-composition", "generator-clusters", "generator-cluster-count", "generator-assets"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", infrastructure.generators ? "visible" : "none");
   }, [assets, infrastructure, lifecycles, technologies]);
 
   useEffect(() => {

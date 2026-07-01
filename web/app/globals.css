@@ -1269,12 +1269,18 @@ button {
   }
 
   .layer-rail {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 150px;
+    display: flex;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
   }
+
+  .layer-rail > .rail-section:first-child { flex: 0 0 650px; }
+  .layer-rail > .infrastructure-controls { flex: 0 0 1580px; white-space: nowrap; }
+  .layer-rail > .map-legend { flex: 0 0 150px; }
+  .infrastructure-controls .generator-filters { display: inline; margin-left: 8px; }
 
   .rail-section {
     min-width: 0;
@@ -1415,16 +1421,24 @@ button {
   }
 
   .layer-rail {
-    grid-template-columns: minmax(0, 1fr);
-    overflow-x: auto;
+    display: block;
+    overflow: visible;
   }
+
+  .layer-rail > .rail-section:first-child,
+  .layer-rail > .infrastructure-controls { flex: 1 1 auto; min-width: 0; white-space: normal; }
+
+  .infrastructure-controls .generator-filters { display: flex; flex-wrap: wrap; margin-left: 0; }
+
+  .layer-rail button { min-height: 44px; }
 
   .layer-rail .map-legend {
     display: none;
   }
 
   .lens-list {
-    min-width: 520px;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .map-panel,

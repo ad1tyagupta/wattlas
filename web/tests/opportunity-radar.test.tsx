@@ -7,7 +7,7 @@ import type { SnapshotData } from "@/lib/snapshot/types";
 afterEach(cleanup);
 
 vi.mock("@/components/map/global-map", () => ({
-  GlobalMap: ({ lens, onSelect, onSelectGenerator }: { lens: string; onSelect: (id: string) => void; onSelectGenerator: (feature: import("@/lib/snapshot/types").GeneratorFeature) => void }) => <div data-testid="global-map">Map lens: {lens}<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button><button type="button" onClick={() => onSelectGenerator(generator)}>Select generator</button></div>,
+  GlobalMap: ({ lens, onSelect, onSelectGenerator, onVisibleGeneratorsChange }: { lens: string; onSelect: (id: string) => void; onSelectGenerator: (feature: import("@/lib/snapshot/types").GeneratorFeature) => void; onVisibleGeneratorsChange: (ids: ReadonlySet<string>) => void }) => <div data-testid="global-map">Map lens: {lens}<button type="button" onClick={() => onSelect("osm-node-101")}>Select facility</button><button type="button" onClick={() => onSelect("IN-ASSAM")}>Select Assam</button><button type="button" onClick={() => onSelectGenerator(generator)}>Select generator</button><button type="button" onClick={() => onVisibleGeneratorsChange(new Set())}>Move away</button></div>,
 }));
 
 const generator = { type: "Feature", id: "generator-1", geometry: { type: "Point", coordinates: [8, 50] }, properties: { id: "generator-1", name: "Rhine Solar", category: "power_generation", country: "DE", geographyId: "DE-X", lifecycle: "operational", technologies: ["solar"], capacityMw: 80, operatingCapacityMw: 80, plannedCapacityMw: 0, technologyMixMw: { solar: 80 }, sourceIds: ["registry"] } } as import("@/lib/snapshot/types").GeneratorFeature;
@@ -118,6 +118,19 @@ describe("OpportunityRadar", () => {
     expect(screen.getByRole("button", { name: "Source record unavailable" })).toBeVisible();
   });
 
+  it("clears a stale generator inspector when its layer, filter, or visible shard excludes it", () => {
+    render(<OpportunityRadar snapshot={snapshot} />);
+    const select = () => fireEvent.click(screen.getByRole("button", { name: "Select generator" }));
+    select(); fireEvent.click(screen.getByRole("button", { name: "Power generators" }));
+    expect(screen.queryByRole("heading", { name: "Rhine Solar" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Power generators" }));
+    select(); fireEvent.click(screen.getByRole("button", { name: "Solar" }));
+    expect(screen.queryByRole("heading", { name: "Rhine Solar" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Solar" }));
+    select(); fireEvent.click(screen.getByRole("button", { name: "Move away" }));
+    expect(screen.queryByRole("heading", { name: "Rhine Solar" })).not.toBeInTheDocument();
+  });
+
   it("offers independent infrastructure layers and accessible generator filters", () => {
     render(<OpportunityRadar snapshot={snapshot} />);
     for (const name of ["Data centres", "Water infrastructure", "Power generators"]) {
@@ -132,5 +145,6 @@ describe("OpportunityRadar", () => {
     fireEvent.click(solar);
     expect(solar).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Operational" })).toBeInTheDocument();
+    for (const lifecycle of ["Under construction", "Planned", "Paused", "Cancelled or shelved", "Retired or decommissioned", "Unknown status"]) expect(screen.getByRole("button", { name: lifecycle })).toBeInTheDocument();
   });
 });

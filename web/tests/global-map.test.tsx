@@ -109,6 +109,12 @@ describe("GlobalMap", () => {
     expect(screen.getAllByLabelText("Generator cluster composition").at(-1)).toHaveTextContent(/partial lifecycle matches retain unfiltered capacity and technology mix/i);
   });
 
+  it("hides both world overview geometry and composition when generators are disabled", () => {
+    render(<GlobalMap countries={{ type: "FeatureCollection", features: [] }} admin1={{ type: "FeatureCollection", features: [] }} regions={{ type: "FeatureCollection", features: [] }} assets={{ type: "FeatureCollection", features: [] }} lens="infrastructureDemand" year={2030} selectedId={null} onSelect={() => undefined} coverage={{ countries: 1, regions: 0, admin1Regions: 0, countriesWithAdmin1: 0, assets: 0, dataCentres: 0, waterInfrastructure: 0 }} infrastructure={{ dataCentres: true, water: true, generators: false }} />);
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-markers")?.layout).toMatchObject({ visibility: "none" });
+    expect(mapCalls.layers.find((layer) => layer.id === "generator-overview-composition")?.layout).toMatchObject({ visibility: "none" });
+  });
+
   it("renders global ADM1 before the deeper Europe NUTS-2 layer", () => {
     render(
       <GlobalMap

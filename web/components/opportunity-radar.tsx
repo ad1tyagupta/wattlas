@@ -27,7 +27,7 @@ export function OpportunityRadar({ snapshot }: Props) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [infrastructure, setInfrastructure] = useState<InfrastructureVisibility>({ dataCentres: true, water: true, generators: true });
   const [technologies, setTechnologies] = useState<Set<GenerationTechnology>>(() => new Set(["solar", "wind", "hydro", "nuclear", "gas", "coal", "oil", "biomass", "geothermal", "other"]));
-  const [lifecycles, setLifecycles] = useState<Set<string>>(() => new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved"]));
+  const [lifecycles, setLifecycles] = useState<Set<string>>(() => new Set(["operational", "under_construction", "announced", "planning_filed", "permitted", "paused", "cancelled", "retired", "decommissioned", "shelved", "unknown"]));
   const [generatorOverview, setGeneratorOverview] = useState<GeneratorOverviewCollection | null>(null);
   const [generatorIndex, setGeneratorIndex] = useState<GeneratorIndex | null>(null);
   const [admin1, setAdmin1] = useState<GeographyCollection>(snapshot.admin1);
@@ -72,8 +72,26 @@ export function OpportunityRadar({ snapshot }: Props) {
   return (
     <main className="radar-shell">
       <CommandBar manifest={snapshot.manifest} onOpenStatus={() => setStatusOpen(true)} />
-      <LayerRail activeLens={lens} onChange={setLens} infrastructure={infrastructure} onInfrastructureChange={setInfrastructure} technologies={technologies} onTechnologiesChange={setTechnologies} lifecycles={lifecycles} onLifecyclesChange={setLifecycles} />
-      <GlobalMap countries={snapshot.countries} admin1={admin1} regions={snapshot.regions} assets={snapshot.assets} coverage={snapshot.manifest.coverage} lens={lens} year={year} selectedId={selectedId} onSelect={(id) => { setSelectedGenerator(null); setSelectedId(id); }} onSelectGenerator={(generator) => { setSelectedGenerator(generator); setSelectedId(null); }} infrastructure={infrastructure} technologies={technologies} lifecycles={lifecycles} generatorOverview={generatorOverview} generatorIndex={generatorIndex} snapshotRoot={snapshot.manifest.snapshotId ? `snapshots/${snapshot.manifest.snapshotId}` : null} />
+      <LayerRail
+        activeLens={lens}
+        onChange={setLens}
+        infrastructure={infrastructure}
+        onInfrastructureChange={(next) => {
+          setInfrastructure(next);
+          if (!next.generators) setSelectedGenerator(null);
+        }}
+        technologies={technologies}
+        onTechnologiesChange={(next) => {
+          setTechnologies(next);
+          setSelectedGenerator((current) => current && !current.properties.technologies.some((technology) => next.has(technology)) ? null : current);
+        }}
+        lifecycles={lifecycles}
+        onLifecyclesChange={(next) => {
+          setLifecycles(next);
+          setSelectedGenerator((current) => current && !next.has(current.properties.lifecycle ?? "unknown") ? null : current);
+        }}
+      />
+      <GlobalMap countries={snapshot.countries} admin1={admin1} regions={snapshot.regions} assets={snapshot.assets} coverage={snapshot.manifest.coverage} lens={lens} year={year} selectedId={selectedId} onSelect={(id) => { setSelectedGenerator(null); setSelectedId(id); }} onSelectGenerator={(generator) => { setSelectedGenerator(generator); setSelectedId(null); }} onVisibleGeneratorsChange={(ids) => setSelectedGenerator((current) => current && !ids.has(current.properties.id) ? null : current)} infrastructure={infrastructure} technologies={technologies} lifecycles={lifecycles} generatorOverview={generatorOverview} generatorIndex={generatorIndex} snapshotRoot={snapshot.manifest.snapshotId ? `snapshots/${snapshot.manifest.snapshotId}` : null} />
       <EntityInspector geography={selectedGeography} asset={selectedAsset} generator={selectedGenerator} lens={lens} year={year} onOpenEvidence={() => setEvidenceOpen(true)} onAddComparison={addComparison} />
       <Timeline years={snapshot.manifest.activeYears} activeYear={year} onChange={setYear} />
       <DataStatusDrawer manifest={snapshot.manifest} open={statusOpen} onClose={() => setStatusOpen(false)} />
