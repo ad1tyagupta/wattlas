@@ -58,6 +58,7 @@ from grid_scope.regional_demand import (
     FORECAST_INCREMENT_METHOD_ID,
     allocate_country_demand,
     load_regional_demand_methods,
+    validate_regional_demand_weights_artifact,
 )
 from grid_scope.scoring import score_power_balance
 from grid_scope.publisher import SnapshotPublisher
@@ -147,7 +148,7 @@ def load_refresh_model_artifacts(
         else _read_json(population_path)
     )
     weights = _read_json(demand_weights_path)
-    if population.get("schemaVersion") != "wattlas-adm1-population-v1":
+    if population.get("schemaVersion") != "wattlas-admin1-population-v1":
         raise ValueError("unsupported ADM1 population artifact")
     if weights.get("schemaVersion") != "wattlas-regional-demand-weights-v1":
         raise ValueError("unsupported regional demand weights artifact")
@@ -165,6 +166,8 @@ def load_refresh_model_artifacts(
     stored_weight_seal = weight_seal_payload.pop("buildFingerprint")
     if stored_weight_seal != _content_fingerprint(weight_seal_payload):
         raise ValueError("regional demand weights build fingerprint integrity failed")
+    if weights.get("countryLevelOnly"):
+        validate_regional_demand_weights_artifact(weights)
     population_fingerprint = _validated_fingerprint(
         weight_inputs.get("populationFingerprint"),
         label="demand weights population release",
@@ -925,8 +928,10 @@ def build_regional_energy_model(
                 source_ids = (
                     normalized_control["sourceIds"]
                     if normalized_control is not None
-                    else ["population-grid-coverage"]
+                    else list((exception.get("sourceCoverage") or {}).get("sourceIds") or [])
                 )
+                if not source_ids:
+                    raise ValueError("country-level-only row lacks source lineage")
                 rows.append({
                     "geographyId": geography_id,
                     "countryIso3": iso3,
@@ -946,6 +951,8 @@ def build_regional_energy_model(
                 })
             demand_by_region[geography_id] = rows
     if not weights or not controls:
+        if before_supply is not None:
+            before_supply()
         return demand_by_region, reconciled
     for country, control in sorted(latest_controls.items()):
         for year in range(2026, 2032):

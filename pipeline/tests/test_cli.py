@@ -131,12 +131,12 @@ def test_model_artifacts_are_loaded_and_version_checked_without_raster_rebuild(t
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
     population.write_text(json.dumps({
-        "schemaVersion": "wattlas-adm1-population-v1",
+        "schemaVersion": "wattlas-admin1-population-v1",
         "roundingMethod": "largest-remainder-integer-v1",
         "sources": [{"id": "worldpop", "url": "https://example.com", "licence": "CC-BY-4.0"}],
         "sourceReleases": [{"sourceId": "worldpop", "releaseId": "r1", "checksumSha256": "a" * 64, "retrievedAt": "2026-01-01T00:00:00Z"}],
         "records": [{"geographyId": "AA-1", "year": 2030, "population": 1}], "unavailable": [],
-        "buildInputs": {"boundaryFingerprint": "sha256:" + "b" * 64, "officialOverrideFingerprint": "sha256:" + "c" * 64, "countryControlFingerprint": "sha256:" + "d" * 64, "methodVersions": {"schema": "wattlas-adm1-population-v1", "zonal": "raster-mask-sum-v2", "reconciliation": "largest-remainder-integer-v1"}},
+        "buildInputs": {"boundaryFingerprint": "sha256:" + "b" * 64, "officialOverrideFingerprint": "sha256:" + "c" * 64, "countryControlFingerprint": "sha256:" + "d" * 64, "methodVersions": {"schema": "wattlas-admin1-population-v1", "zonal": "raster-mask-sum-v2", "reconciliation": "largest-remainder-integer-v1"}},
         "effectiveInputFingerprint": "sha256:" + "e" * 64,
         "buildFingerprint": "sha256:" + "f" * 64,
     }))
@@ -156,7 +156,7 @@ def test_model_artifacts_are_loaded_and_version_checked_without_raster_rebuild(t
 def test_model_artifacts_reject_unbuilt_weight_release(tmp_path) -> None:
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
-    population.write_text('{"schemaVersion":"wattlas-adm1-population-v1","buildFingerprint":"sha256:' + "a" * 64 + '"}')
+    population.write_text('{"schemaVersion":"wattlas-admin1-population-v1","buildFingerprint":"sha256:' + "a" * 64 + '"}')
     weights.write_text('{"schemaVersion":"wattlas-regional-demand-weights-v1","buildFingerprint":"sha256:unbuilt","effectiveInputFingerprint":"sha256:unbuilt","buildInputs":{"populationFingerprint":"sha256:' + "a" * 64 + '"},"records":[]}')
 
     with pytest.raises(ValueError, match="unbuilt"):
@@ -166,7 +166,7 @@ def test_model_artifacts_reject_unbuilt_weight_release(tmp_path) -> None:
 def test_model_artifacts_reject_population_weight_release_mismatch(tmp_path) -> None:
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
-    population.write_text('{"schemaVersion":"wattlas-adm1-population-v1","buildFingerprint":"sha256:' + "a" * 64 + '"}')
+    population.write_text('{"schemaVersion":"wattlas-admin1-population-v1","buildFingerprint":"sha256:' + "a" * 64 + '"}')
     weights.write_text(json.dumps(_sealed_weights("sha256:" + "d" * 64, [])))
 
     with pytest.raises(ValueError, match="population release"):
@@ -189,7 +189,7 @@ def test_model_artifacts_reject_tampered_demand_weight_content(tmp_path) -> None
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
     population.write_text(json.dumps({
-        "schemaVersion": "wattlas-adm1-population-v1",
+        "schemaVersion": "wattlas-admin1-population-v1",
         "buildFingerprint": population_fingerprint,
         "records": population_records,
     }))
@@ -207,7 +207,7 @@ def test_model_artifacts_are_mandatory_and_never_accept_empty_releases(
     population = tmp_path / "population.json"
     weights = tmp_path / "weights.json"
     population.write_text(json.dumps({
-        "schemaVersion": "wattlas-adm1-population-v1",
+        "schemaVersion": "wattlas-admin1-population-v1",
         "buildFingerprint": "sha256:" + "a" * 64,
         "records": [{"geographyId": "AA-1", "year": 2030, "population": 1}],
     }))
@@ -222,7 +222,7 @@ def test_model_artifacts_are_mandatory_and_never_accept_empty_releases(
     # Recreate the missing file, then prove zero-record releases are also blocked.
     if missing == "population":
         population.write_text(json.dumps({
-            "schemaVersion": "wattlas-adm1-population-v1",
+            "schemaVersion": "wattlas-admin1-population-v1",
             "buildFingerprint": "sha256:" + "a" * 64,
             "records": [],
         }))
@@ -588,6 +588,7 @@ def test_regional_model_preserves_official_demand_and_allocates_residual() -> No
 
 def test_regional_model_publishes_country_control_without_adm1_demand_for_country_level_only() -> None:
     root = Path(__file__).parents[2]
+    stages: list[str] = []
     forecasts, reconciled = build_regional_energy_model(
         demand_weights={
             "records": [],
@@ -601,6 +602,7 @@ def test_regional_model_publishes_country_control_without_adm1_demand_for_countr
                     "availableGeographyCount": 1,
                     "unavailableGeographyCount": 1,
                     "populationArtifactFingerprint": "sha256:population",
+                    "sourceIds": ["worldpop"],
                 },
             }],
         },
@@ -613,6 +615,7 @@ def test_regional_model_publishes_country_control_without_adm1_demand_for_countr
         assumptions=load_generation_assumptions(root / "data/curated/generation-assumptions.json"),
         method_config=load_regional_demand_methods(root / "data/curated/regional-demand-methods.json"),
         country_iso3_by_iso2={"BB": "BBB"},
+        before_supply=lambda: stages.append("supply"),
     )
 
     assert reconciled is True
@@ -625,6 +628,7 @@ def test_regional_model_publishes_country_control_without_adm1_demand_for_countr
     assert row["countryControl"]["demandGwh"]["central"] == 1000
     assert row["countryControl"]["sourceIds"] == ["country-series"]
     assert row["valueKind"] == "unavailable"
+    assert stages == ["supply"]
 
 
 def test_refresh_maps_iso2_weight_countries_to_country_control_iso3() -> None:

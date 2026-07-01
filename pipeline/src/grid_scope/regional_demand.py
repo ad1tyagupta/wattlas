@@ -683,6 +683,16 @@ def build_regional_demand_weights(
         unavailable_by_country.setdefault(country, set()).add(geography_id)
         unavailable_years_by_country.setdefault(country, set()).add(year)
     country_level_only_countries = set(unavailable_by_country)
+    release = population_artifact.get("sourceRelease")
+    primary_source_id = (
+        str(release.get("sourceId") or "").strip()
+        if isinstance(release, Mapping) else ""
+    )
+    fallback_source_ids = {
+        str(source.get("country") or "").strip().upper(): str(source.get("sourceId") or "").strip()
+        for source in (release.get("fallbackSources", []) if isinstance(release, Mapping) else [])
+        if isinstance(source, Mapping)
+    }
     country_level_only = [
         {
             "country": country,
@@ -695,6 +705,11 @@ def build_regional_demand_weights(
                 - len(unavailable_by_country[country]),
                 "unavailableGeographyCount": len(unavailable_by_country[country]),
                 "populationArtifactFingerprint": population_artifact.get("buildFingerprint"),
+                "sourceIds": sorted({
+                    source_id for source_id in (
+                        primary_source_id, fallback_source_ids.get(country, "")
+                    ) if source_id
+                }) or ["population-artifact"],
             },
         }
         for country in sorted(country_level_only_countries)
@@ -833,11 +848,11 @@ def build_regional_demand_weights(
         "effectiveInputFingerprint": _fingerprint(build_inputs),
     }
     artifact["buildFingerprint"] = _fingerprint(artifact)
-    _validate_regional_demand_weights_artifact(artifact)
+    validate_regional_demand_weights_artifact(artifact)
     return artifact
 
 
-def _validate_regional_demand_weights_artifact(artifact: Mapping[str, Any]) -> None:
+def validate_regional_demand_weights_artifact(artifact: Mapping[str, Any]) -> None:
     if artifact.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError("unsupported regional demand weights schema")
     build_inputs = artifact.get("buildInputs")
@@ -882,6 +897,9 @@ def _validate_regional_demand_weights_artifact(artifact: Mapping[str, Any]) -> N
             or exception_active_ids & active_ids
             or not isinstance(coverage, Mapping)
             or coverage.get("populationArtifactFingerprint") != population_fingerprint
+            or not isinstance(coverage.get("sourceIds"), list)
+            or not coverage.get("sourceIds")
+            or any(not isinstance(value, str) or not value.strip() for value in coverage["sourceIds"])
             or coverage.get("availableGeographyCount") != len(active_ids - unavailable_ids)
             or coverage.get("unavailableGeographyCount") != len(unavailable_ids)
         ):
@@ -912,7 +930,7 @@ def _validate_regional_demand_weights_artifact(artifact: Mapping[str, Any]) -> N
 
 
 def write_regional_demand_weights(artifact: Mapping[str, Any], output: Path | str) -> None:
-    _validate_regional_demand_weights_artifact(artifact)
+    validate_regional_demand_weights_artifact(artifact)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_stable_json(artifact) + "\n", encoding="utf-8")

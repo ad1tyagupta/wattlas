@@ -97,6 +97,7 @@ _LIFECYCLE_ALIASES = {
     "construction": "under_construction",
     "under construction": "under_construction",
     "pre construction": "announced",
+    "announced": "announced",
     "planned": "announced",
     "proposed": "announced",
     "retired": "retired",
@@ -220,7 +221,8 @@ def _record_preference(record: dict[str, Any]) -> tuple[int, int, str]:
 
 
 def parse_qlever_power(
-    payload: dict[str, Any], *, observed_at: str | None
+    payload: dict[str, Any], *, observed_at: str | None,
+    tolerate_malformed_capacity: bool = False,
 ) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for binding in payload.get("results", {}).get("bindings", []):
@@ -229,7 +231,15 @@ def parse_qlever_power(
         if match is None:
             raise ValueError(f"invalid OSM element URL: {element_url}")
         element_type, element_id = match.groups()
-        capacity, capacity_kind = _capacity(_value(binding, "output"))
+        raw_capacity = _value(binding, "output")
+        capacity_parse_status = "parsed"
+        try:
+            capacity, capacity_kind = _capacity(raw_capacity)
+        except ValueError:
+            if not tolerate_malformed_capacity:
+                raise
+            capacity, capacity_kind = None, "unavailable"
+            capacity_parse_status = "malformed_unavailable"
         raw_source = _value(binding, "source")
         normalized_status = _value(binding, "lifecycle")
         raw_status = _value(binding, "rawLifecycle") or normalized_status
@@ -279,6 +289,9 @@ def parse_qlever_power(
                 if isinstance(value, dict) and value.get("value") is not None
             },
         }
+        if capacity_parse_status == "malformed_unavailable":
+            record["rawCapacity"] = raw_capacity
+            record["capacityParseStatus"] = capacity_parse_status
         existing = records.get(record["id"])
         if (
             existing is not None
@@ -325,7 +338,7 @@ class OsmPowerConnector:
         )
         response.raise_for_status()
         records = parse_qlever_power(
-            response.json(), observed_at=None
+            response.json(), observed_at=None, tolerate_malformed_capacity=True
         )
         if len(records) < self.minimum_records:
             raise ValueError(

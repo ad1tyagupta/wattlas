@@ -693,6 +693,21 @@ def test_osm_power_query_uses_real_lifecycle_tag_branches() -> None:
     assert 'BIND("announced" AS ?lifecycle)' in QLEVER_POWER_QUERY
 
 
+def test_osm_power_parser_accepts_announced_value_emitted_by_its_own_query() -> None:
+    payload = {"results": {"bindings": [{
+        "element": {"value": "https://www.openstreetmap.org/way/951"},
+        "name": {"value": "Proposed Solar Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "solar"},
+        "lifecycle": {"value": "announced"},
+        "rawLifecycle": {"value": "proposed:power=plant"},
+    }]}}
+
+    records = parse_qlever_power(payload, observed_at="2026-07-01T00:00:00Z")
+
+    assert records[0]["lifecycle"] == "announced"
+
+
 def test_osm_power_parser_preserves_lifecycle_evidence_and_dedupes_deterministically() -> None:
     operational = {
         "element": {"value": "https://www.openstreetmap.org/way/950"},
@@ -762,6 +777,28 @@ def test_osm_power_parser_rejects_ambiguous_capacity_formats(reported_output) ->
 
     with pytest.raises(ValueError, match="ambiguous|malformed"):
         parse_qlever_power(payload, observed_at="2026-06-28T10:00:00Z")
+
+
+def test_osm_power_live_ingestion_keeps_planned_plant_with_malformed_capacity_unavailable() -> None:
+    payload = {"results": {"bindings": [{
+        "element": {"value": "https://www.openstreetmap.org/way/904"},
+        "name": {"value": "Announced Solar Plant"},
+        "geometry": {"value": "POINT(10 20)"},
+        "source": {"value": "solar"},
+        "lifecycle": {"value": "announced"},
+        "output": {"value": "2,90 MW"},
+    }]}}
+
+    record = parse_qlever_power(
+        payload,
+        observed_at="2026-07-01T00:00:00Z",
+        tolerate_malformed_capacity=True,
+    )[0]
+
+    assert record["capacityMw"] is None
+    assert record["capacityValueKind"] == "unavailable"
+    assert record["rawCapacity"] == "2,90 MW"
+    assert record["capacityParseStatus"] == "malformed_unavailable"
 
 
 def test_osm_power_parser_rejects_conflicting_capacity_bindings() -> None:

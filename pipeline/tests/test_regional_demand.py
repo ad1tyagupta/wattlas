@@ -466,6 +466,7 @@ def test_weight_builder_marks_whole_country_level_only_when_any_active_adm1_is_u
             "availableGeographyCount": 1,
             "unavailableGeographyCount": 1,
             "populationArtifactFingerprint": "sha256:population",
+            "sourceIds": ["population-artifact"],
         },
     }]
     assert set(artifact["buildInputs"]["activeGeographyIds"]) == {
