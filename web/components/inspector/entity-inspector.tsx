@@ -40,6 +40,14 @@ function formatAddress(address: AssetFeature["properties"]["address"]): string {
   return [street, address.city, address.state, address.postcode, address.country].filter(Boolean).join(", ") || "Full address unavailable";
 }
 
+function safeHttpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null;
+  } catch { return null; }
+}
+
 const number = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value);
 const metric = (value: { central: number } | null, unit: string) => value ? `${number(value.central)} ${unit}` : "Unavailable";
 
@@ -47,7 +55,7 @@ export function EntityInspector({ geography, asset, generator, regionalEnergy = 
   if (generator) {
     const properties = generator.properties;
     const name = typeof properties.name === "string" ? properties.name : properties.id;
-    const sourceUrl = typeof properties.sourceUrl === "string" ? properties.sourceUrl : null;
+    const sourceUrl = safeHttpUrl(properties.sourceUrl);
     return <aside className="region-inspector facility-inspector generator-inspector">
       <div className="inspector-kicker">Selected power generator · {properties.country}</div>
       <h1>{name}</h1>

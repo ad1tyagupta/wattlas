@@ -13,10 +13,16 @@ describe("PowerBalanceChart", () => {
     render(<PowerBalanceChart forecasts={[...rows].reverse()} />);
     expect(screen.getByRole("img", { name: /2026 to 2031 demand versus local generation/i })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: /demand versus local generation data/i })).toBeInTheDocument();
+    for (const heading of ["Demand low", "Demand base", "Demand high", "Generation low", "Generation base", "Generation high"]) expect(screen.getByRole("columnheader", { name: heading })).toBeInTheDocument();
     expect(screen.getAllByText("2026").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2031").length).toBeGreaterThan(0);
-    expect(screen.getByText("100–120 GWh")).toBeInTheDocument();
-    expect(screen.getAllByText("80–100 GWh")).toHaveLength(6);
+    expect(screen.getByRole("row", { name: "2026 100 GWh 110 GWh 120 GWh 80 GWh 90 GWh 100 GWh" })).toBeInTheDocument();
+  });
+
+  it("spells out unavailable generation across the accessible low/base/high fallback", () => {
+    const noSupply = rows.map((row) => ({ ...row, metrics: { ...row.metrics, localGenerationGwh: null, localGenerationGapGwh: null } }));
+    render(<PowerBalanceChart forecasts={noSupply} />);
+    expect(screen.getByRole("row", { name: "2026 100 GWh 110 GWh 120 GWh Unavailable Unavailable Unavailable" })).toBeInTheDocument();
   });
 
   it.each([

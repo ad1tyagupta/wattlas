@@ -161,9 +161,9 @@ describe("OpportunityRadar", () => {
     const next = { ...snapshot, manifest: { ...snapshot.manifest, snapshotId: "new", artifacts: { ...snapshot.manifest.artifacts, regionalEnergy: "snapshots/new/regional-energy.json" } } };
     const { rerender } = render(<OpportunityRadar snapshot={first} />);
     fireEvent.click(screen.getByRole("button", { name: "Power Balance" }));
-    await screen.findByText("100 GWh");
+    expect((await screen.findAllByText("100 GWh")).length).toBeGreaterThan(0);
     rerender(<OpportunityRadar snapshot={next} />);
-    await waitFor(() => expect(screen.queryByText("100 GWh")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryAllByText("100 GWh")).toHaveLength(0));
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not load regional energy/i);
     expect(screen.getByRole("button", { name: /retry regional energy/i })).toBeInTheDocument();
   });

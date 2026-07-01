@@ -201,6 +201,24 @@ describe("power balance snapshot contracts", () => {
     expect(() => generatorIndexSchema.parse({ countries: { US: { bbox: [0, 0, 1, 1], path: "../US.geojson", featureCount: 1, checksum: "bad", bytes: -1, capacityMw: 1 } }, totals: { featureCount: 1, capacityMw: 1 } })).toThrow();
   });
 
+  it("validates every generator inspector field and rejects unsafe rich values", () => {
+    const properties = {
+      id: "plant-1", name: "Safe Plant", country: "US", geographyId: "US-CA", category: "power_generation", lifecycle: "operational",
+      technologies: ["gas"], capacityMw: 100, operatingCapacityMw: 100, plannedCapacityMw: 0, technologyMixMw: { gas: 100 },
+      primaryFuel: "Natural gas", secondaryFuel: "Oil", annualGenerationGwh: { low: 400, central: 450, high: 500 },
+      commissioningYear: 2020, retirementYear: 2050, targetYear: null, operator: "Operator", owner: "Owner", confidence: 88,
+      sourceUrl: "https://example.org/plant", sourceIds: ["registry"], locationName: "Sacramento County",
+    };
+    const parse = (overrides: Record<string, unknown>) => generatorCountryShardSchema.parse({ type: "FeatureCollection", features: [{ type: "Feature", id: "plant-1", geometry: { type: "Point", coordinates: [-120, 38] }, properties: { ...properties, ...overrides } }] });
+    expect(parse({}).features[0].properties.annualGenerationGwh?.central).toBe(450);
+    for (const invalid of [
+      { name: { text: "object" } }, { primaryFuel: { value: "gas" } }, { operator: Number.NaN }, { confidence: 101 }, { confidence: Number.NaN },
+      { sourceUrl: "javascript:alert(1)" }, { sourceUrl: "ftp://example.org/plant" },
+      { annualGenerationGwh: { low: 500, central: 450, high: 400 } }, { annualGenerationGwh: { low: 1, central: Number.NaN, high: 2 } },
+      { commissioningYear: "2020" }, { locationName: { label: "County" } },
+    ]) expect(() => parse(invalid)).toThrow();
+  });
+
   it("accepts the pipeline's camel-case power-generation asset contract", () => {
     const asset = assetPropertiesSchema.parse({
       id: "generator-de-solar-1-unit-a", name: "Example Solar Unit A",

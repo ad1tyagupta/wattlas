@@ -350,7 +350,7 @@ export const evidenceSchema = z.object({
 });
 
 export const metricRangeSchema = z.object({
-  low: z.number(), central: z.number(), high: z.number(),
+  low: z.number().finite(), central: z.number().finite(), high: z.number().finite(),
 }).refine(({ low, central, high }) => low <= central && central <= high, {
   message: "Metric range must satisfy low <= central <= high",
 });
@@ -410,6 +410,8 @@ export const regionalEnergySchema = z.record(
 
 const generatorYearSchema = z.number().int().min(1800).max(2200).nullable();
 const technologyMixSchema = z.partialRecord(generationTechnologySchema, z.number().nonnegative());
+const generatorTextSchema = z.string().trim().min(1).max(500).nullable();
+const generatorSourceUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), { message: "Generator source URL must use HTTP(S)" }).nullable();
 const capacitiesMatch = (left: number, right: number) => Math.abs(left - right) <= Math.max(1e-6, Math.abs(left) * 1e-12);
 export const generatorPropertiesSchema = z.object({
   id: z.string().min(1), category: z.literal("power_generation").default("power_generation"),
@@ -420,6 +422,10 @@ export const generatorPropertiesSchema = z.object({
   plannedCapacityMw: z.number().nonnegative(), technologyMixMw: technologyMixSchema,
   commissioningYear: generatorYearSchema.optional(), retirementYear: generatorYearSchema.optional(),
   targetYear: generatorYearSchema.optional(), sourceIds: z.array(z.string().min(1)).min(1),
+  name: generatorTextSchema.optional(), primaryFuel: generatorTextSchema.optional(), secondaryFuel: generatorTextSchema.optional(),
+  annualGenerationGwh: nonnegativeMetricRangeSchema.nullable().optional(), operator: generatorTextSchema.optional(), owner: generatorTextSchema.optional(),
+  confidence: z.number().finite().min(0).max(100).nullable().optional(), sourceUrl: generatorSourceUrlSchema.optional(),
+  locationName: generatorTextSchema.optional(), plantId: generatorTextSchema.optional(), unitId: generatorTextSchema.optional(),
 }).passthrough().refine((value) => capacitiesMatch(value.capacityMw, value.operatingCapacityMw + value.plannedCapacityMw), {
   message: "Generator capacity must reconcile",
 }).refine((value) => capacitiesMatch(value.capacityMw, Object.values(value.technologyMixMw).reduce((a, b) => a + b, 0)), {

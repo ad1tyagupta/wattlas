@@ -91,9 +91,9 @@ describe("EntityInspector", () => {
     expect(screen.getByText(/39 million/)).toBeInTheDocument();
     expect(screen.getByText(/source year 2024/i)).toBeInTheDocument();
     expect(screen.getByText(/forecast growth/i)).toBeInTheDocument();
-    expect(screen.getByText(/1,000 GWh/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1,000 GWh/).length).toBeGreaterThan(0);
     expect(screen.getByText(/160 MW/)).toBeInTheDocument();
-    expect(screen.getByText(/800 GWh/)).toBeInTheDocument();
+    expect(screen.getAllByText(/800 GWh/).length).toBeGreaterThan(0);
     expect(screen.getByText(/225 MW/)).toBeInTheDocument();
     expect(screen.getByText(/local generation gap/i)).toBeInTheDocument();
     expect(screen.queryByText(/deficit/i)).not.toBeInTheDocument();
@@ -127,5 +127,12 @@ describe("EntityInspector", () => {
     render(<EntityInspector geography={null} asset={null} generator={generator} lens="infrastructureDemand" year={2030} onOpenEvidence={vi.fn()} onAddComparison={vi.fn()} />);
     for (const text of ["Natural gas", "Fuel oil", "500 MW", "2,200 GWh (2,000–2,400)", "Operational", "2015", "GridCo", "Public Power", "50.10000, 8.50000", "91%", "Retirement date unavailable", "Source IDs unavailable"]) expect(screen.getByText(text)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open source record" })).toHaveAttribute("href", "https://generator.example");
+  });
+
+  it("does not render an unsafe generator source URL even for an untrusted typed caller", () => {
+    const generator = { type: "Feature", id: "g-unsafe", geometry: { type: "Point", coordinates: [0, 0] }, properties: { id: "g-unsafe", name: "Unsafe URL Plant", category: "power_generation", country: "DE", geographyId: "DE", technologies: ["gas"], capacityMw: 1, operatingCapacityMw: 1, plannedCapacityMw: 0, technologyMixMw: { gas: 1 }, sourceIds: ["registry"], sourceUrl: "javascript:alert(1)" } } as GeneratorFeature;
+    render(<EntityInspector geography={null} asset={null} generator={generator} lens="infrastructureDemand" year={2030} onOpenEvidence={vi.fn()} onAddComparison={vi.fn()} />);
+    expect(screen.queryByRole("link", { name: "Open source record" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Source record unavailable" })).toBeDisabled();
   });
 });

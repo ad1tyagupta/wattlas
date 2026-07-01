@@ -2,7 +2,7 @@ import type { RegionalEnergyForecast } from "@/lib/snapshot/types";
 
 type Props = { forecasts: RegionalEnergyForecast[] };
 const fmt = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
-const range = (value: { low: number; high: number } | null) => value ? `${fmt(value.low)}–${fmt(value.high)} GWh` : "Unavailable";
+const cell = (value: number | null) => value == null ? "Unavailable" : `${fmt(value)} GWh`;
 
 export function PowerBalanceChart({ forecasts }: Props) {
   const ordered = [...forecasts].sort((a, b) => a.year - b.year);
@@ -33,6 +33,6 @@ export function PowerBalanceChart({ forecasts }: Props) {
       <polyline className="supply-line" points={points("supply")} />
     </svg>
     <div className="chart-legend"><span className="demand-key">Demand</span><span className="supply-key">Local generation</span></div>
-    <div className="chart-table-wrap"><table aria-label="Demand versus local generation data"><thead><tr><th>Year</th><th>Demand</th><th>Local generation</th></tr></thead><tbody>{data.map((row) => <tr key={row.year}><th>{row.year}</th><td>{range(row.metrics.demandGwh)}</td><td>{range(row.metrics.localGenerationGwh)}</td></tr>)}</tbody></table></div>
+    <div className="chart-table-wrap"><table aria-label="Demand versus local generation data"><thead><tr><th>Year</th><th>Demand low</th><th>Demand base</th><th>Demand high</th><th>Generation low</th><th>Generation base</th><th>Generation high</th></tr></thead><tbody>{data.map((row) => <tr key={row.year}><th>{row.year}</th><td>{cell(row.metrics.demandGwh.low)}</td><td>{cell(row.metrics.demandGwh.central)}</td><td>{cell(row.metrics.demandGwh.high)}</td><td>{cell(row.metrics.localGenerationGwh?.low ?? null)}</td><td>{cell(row.metrics.localGenerationGwh?.central ?? null)}</td><td>{cell(row.metrics.localGenerationGwh?.high ?? null)}</td></tr>)}</tbody></table></div>
   </section>;
 }
