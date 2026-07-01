@@ -45,7 +45,7 @@ from grid_scope.connectors.regional_electricity import (
 )
 from grid_scope.connectors.un_geodata import UnGeodataConnector
 from grid_scope.connectors.wri_power import WriPowerConnector
-from grid_scope.models import ConnectorState
+from grid_scope.models import ConnectorState, SourceRef
 from grid_scope.population import load_population_artifact
 from grid_scope.power_balance import (
     build_regional_energy_forecasts,
@@ -851,6 +851,42 @@ def _demand_weights_with_iso3(
     return result
 
 
+def attach_population_evidence_sources(
+    registry: dict[str, Any], population_artifact: Mapping[str, Any]
+) -> None:
+    """Expose every sealed WorldPop record source through snapshot evidence."""
+
+    release = population_artifact.get("sourceRelease")
+    if not isinstance(release, Mapping):
+        raise ValueError("population evidence requires sealed source release")
+    candidates = [{
+        "id": release.get("sourceId"),
+        "name": str(release.get("id") or "WorldPop population release"),
+        "tier": "B",
+        "url": release.get("sourceUrl"),
+        "publishedAt": "2025-09-01T00:00:00Z",
+        "licence": release.get("licence"),
+        "licenceUrl": release.get("licenceUrl"),
+    }]
+    for source in release.get("fallbackSources", []):
+        candidates.append({
+            "id": source.get("sourceId"),
+            "name": str(source.get("sourceRelease") or "WorldPop population fallback"),
+            "tier": "B",
+            "url": source.get("sourceUrl"),
+            "publishedAt": "2025-09-01T00:00:00Z",
+            "checksumSha256": source.get("checksumSha256"),
+            "licence": source.get("licence"),
+            "licenceUrl": source.get("licenceUrl"),
+        })
+    existing = {source["id"] for source in registry.get("sources", [])}
+    for raw in candidates:
+        source = SourceRef.model_validate(raw).model_dump(by_alias=True, mode="json")
+        if source["id"] not in existing:
+            registry.setdefault("sources", []).append(source)
+            existing.add(source["id"])
+
+
 def build_regional_energy_model(
     *,
     demand_weights: Mapping[str, Any],
@@ -1309,6 +1345,7 @@ def refresh() -> Path:
     curated = json.loads(curated_result.payload.body)
     europe_artifacts = build_snapshot_artifacts(geometry, population, curated, generated_at)
     registry = load_asset_registry(GLOBAL_ASSETS_PATH, SOURCE_REGISTRY_PATH)
+    attach_population_evidence_sources(registry, model_artifacts["population"])
     countries = json.loads(countries_body)
     registry = merge_asset_feeds(
         countries,

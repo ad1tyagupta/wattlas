@@ -210,6 +210,30 @@ class SnapshotPublisher:
                 raise ValueError(f"regional-energy.json contains unknown ADM1: {geography_id}")
             if not isinstance(rows, list) or [row.get("year") for row in rows] != list(range(2026, 2032)):
                 raise ValueError(f"regional-energy.json has invalid time series for {geography_id}")
+        evidence = json.loads(artifacts["evidence.json"])
+        evidence_sources = evidence.get("sources") if isinstance(evidence, dict) else None
+        if not isinstance(evidence_sources, list):
+            raise ValueError("evidence.json requires sources")
+        evidence_ids = {
+            source.get("id") for source in evidence_sources if isinstance(source, dict)
+        }
+        referenced_ids: set[str] = set()
+        def collect_source_ids(value: object) -> None:
+            if isinstance(value, dict):
+                ids = value.get("sourceIds")
+                if isinstance(ids, list):
+                    referenced_ids.update(str(item) for item in ids)
+                for nested in value.values():
+                    collect_source_ids(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    collect_source_ids(nested)
+        collect_source_ids(regional_energy)
+        unresolved = referenced_ids - evidence_ids
+        if unresolved:
+            raise ValueError(
+                "regional-energy source IDs lack evidence: " + ", ".join(sorted(unresolved))
+            )
 
         overview = json.loads(artifacts["generator-overview.geojson"])
         overview_by_region: dict[str, dict[str, object]] = {}

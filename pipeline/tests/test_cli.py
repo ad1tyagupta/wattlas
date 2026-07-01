@@ -25,6 +25,7 @@ from grid_scope.cli import (
     _fetch_eia_observations,
     _field_lineage,
     _demand_weights_with_iso3,
+    attach_population_evidence_sources,
 )
 from grid_scope.connectors.base import ConnectorResult, FetchPayload
 from grid_scope.models import ConnectorState
@@ -668,6 +669,26 @@ def test_refresh_maps_iso2_weight_countries_to_country_control_iso3() -> None:
             {"records": [{"geographyId": "XX-1", "country": "XX", "year": 2026}]},
             {},
         )
+
+
+def test_population_evidence_sources_preserve_machine_provenance() -> None:
+    registry = {"sources": []}
+    attach_population_evidence_sources(registry, {"sourceRelease": {
+        "id": "WorldPop R2025A v1", "sourceId": "worldpop-primary",
+        "sourceUrl": "https://data.worldpop.org/global.tif",
+        "licence": "CC-BY-4.0", "licenceUrl": "https://www.worldpop.org/faq/",
+        "fallbackSources": [{
+            "sourceId": "worldpop-fallback", "sourceRelease": "WorldPop fallback",
+            "sourceUrl": "https://data.worldpop.org/fallback.tif",
+            "checksumSha256": "a" * 64, "licence": "CC-BY-4.0",
+            "licenceUrl": "https://www.worldpop.org/faq/",
+        }],
+    }})
+    assert [source["id"] for source in registry["sources"]] == [
+        "worldpop-primary", "worldpop-fallback",
+    ]
+    assert registry["sources"][1]["checksumSha256"] == "a" * 64
+    assert registry["sources"][0]["licence"] == "CC-BY-4.0"
 
 
 def test_regional_model_uses_every_official_field_and_forward_increment_once() -> None:

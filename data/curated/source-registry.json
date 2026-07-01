@@ -106,11 +106,30 @@
       "publishedAt": "2026-06-27T00:00:00Z"
     },
     {
-      "id": "ember-global-electricity",
-      "name": "Ember Global Electricity Data Explorer",
+      "id": "ember-yearly-electricity-data",
+      "name": "Ember Yearly Electricity Data — full release",
       "tier": "A",
-      "url": "https://ember-energy.org/data/global-electricity/",
-      "publishedAt": "2026-05-01T00:00:00Z"
+      "url": "https://files.ember-energy.org/public-downloads/yearly_full_release_long_format.csv",
+      "publishedAt": "2026-06-23T10:58:24Z",
+      "lastModified": "2026-06-23T10:58:24Z",
+      "checksumSha256": "259e1095ee8ffeaf0aff37ad557916ae1823a2da13312da50ba4cec6b4574c3b",
+      "licence": "CC-BY-4.0",
+      "licenceUrl": "https://api.ember-energy.org/v1/docs"
+    },
+    {
+      "id": "nrel-atb-2024",
+      "name": "NREL Annual Technology Baseline 2024",
+      "tier": "A",
+      "url": "https://atb.nrel.gov/electricity/2024/",
+      "publishedAt": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "openstreetmap-power",
+      "name": "OpenStreetMap power infrastructure",
+      "tier": "C",
+      "url": "https://www.openstreetmap.org/copyright",
+      "licence": "ODbL-1.0",
+      "licenceUrl": "https://opendatacommons.org/licenses/odbl/1-0/"
     }
   ]
 }

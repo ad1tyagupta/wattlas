@@ -192,6 +192,10 @@ class SourceRef(ContractModel):
     tier: str = Field(pattern=r"^[ABCD]$")
     url: HttpUrl
     published_at: AwareDatetime | None = None
+    checksum_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    licence: str | None = None
+    licence_url: HttpUrl | None = None
+    last_modified: AwareDatetime | None = None
 
 
 class ScoreContribution(ContractModel):

@@ -339,6 +339,10 @@ export const evidenceSchema = z.object({
     tier: z.enum(["A", "B", "C", "D"]),
     url: z.string().url(),
     publishedAt: z.string().datetime().nullable().optional(),
+    checksumSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+    licence: z.string().min(1).nullable().optional(),
+    licenceUrl: z.string().url().nullable().optional(),
+    lastModified: z.string().datetime().nullable().optional(),
   })),
   claims: z.array(z.object({
     id: z.string(),

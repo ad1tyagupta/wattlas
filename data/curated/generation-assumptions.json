@@ -21,8 +21,11 @@
     },
     {
       "id": "ember-yearly-electricity-data",
-      "url": "https://ember-energy.org/data/yearly-electricity-data/",
-      "licence": "CC-BY-4.0"
+      "url": "https://files.ember-energy.org/public-downloads/yearly_full_release_long_format.csv",
+      "licence": "CC-BY-4.0",
+      "licenceUrl": "https://api.ember-energy.org/v1/docs",
+      "checksumSha256": "259e1095ee8ffeaf0aff37ad557916ae1823a2da13312da50ba4cec6b4574c3b",
+      "lastModified": "2026-06-23T10:58:24Z"
     },
     {
       "id": "gem-gipt",
