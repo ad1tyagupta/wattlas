@@ -117,6 +117,49 @@ def test_dateline_multipolygon_reads_each_component_in_a_small_window(
     assert max(width * height for width, height in observed_windows) <= 2
 
 
+def test_touching_multipolygon_components_are_normalized_without_double_counting(
+    tmp_path: Path,
+) -> None:
+    boundaries = tmp_path / "touching.geojson"
+    boundaries.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"id": "AA-TOUCH", "name": "Touching", "country": "AA"},
+            "geometry": {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+                    [[[1, 0], [2, 0], [2, 1], [1, 1], [1, 0]]],
+                ],
+            },
+        }],
+    }))
+    raster = tmp_path / "touching.tif"
+    _write_raster(
+        raster,
+        np.array([[10, 20]], dtype=np.float32),
+        west=0,
+        north=1,
+        pixel_size=1,
+        source_year=2026,
+    )
+
+    first = build_population_artifact(
+        boundaries_path=boundaries,
+        raster_paths={2026: raster},
+        release_id="touching-test-v1",
+    )
+    second = build_population_artifact(
+        boundaries_path=boundaries,
+        raster_paths={2026: raster},
+        release_id="touching-test-v1",
+    )
+
+    assert _records_by_key(first)[("AA-TOUCH", 2026)]["population"] == 30
+    assert first["buildFingerprint"] == second["buildFingerprint"]
+
+
 def test_single_polygon_ring_crossing_dateline_requires_presplitting(tmp_path: Path) -> None:
     boundaries = tmp_path / "wrap.geojson"
     boundaries.write_text(json.dumps({

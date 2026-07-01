@@ -17,7 +17,8 @@ from rasterio.errors import WindowError
 from rasterio.features import geometry_mask, geometry_window
 from rasterio.warp import transform_geom
 from rasterio.windows import Window
-from shapely.geometry import shape
+from shapely.geometry import mapping, shape
+from shapely.ops import unary_union
 
 from grid_scope.connectors.worldpop import WORLDPOP_SOURCE_ID, checksum_file
 
@@ -137,14 +138,24 @@ def _polygon_components(geometry: Mapping[str, Any]) -> list[dict[str, Any]]:
     polygons = [shape(component) for component in components]
     if any(polygon.is_empty or not polygon.is_valid for polygon in polygons):
         raise ValueError("ADM1 polygon geometry must be non-empty and valid")
-    for left_index, left in enumerate(polygons):
-        for right in polygons[left_index + 1:]:
-            if not left.disjoint(right):
-                raise ValueError(
-                    "ADM1 MultiPolygon components must be disjoint and non-touching "
-                    "to prevent raster-cell double counting"
-                )
-    return components
+    if len(polygons) == 1:
+        return components
+
+    # Public ADM1 releases sometimes encode adjacent island/sliver polygons as
+    # separate MultiPolygon members that share an edge. Rasterizing those
+    # members independently can select the same cell twice, so normalize their
+    # topology before deriving the small per-component read windows.
+    normalized = unary_union(polygons)
+    if normalized.is_empty or not normalized.is_valid:
+        raise ValueError("ADM1 MultiPolygon components could not be normalized safely")
+    if normalized.geom_type == "Polygon":
+        normalized_polygons = [normalized]
+    elif normalized.geom_type == "MultiPolygon":
+        normalized_polygons = list(normalized.geoms)
+    else:
+        raise ValueError("ADM1 MultiPolygon normalization produced non-polygon geometry")
+    normalized_polygons.sort(key=lambda polygon: (*polygon.bounds, polygon.wkb_hex))
+    return [dict(mapping(polygon)) for polygon in normalized_polygons]
 
 
 def _reject_wraparound_rings(geometry: Mapping[str, Any]) -> None:
