@@ -97,6 +97,11 @@ _QUALITY_COUNT_FIELDS = (
     "powerSourceRecords",
     "publishedPowerPlants",
 )
+_QUALITY_NONNEGATIVE_COUNT_FIELDS = ("canonicalPowerUnits",)
+_QUALITY_REQUIRED_POSITIVE_COUNT_FIELDS = tuple(
+    field for field in _QUALITY_COUNT_FIELDS
+    if field not in _QUALITY_NONNEGATIVE_COUNT_FIELDS
+)
 
 _US_STATE_CODES = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -521,9 +526,13 @@ def validate_refresh_quality(
         "generatorArtifactsReconciled"
     ):
         raise ValueError("refresh reconciliation failed")
-    for field in _QUALITY_COUNT_FIELDS:
+    for field in _QUALITY_REQUIRED_POSITIVE_COUNT_FIELDS:
         value = coverage.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"invalid refresh coverage count: {field}")
+    for field in _QUALITY_NONNEGATIVE_COUNT_FIELDS:
+        value = coverage.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"invalid refresh coverage count: {field}")
     if previous_manifest is None:
         return

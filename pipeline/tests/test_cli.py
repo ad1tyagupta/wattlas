@@ -454,6 +454,24 @@ def test_refresh_quality_requires_all_new_coverage_gates_and_blocks_collapse() -
         validate_refresh_quality(current, previous)
 
 
+def test_refresh_quality_allows_zero_optional_units_but_rejects_unit_regression() -> None:
+    coverage = {
+        "countries": 1, "admin1Regions": 2, "canonicalPowerPlants": 3,
+        "canonicalPowerUnits": 0, "generatorRegions": 2,
+        "regionalEnergyRegions": 2, "powerSourceRecords": 4,
+        "publishedPowerPlants": 3,
+    }
+    current = {"coverage": coverage, "quality": {
+        "countryDemandReconciled": True, "generatorArtifactsReconciled": True,
+    }}
+
+    validate_refresh_quality(current)
+    with pytest.raises(ValueError, match="canonicalPowerUnits"):
+        validate_refresh_quality({**current, "coverage": {**coverage, "canonicalPowerUnits": -1}})
+    with pytest.raises(ValueError, match="coverage drop.*canonicalPowerUnits"):
+        validate_refresh_quality(current, {"coverage": {**coverage, "canonicalPowerUnits": 3}})
+
+
 def test_generator_reconciliation_is_computed_from_artifact_contents() -> None:
     shard = {"type": "FeatureCollection", "features": [{
         "id": "plant-1", "properties": {"geographyId": "AA-1"},
